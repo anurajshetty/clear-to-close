@@ -7,7 +7,7 @@ import { StyleSheet, Text, View } from 'react-native';
 export default function Home() {
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Realtor App</Text>
+      <Text style={styles.title}>Clear to Close</Text>
       <Text style={styles.subtitle}>
         Scaffold is live. Product screens arrive after design.
       </Text>

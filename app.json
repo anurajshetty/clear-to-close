@@ -1,14 +1,14 @@
 {
   "expo": {
-    "name": "Realtor App",
-    "slug": "realtor-app",
-    "scheme": "realtor-app",
+    "name": "Clear to Close",
+    "slug": "clear-to-close",
+    "scheme": "clear-to-close",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "bundleIdentifier": "com.anuraj.realtorapp",
+      "bundleIdentifier": "com.anuraj.cleartoclose",
       "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {

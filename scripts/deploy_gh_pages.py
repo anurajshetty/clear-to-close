@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy the Realtor App web export (dist/) to the gh-pages branch via the
+"""Deploy the Clear to Close web export (dist/) to the gh-pages branch via the
 GitHub git-data API. Replaces the whole branch tree with dist/ contents,
 regenerates 404.html from index.html (SPA fallback), and keeps .nojekyll.
 
@@ -18,7 +18,7 @@ import urllib.error
 sys.path.insert(0, "/opt/hatch/skills/skill-creator/bin")
 from dynamic_credentials import add_surrogate_to_request, read_json_response
 
-REPO = "anurajshetty/realtor-app"
+REPO = "anurajshetty/clear-to-close"
 BRANCH = "gh-pages"
 DIST = os.path.expanduser("~/workspace/realtor-app/dist")
 API = "https://api.github.com"
@@ -107,7 +107,7 @@ def main():
         patch = False
 
     commit = api("POST", f"/repos/{REPO}/git/commits",
-                 {"message": "Deploy Realtor App web",
+                 {"message": "Deploy Clear to Close web",
                   "tree": new_tree, "parents": parents})
     new_sha = commit["sha"]
     print(f"created commit {new_sha}")

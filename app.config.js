@@ -1,6 +1,6 @@
 // Dynamic Expo config: app.json is the single source of truth for the static
 // config. The ONLY dynamic override is `experiments.baseUrl`, which is set to
-// '/realtor-app' exclusively for GitHub Pages web deploys (WEB_DEPLOY=1).
+// '/clear-to-close' exclusively for GitHub Pages web deploys (WEB_DEPLOY=1).
 //
 // Why: app.json must NOT carry experiments.baseUrl unconditionally, because
 // the iOS Xcode archive then collides <Name>.app/<Name> (the executable,
@@ -13,7 +13,7 @@ const appJson = require('./app.json');
 module.exports = function () {
   const expo = { ...appJson.expo };
   if (process.env.WEB_DEPLOY === '1') {
-    expo.experiments = { ...(expo.experiments || {}), baseUrl: '/realtor-app' };
+    expo.experiments = { ...(expo.experiments || {}), baseUrl: '/clear-to-close' };
   }
   return { expo };
 };
