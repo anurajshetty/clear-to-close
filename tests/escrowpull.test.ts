@@ -110,7 +110,8 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
       };
     }
     if (name === 'realtor_profiles') {
-      // pingCloud's read probe + write probe + read-back.
+      // pingCloud's read probe (read-only by design; the upsert mock is
+      // retained only because other code paths legitimately write).
       const chain = {
         select: (_cols: string) => chain,
         eq: (_col: string, _val: unknown) => chain,

@@ -35,6 +35,7 @@ import type { KV } from './store';
 import { isSupabaseConfigured } from './supabase';
 import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
+import { applyDerivedStatus } from './lifecycle';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -84,6 +85,9 @@ export function toEscrowRow(userId: string, e: Escrow): Record<string, unknown> 
     open_date: e.openDate,
     close_date: e.closeDate,
     status: e.status,
+    // Per-side close dates (migration 0007). Null until the side closes.
+    buyer_closed_at: e.buyerClosedAt,
+    seller_closed_at: e.sellerClosedAt,
     created_at: e.createdAt,
   };
 }
@@ -118,12 +122,17 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
   };
 }
 
-/** Map a realtor_profiles row back onto a RealtorProfile. */
+/** Map a realtor_profiles row back onto a RealtorProfile.
+ *
+ * A device-local `blob:` photo URL can never survive a reload or reach
+ * another device, so it is treated as absent here — every consumer then
+ * falls back to its no-photo rendering instead of a broken image. */
 export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
   const s = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const photoUrl = typeof row.photo_url === 'string' ? (row.photo_url as string) : null;
   return {
     name: s(row.name),
-    photoUri: typeof row.photo_url === 'string' ? (row.photo_url as string) : null,
+    photoUri: photoUrl !== null && photoUrl.startsWith('blob:') ? null : photoUrl,
     about: s(row.about),
     yearsExperience: s(row.years_experience),
     dealsClosed: s(row.deals_closed),
@@ -135,8 +144,11 @@ export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
 
 /**
  * Pull the realtor's own profile row from Supabase. Returns null when there
- * is no row (brand-new account), when the row is empty (never completed —
- * e.g. the ping probe's write round-trip), or on any failure. Never throws.
+ * is no row (brand-new account), when the row has no saved fields at all
+ * (never completed — e.g. a phantom row left by the old ping probe's write
+ * round-trip), or on any failure. A row with ANY saved field counts as an
+ * existing profile even when its name is NULL/empty — the name alone must
+ * never discard the realtor's saved data. Never throws.
  */
 export async function pullProfileNow(
   client: Cloud,
@@ -150,8 +162,19 @@ export async function pullProfileNow(
       .eq('user_id', userId)
       .limit(1);
     if (error || !data || data.length === 0) return null;
-    const p = fromProfileRow(data[0] as Record<string, unknown>);
-    return p.name.trim().length > 0 ? p : null;
+    const row = data[0] as Record<string, unknown>;
+    const isStr = (v: unknown): v is string => typeof v === 'string';
+    const hasAnyField =
+      (isStr(row.name) && row.name.trim().length > 0) ||
+      isStr(row.photo_url) ||
+      isStr(row.about) ||
+      isStr(row.years_experience) ||
+      isStr(row.deals_closed) ||
+      isStr(row.areas_served) ||
+      isStr(row.phone) ||
+      isStr(row.dre_license);
+    if (!hasAnyField) return null;
+    return fromProfileRow(row);
   } catch {
     return null;
   }
@@ -160,7 +183,11 @@ export async function pullProfileNow(
 /** Map one escrows row to the local Escrow shape (steps attached separately). */
 export function fromEscrowRow(row: Record<string, unknown>): Escrow {
   const side = String(row.side ?? 'buy');
-  return {
+  const dateOrNull = (v: unknown): string | null =>
+    typeof v === 'string' && v.length > 0 ? v : null;
+  const buyerClosedAt = dateOrNull(row.buyer_closed_at);
+  const sellerClosedAt = dateOrNull(row.seller_closed_at);
+  const e: Escrow = {
     id: String(row.id ?? ''),
     address: String(row.address ?? ''),
     city: String(row.city ?? ''),
@@ -171,9 +198,20 @@ export function fromEscrowRow(row: Record<string, unknown>): Escrow {
     closeDate: String(row.close_date ?? ''),
     buyerSteps: [],
     sellerSteps: [],
-    status: row.status === 'closed' ? 'closed' : 'open',
+    status: 'open',
+    buyerClosedAt,
+    sellerClosedAt,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
+  // Prefer the derived per-side status; a legacy 'closed' row from before
+  // the per-side-close migration keeps its status (the UI renders it
+  // without a date).
+  applyDerivedStatus(e);
+  if (e.status === 'open' && row.status === 'closed') e.status = 'closed';
+  // A cancelled row stays cancelled — per-side derivation must never
+  // resurrect it into Active/Closed (deal-list edit/cancel round, Sept 2026).
+  if (row.status === 'cancelled') e.status = 'cancelled';
+  return e;
 }
 
 /** Map one steps row to the local StepT shape. */
@@ -370,8 +408,14 @@ export async function ensureCloudUser(client: Cloud): Promise<string | null> {
 }
 
 /**
- * Boot-time connectivity check: auth + a simple read/write round-trip.
+ * Boot-time connectivity check: auth + a simple read probe.
  * Never throws; a failure means sync stays dormant (local-only v1 behavior).
+ *
+ * Read-only by design — it must never write to the profile row. An earlier
+ * version upserted `{ user_id, name: null }` as a write round-trip, which
+ * wiped the realtor's saved name on every boot and created phantom all-null
+ * rows for brand-new accounts. The read probe is sufficient to prove
+ * connectivity and RLS access.
  */
 export async function pingCloud(client: Cloud): Promise<PingResult> {
   if (!isSupabaseConfigured() || !client) {
@@ -389,20 +433,6 @@ export async function pingCloud(client: Cloud): Promise<PingResult> {
       .eq('user_id', userId)
       .limit(1);
     if (readError) return { ran: true, ok: false, error: `read probe failed: ${pingError(readError)}` };
-    // Write round-trip: upsert own profile row, read it back.
-    const probe = { user_id: userId, name: null as string | null };
-    const { error: writeError } = await client
-      .from('realtor_profiles')
-      .upsert(probe, { onConflict: 'user_id' });
-    if (writeError) return { ran: true, ok: false, error: `write probe failed: ${pingError(writeError)}` };
-    const { data: back, error: backError } = await client
-      .from('realtor_profiles')
-      .select('user_id')
-      .eq('user_id', userId)
-      .limit(1);
-    if (backError || !back || back.length === 0) {
-      return { ran: true, ok: false, error: `write read-back failed: ${pingError(backError)}` };
-    }
     return { ran: true, ok: true, userId };
   } catch (e) {
     return { ran: true, ok: false, error: pingError(e) };
@@ -418,7 +448,19 @@ async function upsertAll(client: Cloud, table: string, rows: Record<string, unkn
 
 /** Push one escrow and ALL of its steps (both roles) — idempotent. */
 export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escrow): Promise<void> {
-  await upsertAll(client, 'escrows', [toEscrowRow(userId, escrow)], 'id');
+  const row = toEscrowRow(userId, escrow);
+  try {
+    await upsertAll(client, 'escrows', [row], 'id');
+  } catch (e) {
+    if (!isMissingColumnError(e)) throw e;
+    // Migration 0007 not applied yet on this database: retry without the
+    // per-side close columns so the push still lands (close dates stay
+    // local-only until the migration is applied).
+    const legacy = { ...row };
+    delete legacy.buyer_closed_at;
+    delete legacy.seller_closed_at;
+    await upsertAll(client, 'escrows', [legacy], 'id');
+  }
   const steps = [
     ...toStepRows(escrow.id, 'buyer', escrow.buyerSteps),
     ...toStepRows(escrow.id, 'seller', escrow.sellerSteps),
@@ -426,6 +468,18 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
   if (steps.length > 0) {
     await upsertAll(client, 'steps', steps, 'id');
   }
+}
+
+/**
+ * True when a PostgREST error means the per-side close-date columns
+ * (migration 0007) don't exist yet on this database.
+ */
+export function isMissingColumnError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: string; message?: string };
+  if (e.code === '42703') return true; // PostgreSQL undefined_column
+  const msg = e.message ?? '';
+  return msg.includes('buyer_closed_at') || msg.includes('seller_closed_at');
 }
 
 export async function pushProfileNow(client: Cloud, userId: string, profile: RealtorProfile): Promise<void> {

@@ -57,14 +57,18 @@ export interface PostAuthInput {
 /**
  * Where a realtor lands right after sign-up/login succeeds (and on fresh
  * boot with a live session): the deal list, unless this is a mid-onboarding
- * account — a live session with no *completed* profile (non-empty name) and
- * no explicit skip resumes at profile creation (step 2) instead of silently
- * dropping it. A profile row with no name (e.g. the sync ping probe's write
- * round-trip) does not count as completed.
+ * account — a live session with no profile at all and no explicit skip
+ * resumes at profile creation (step 2) instead of silently dropping it.
+ *
+ * Profile existence, not name completeness, drives this decision: a profile
+ * row with a NULL/empty name but other saved fields is still an existing
+ * profile (its fields hydrate the form and the client view) and goes to the
+ * deal list. Only a genuinely new account — no profile row, or a row with
+ * no saved fields at all (pullProfileNow maps both to null) — enters
+ * profile creation.
  */
 export function resolvePostAuthHref(input: PostAuthInput): string {
-  const complete = !!input.profile && input.profile.name.trim().length > 0;
-  if (input.sessionUserId && !complete && !input.skipped) {
+  if (input.sessionUserId && !input.profile && !input.skipped) {
     return '/profile-create';
   }
   return '/';

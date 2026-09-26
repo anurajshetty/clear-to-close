@@ -134,7 +134,7 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         label="Phone (optional)"
         value={value.phone}
         onChangeText={set('phone')}
-        placeholder="For Call / Message buttons"
+        placeholder="Shown as a tap-to-call row on your client profile"
       />
     </View>
   );

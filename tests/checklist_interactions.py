@@ -12,9 +12,17 @@ asserts two things the geometric test does not:
 
 2. DRAG REORDER: a real mouse drag on a drag grip reorders the underlying
    checklist (verified in persisted storage) — the grip is not decorative.
+   The drag follows the product's long-press-to-arm interaction (700ms dwell
+   before moving, mirroring tests/drag_reorder.py): an immediate press-and-move
+   never arms the drag by design.
 
-Usage: python3 tests/checklist_interactions.py  (run from ~/workspace/realtor-app)
+Usage: python3 tests/checklist_interactions.py  (run from the repo root)
 Requires: a fresh `npm run export:web` build in dist/ (uses the built output).
+
+Environment (so parallel streams do not collide):
+  CTC_ROOT  project root (default: the repo containing this test file)
+  CTC_PORT  http port for the test server (default: 8926)
+  CTC_OUT   screenshot/output dir (default: /tmp/ctc-checklist-interactions)
 """
 import http.server
 import functools
@@ -26,10 +34,13 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.environ.get("CTC_ROOT") or os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
 DIST = os.path.join(ROOT, "dist")
-OUT = "/tmp/ctc-checklist-interactions"
-BASE = "http://127.0.0.1:8906/clear-to-close/"
+OUT = os.environ.get("CTC_OUT") or "/tmp/ctc-checklist-interactions"
+PORT = int(os.environ.get("CTC_PORT") or "8926")
+BASE = f"http://127.0.0.1:{PORT}/clear-to-close/"
 
 BUY_STEPS = [
     "Escrow open",
@@ -100,7 +111,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve():
     h = functools.partial(Handler, directory=DIST)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8906), h)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), h)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -146,6 +157,32 @@ def main():
         pg.add_init_script(
             "localStorage.setItem('ctc:escrows', '" + json.dumps(make_escrow()).replace("'", "\\'") + "');"
         )
+
+        def fulfill_rest_empty(route):
+            # Dormant cloud sync: reads return no rows so local state is
+            # untouched; writes succeed silently. Without this, the app's
+            # background sync hits the real Supabase host and the sandbox
+            # records failed-resource console errors (ERR_EMPTY_RESPONSE).
+            if route.request.method == "OPTIONS":
+                route.fulfill(
+                    status=200,
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+                        "Access-Control-Allow-Headers": "apikey, Content-Type, Authorization, Prefer",
+                        "Access-Control-Expose-Headers": "Content-Range",
+                    },
+                )
+                return
+            route.fulfill(
+                status=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Content-Type": "application/json",
+                    "Access-Control-Expose-Headers": "Content-Range",
+                },
+                json=[],
+            )
 
         def fulfill_signup(route):
             if route.request.method == "OPTIONS":
@@ -199,6 +236,17 @@ def main():
             )
 
         pg.route("**/rest/v1/realtor_profiles*", fulfill_profiles)
+
+        # Specific stubs for the dormant cloud-sync endpoints the app hits
+        # (escrow reads/upserts, invite reads, step upserts). Reads return no rows so local
+        # state is untouched; writes succeed silently. Without these, the
+        # app's background sync hits the real Supabase host and the sandbox
+        # records failed-resource console errors (ERR_EMPTY_RESPONSE).
+        # NOTE: a broad "**/rest/v1/*" catch-all is NOT used here — it
+        # interferes with the signup flow in this harness (verified).
+        pg.route("**/rest/v1/escrows*", fulfill_rest_empty)
+        pg.route("**/rest/v1/invites*", fulfill_rest_empty)
+        pg.route("**/rest/v1/steps*", fulfill_rest_empty)
 
         # Real flow: role -> signup -> skip -> deal list -> escrow detail.
         pg.goto(BASE)
@@ -255,35 +303,64 @@ def main():
         pg.screenshot(path=f"{OUT}/touch-scrolled.png")
 
         # --- 2. REAL DRAG REORDER --------------------------------------
-        # Back to the top, then drag the 5th row's grip down past the 6th row.
-        pg.evaluate(f"({SCROLL_CONTAINER_JS})().scrollTop = 0")
-        pg.wait_for_timeout(700)
-
+        # The list is at the tail after the swipe above. Long-press the tail
+        # grip to arm the drag (the product requires a ~500ms hold; an
+        # immediate press-and-move never arms it by design), then drag upward
+        # in small steps — the technique proven in tests/drag_reorder.py.
+        # The reorder is verified in persisted storage.
         order_before = pg.evaluate("() => JSON.parse(localStorage.getItem('ctc:escrows'))[0].buyerSteps.map(s => s.title)")
-        grip = pg.locator('[aria-label^="Drag to reorder"]').nth(4)
-        box = grip.bounding_box()
-        check("drag: grip handle found", box is not None)
-        if box:
-            cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-            pg.mouse.move(cx, cy)
-            pg.mouse.down()
-            # Slow, stepped drag: RNGH web tracks pointermove for the pan.
-            for i in range(1, 21):
-                pg.mouse.move(cx, cy + (170 * i / 20), steps=2)
-                pg.wait_for_timeout(30)
-            pg.wait_for_timeout(400)
-            pg.mouse.up()
-            pg.wait_for_timeout(1200)  # let the reorder commit + persist
+        grips = pg.locator('[aria-label^="Drag to reorder"]')
+        n_grips = grips.count()
+        check("drag: grip handle found", n_grips > 0, f"count={n_grips}")
+        if n_grips:
+            grip = grips.nth(n_grips - 1)  # tail row
+            # Ensure the tail grip is inside the viewport: the swipe above
+            # may leave it mounted but off-screen, where a mouse press cannot
+            # reach it.
+            try:
+                grip.scroll_into_view_if_needed(timeout=5000)
+            except Exception:
+                pass
+            pg.wait_for_timeout(600)  # let scroll settle + measurements update
+            box = grip.bounding_box()
+            visible = box is not None and 0 <= box["y"] <= 844 and 0 <= box["x"] <= 390
+            check("drag: tail grip is visible", visible, f"box={box}")
+            if visible:
+                cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+                tail_title = order_before[-1]
+                ARMED_JS = "() => [...document.querySelectorAll('*')].some(e => e.style && e.style.zIndex === '999')"
+                # Long-press to arm: the product requires a ~500ms hold. The
+                # arming can be flaky in this harness right after the CDP
+                # touch swipe (pre-existing Playwright/RNGH input quirk, also
+                # noted in tests/drag_reorder.py), so retry the press until the
+                # row arms or we run out of attempts.
+                armed = False
+                for attempt in range(3):
+                    pg.mouse.move(cx, cy)
+                    pg.mouse.down()
+                    pg.wait_for_timeout(700)
+                    armed = pg.evaluate(ARMED_JS)
+                    if armed:
+                        break
+                    pg.mouse.up()
+                    pg.wait_for_timeout(500)
+                check("drag: long-press armed the row", armed)
+                if armed:
+                    # Slow, stepped drag: RNGH web tracks pointermove for the pan.
+                    for i in range(1, 21):
+                        pg.mouse.move(cx, cy + (-200 * i / 20), steps=2)
+                        pg.wait_for_timeout(40)
+                    pg.wait_for_timeout(400)
+                    pg.mouse.up()
+                    pg.wait_for_timeout(1200)  # let the reorder commit + persist
 
-            order_after = pg.evaluate("() => JSON.parse(localStorage.getItem('ctc:escrows'))[0].buyerSteps.map(s => s.title)")
-            moved = order_after != order_before
-            detail = ""
-            if moved:
-                idx_before = order_before.index("Homeowners insurance quote")
-                idx_after = order_after.index("Homeowners insurance quote")
-                detail = f"'Homeowners insurance quote' {idx_before} -> {idx_after}"
-            check("drag: real grip drag reordered the checklist", moved, detail or f"order unchanged: {order_after[:6]}")
-            pg.screenshot(path=f"{OUT}/after-drag.png")
+                    order_after = pg.evaluate("() => JSON.parse(localStorage.getItem('ctc:escrows'))[0].buyerSteps.map(s => s.title)")
+                    moved = order_after != order_before
+                    detail = ""
+                    if moved:
+                        detail = f"'{tail_title}' {order_before.index(tail_title)} -> {order_after.index(tail_title)}"
+                    check("drag: real grip drag reordered the checklist", moved, detail or f"order unchanged: {order_after[:6]}")
+                    pg.screenshot(path=f"{OUT}/after-drag.png")
 
         browser.close()
 

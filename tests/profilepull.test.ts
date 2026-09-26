@@ -8,13 +8,20 @@
 // sent the realtor to '/profile-create'.
 //
 // The fix: store.pullProfileFromCloud() pulls the cloud row when the local
-// copy is missing (and persists it), and resolvePostAuthHref only treats a
-// profile with a non-empty name as completed.
+// copy is missing (and persists it). The routing rule is profile EXISTENCE,
+// not name completeness: a cloud row with ANY saved field counts as an
+// existing profile even when its name is NULL/empty — only a genuinely new
+// account (no row, or a row with no saved fields at all) enters profile
+// creation.
 //
 // Routing cases (must fail without the fix, pass with it):
 //   1. existing account with completed profile -> deal list ('/')
+//   1b. existing account with name-NULL row but saved fields -> deal list ('/')
 //   2. brand-new sign-up without profile -> profile setup ('/profile-create')
 //   3. "Skip for now" -> deal list ('/'), never a trap
+//   4. all-null cloud row (ping probe artifact) -> profile setup ('/profile-create')
+//   5. cloud failure fails open, never throws
+//   6. local profile already present -> deal list ('/')
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
@@ -56,6 +63,21 @@ function emptyRow(): Record<string, unknown> {
   };
 }
 
+/** The reported real-account shape: name NULL, every other field saved. */
+function nameNullRow(): Record<string, unknown> {
+  return {
+    user_id: UID,
+    name: null,
+    photo_url: null,
+    about: 'About Rita',
+    years_experience: '10',
+    deals_closed: '30',
+    areas_served: 'Santa Clarita',
+    phone: '555-0100',
+    dre_license: 'DRE-123',
+  };
+}
+
 /** Mock Supabase client: rows=null means the query itself fails. */
 function mockProfileClient(rows: Record<string, unknown>[] | null) {
   return {
@@ -88,6 +110,27 @@ async function main(): Promise<void> {
     assert(after !== null && after.name === 'Rita Realtor', 'pulled profile is persisted locally');
     const href = resolvePostAuthHref({ sessionUserId: UID, profile: pulled, skipped: false });
     assert(href === '/', 'existing account with completed profile -> deal list after login');
+  }
+
+  // 1b. Existing account whose name is NULL but all other fields are saved
+  // (the reported real-account shape) -> the profile hydrates and login
+  // routes to the deal list, NOT profile creation.
+  {
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, { cloudClient: () => mockProfileClient([nameNullRow()]) });
+    const pulled = await store.pullProfileFromCloud();
+    assert(pulled !== null, 'name-NULL row with saved fields is returned, not discarded');
+    assert(pulled !== null && pulled.about === 'About Rita', 'saved fields hydrate the profile');
+    assert(pulled !== null && pulled.yearsExperience === '10', 'years_experience hydrates');
+    assert(pulled !== null && pulled.dealsClosed === '30', 'deals_closed hydrates');
+    assert(pulled !== null && pulled.areasServed === 'Santa Clarita', 'areas_served hydrates');
+    assert(pulled !== null && pulled.phone === '555-0100', 'phone hydrates through the shared mapper');
+    assert(pulled !== null && pulled.dreLicense === 'DRE-123', 'dre_license hydrates');
+    assert(pulled !== null && pulled.name === '', 'null name maps to an empty string');
+    const after = await store.getProfile();
+    assert(after !== null && after.about === 'About Rita', 'hydrated profile is persisted locally (edit form reads it)');
+    const href = resolvePostAuthHref({ sessionUserId: UID, profile: pulled, skipped: false });
+    assert(href === '/', 'existing account with name-NULL profile -> deal list after login');
   }
 
   // 2. Brand-new sign-up: no cloud row either -> profile creation (step 2).

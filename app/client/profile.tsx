@@ -4,13 +4,13 @@
 // the license line ONLY when the realtor entered one (empty = no line at
 // all), about, stats, areas. No Call / Message actions (removed per Anuraj,
 // Sept 25). One profile per realtor, shown across all their escrows.
-import React, { useCallback, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { createElement, useCallback, useState } from 'react';
+import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
 import { auth } from '../../src/lib/auth';
 import type { ClientRole, RealtorProfile } from '../../src/lib/types';
-import { Kicker, initialsOf } from '../../src/components/ui';
+import { Card, Kicker, initialsOf } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 
 function Stat({ value, label }: { value: string; label: string }) {
@@ -99,7 +99,9 @@ export default function ClientRealtorProfile() {
         )
       ) : (
         <>
-          <View style={styles.hero}>
+          {/* Hero card: photo 96px → name → license (only when entered) →
+              tap-to-call phone row (mockup 01 · ⑮). */}
+          <Card style={styles.heroCard}>
             {profile.photoUri ? (
               <Image source={{ uri: profile.photoUri }} style={styles.photo} />
             ) : (
@@ -111,25 +113,56 @@ export default function ClientRealtorProfile() {
             {profile.dreLicense.trim().length > 0 && (
               <Text style={styles.dre}>DRE / license number: {profile.dreLicense.trim()}</Text>
             )}
-          </View>
+            {profile.phone.trim().length > 0 && (
+              Platform.OS === 'web' ? (
+                // The approved mockup renders a real tap-to-call anchor.
+                createElement(
+                  'a',
+                  {
+                    href: `tel:${profile.phone.trim()}`,
+                    'aria-label': `Call ${profile.name} at ${profile.phone.trim()}`,
+                    style: {
+                      ...StyleSheet.flatten(styles.phoneRow),
+                      textDecorationLine: 'none',
+                      cursor: 'pointer',
+                    },
+                  },
+                  <Text style={styles.phoneLabel}>Phone</Text>,
+                  <Text style={styles.phoneNum}>{profile.phone.trim()}</Text>,
+                )
+              ) : (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Call ${profile.name} at ${profile.phone.trim()}`}
+                  onPress={() => Linking.openURL(`tel:${profile.phone.trim()}`)}
+                  style={({ pressed }) => [styles.phoneRow, pressed && { opacity: 0.55 }]}
+                >
+                  <Text style={styles.phoneLabel}>Phone</Text>
+                  <Text style={styles.phoneNum}>{profile.phone.trim()}</Text>
+                </Pressable>
+              )
+            )}
+          </Card>
 
           {profile.about.trim().length > 0 && (
-            <View style={styles.block}>
+            <Card style={styles.blockCard}>
               <Kicker>About</Kicker>
               <Text style={styles.body}>{profile.about}</Text>
-            </View>
+            </Card>
           )}
 
-          <View style={styles.stats}>
-            <Stat value={profile.yearsExperience} label="Years experience" />
-            <Stat value={profile.dealsClosed} label="Deals closed" />
-          </View>
+          <Card style={styles.blockCard}>
+            <View style={styles.stats}>
+              <Stat value={profile.yearsExperience} label="Years experience" />
+              <Stat value={profile.dealsClosed} label="Deals closed" />
+            </View>
+          </Card>
 
           {profile.areasServed.trim().length > 0 && (
-            <View style={styles.block}>
+            <Card style={styles.blockCard}>
               <Kicker>Areas served</Kicker>
               <Text style={styles.body}>{profile.areasServed}</Text>
-            </View>
+            </Card>
           )}
 
           <Text style={styles.note}>
@@ -182,9 +215,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 40,
   },
-  hero: {
+  heroCard: {
     alignItems: 'center',
     marginTop: 26,
+    paddingVertical: 24,
   },
   photo: {
     width: 96,
@@ -214,8 +248,35 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
-  block: {
-    marginTop: 24,
+  // Tap-to-call phone row (mockup 01 · .pfphone): PHONE label left, number
+  // right, hairline top border, 52px min-height.
+  phoneRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    minHeight: 52,
+    marginTop: 16,
+    marginHorizontal: 4,
+    paddingTop: 14,
+    paddingHorizontal: 4,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(231,224,211,.8)',
+  },
+  phoneLabel: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: colors.muted,
+  },
+  phoneNum: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.accent,
+  },
+  blockCard: {
+    marginTop: 14,
   },
   body: {
     fontSize: 14.5,
@@ -227,7 +288,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     gap: 40,
-    marginTop: 24,
+    paddingVertical: 6,
   },
   stat: {
     alignItems: 'center',

@@ -8,6 +8,7 @@
 
 import { BUY_STEPS, SELL_STEPS, type StepTemplate } from './steps';
 import { daysToClose as dayCount } from './dates';
+import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import type {
   ClientLink,
   ClientRole,
@@ -18,6 +19,7 @@ import type {
   RealtorProfile,
   RedeemResult,
   StepT,
+  UpdateEscrowInput,
 } from './types';
 
 export interface KV {
@@ -59,11 +61,29 @@ export interface Store {
   listEscrows(): Promise<Escrow[]>;
   getEscrow(id: string): Promise<Escrow | null>;
   createEscrow(input: CreateEscrowInput): Promise<Escrow>;
+  /**
+   * Edit an escrow's fields (deal-list edit round, Sept 2026). Validates
+   * like creation; status and steps are preserved (editing a closed or
+   * cancelled escrow keeps it closed/cancelled).
+   */
+  updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow>;
+  /**
+   * Move an escrow to the Cancelled section. Closed escrows cannot be
+   * cancelled (their cards show the pencil only).
+   */
+  cancelEscrow(escrowId: string): Promise<Escrow>;
   toggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Escrow>;
   addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow>;
   reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow>;
   updateTargetDate(escrowId: string, closeDate: string): Promise<Escrow>;
-  closeEscrow(escrowId: string): Promise<Escrow>;
+  /** "Edit dates" sheet: both dates editable; target close must be ≥ opened. */
+  updateDates(escrowId: string, openDate: string, closeDate: string): Promise<Escrow>;
+  /**
+   * Close one side of an escrow (per-side lifecycle). Dual-agency sides
+   * close independently; the escrow-level status flips to 'closed' only
+   * when every side is closed.
+   */
+  closeEscrow(escrowId: string, role: ClientRole): Promise<Escrow>;
   createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite>;
   revokeInvite(inviteId: string): Promise<void>;
   /** Replace an invite's code (cloud collision regeneration). */
@@ -195,6 +215,13 @@ export function createStore(kv: KV): Store {
       }
     }
     data.escrows = e ? (JSON.parse(e) as Escrow[]) : [];
+    // Backfill for escrows saved before the per-side close dates existed
+    // (escrow lifecycle, Sept 2026). A legacy 'closed' status is preserved
+    // as-is — isEscrowClosed treats it as closed.
+    for (const esc of data.escrows) {
+      if (typeof esc.buyerClosedAt !== 'string') esc.buyerClosedAt = null;
+      if (typeof esc.sellerClosedAt !== 'string') esc.sellerClosedAt = null;
+    }
     data.invites = i ? (JSON.parse(i) as Invite[]) : [];
     // Backfill for links saved before 0002 device linking.
     data.links = (l ? (JSON.parse(l) as ClientLink[]) : []).map((link) => ({
@@ -346,6 +373,8 @@ export function createStore(kv: KV): Store {
         buyerSteps: buildSteps(BUY_STEPS),
         sellerSteps: buildSteps(SELL_STEPS),
         status: 'open',
+        buyerClosedAt: null,
+        sellerClosedAt: null,
         createdAt: new Date().toISOString(),
       };
       data.escrows.push(escrow);
@@ -360,6 +389,14 @@ export function createStore(kv: KV): Store {
       if (!step) throw new Error(`Step not found: ${stepId}`);
       step.done = !step.done;
       step.completedAt = step.done ? new Date().toISOString() : null;
+      if (!step.done) {
+        // Unchecking any step in a closed side moves that side back to
+        // Active (approved escrow lifecycle, Sept 2026). Only that side
+        // reopens — the other side of a dual-agency escrow is untouched.
+        if (role === 'buyer') e.buyerClosedAt = null;
+        else e.sellerClosedAt = null;
+      }
+      applyDerivedStatus(e);
       const next = replaceEscrow(e);
       await persist();
       return next;
@@ -404,16 +441,95 @@ export function createStore(kv: KV): Store {
       await ensureLoaded();
       assertDate(closeDate, 'closeDate');
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
+      if (parseLocalMidnight(closeDate) < parseLocalMidnight(e.openDate)) {
+        throw new Error('updateTargetDate: closeDate cannot be before openDate');
+      }
       e.closeDate = closeDate;
       const next = replaceEscrow(e);
       await persist();
       return next;
     },
 
-    async closeEscrow(escrowId: string): Promise<Escrow> {
+    /**
+     * "Edit dates" sheet (approved escrow lifecycle, Sept 2026): both dates
+     * are editable in place; the target close must be on or after the opened
+     * date. The time tracker recomputes from these dates.
+     */
+    async updateDates(escrowId: string, openDate: string, closeDate: string): Promise<Escrow> {
+      await ensureLoaded();
+      assertDate(openDate, 'openDate');
+      assertDate(closeDate, 'closeDate');
+      if (parseLocalMidnight(closeDate) < parseLocalMidnight(openDate)) {
+        throw new Error('updateDates: closeDate cannot be before openDate');
+      }
+      const e = cloneEscrow(findEscrowOrThrow(escrowId));
+      e.openDate = openDate;
+      e.closeDate = closeDate;
+      const next = replaceEscrow(e);
+      await persist();
+      return next;
+    },
+
+    /**
+     * Close one side of an escrow (approved escrow lifecycle, Sept 2026).
+     * Dual-agency sides close independently — closing the buyer side leaves
+     * the seller side active and vice versa. The escrow-level `status` flips
+     * to 'closed' only when every side is closed. Requires every step on the
+     * side to be checked off (the UI only offers the button then).
+     */
+    async closeEscrow(escrowId: string, role: ClientRole): Promise<Escrow> {
       await ensureLoaded();
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      e.status = 'closed';
+      const steps = roleSteps(e, role);
+      if (steps.length === 0 || steps.some((s) => !s.done)) {
+        throw new Error('closeEscrow: every step on the side must be complete');
+      }
+      const today = todayLocalISO();
+      if (role === 'buyer') e.buyerClosedAt = today;
+      else e.sellerClosedAt = today;
+      applyDerivedStatus(e);
+      const next = replaceEscrow(e);
+      await persist();
+      return next;
+    },
+
+    async updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
+      await ensureLoaded();
+      const address = input.address.trim();
+      const city = input.city.trim();
+      if (!address) throw new Error('updateEscrow: address is required');
+      if (!city) throw new Error('updateEscrow: city is required');
+      assertDate(input.openDate, 'openDate');
+      assertDate(input.closeDate, 'closeDate');
+      if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
+        throw new Error('updateEscrow: closeDate cannot be before openDate');
+      }
+      const trimName = (n?: string) => {
+        const t = (n ?? '').trim();
+        return t ? t : null;
+      };
+      const e = cloneEscrow(findEscrowOrThrow(escrowId));
+      e.address = address;
+      e.city = city;
+      e.side = input.side;
+      e.buyerName = trimName(input.buyerName);
+      e.sellerName = trimName(input.sellerName);
+      e.openDate = input.openDate;
+      e.closeDate = input.closeDate;
+      // Status and steps are never touched by an update: editing a closed
+      // or cancelled escrow keeps it closed/cancelled with its steps intact.
+      const next = replaceEscrow(e);
+      await persist();
+      return next;
+    },
+
+    async cancelEscrow(escrowId: string): Promise<Escrow> {
+      await ensureLoaded();
+      const e = cloneEscrow(findEscrowOrThrow(escrowId));
+      if (e.status === 'closed') {
+        throw new Error('cancelEscrow: a closed escrow cannot be cancelled');
+      }
+      e.status = 'cancelled';
       const next = replaceEscrow(e);
       await persist();
       return next;

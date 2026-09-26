@@ -31,6 +31,14 @@ export function selectionToSide(sel: SideSelection): Side {
 }
 
 /**
+ * Inverse of selectionToSide (edit round, Sept 2026): pre-populate the
+ * picker toggles from a stored escrow side.
+ */
+export function sideToSelection(side: Side): SideSelection {
+  return { buy: side === 'buy' || side === 'both', sell: side === 'sell' || side === 'both' };
+}
+
+/**
  * How the client-name field adapts: one "Client name" field for a single
  * side, "Buyer name" + "Seller name" fields when both are picked.
  */

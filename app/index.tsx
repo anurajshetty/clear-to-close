@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
@@ -6,11 +6,15 @@ import { store } from '../src/lib/store-instance';
 import { shouldShowProfileNudge } from '../src/lib/bootRoute';
 import type { ClientRole, Escrow, RealtorProfile, StepT } from '../src/lib/types';
 import { DealCard } from '../src/components/DealCard';
+import { SectionHeader } from '../src/components/SectionHeader';
 import { daysToClose } from '../src/lib/dates';
+import { closedDisplayDate, isClosedRow } from '../src/lib/lifecycle';
 import { formatShortDate } from '../src/components/TimeTrackerCard';
 import { Kicker, PrimaryButton } from '../src/components/ui';
 import { initialsOf } from '../src/components/ui';
 import NewEscrowSheet from '../src/components/NewEscrowSheet';
+import UpdateEscrowSheet from '../src/components/UpdateEscrowSheet';
+import CancelEscrowSheet from '../src/components/CancelEscrowSheet';
 import { colors } from '../src/theme';
 
 export type Role = ClientRole;
@@ -84,9 +88,10 @@ interface ChipBits {
 }
 
 function chipBits(e: Escrow): ChipBits {
-  if (e.status === 'closed') {
+  if (isClosedRow(e)) {
+    const d = closedDisplayDate(e);
     return {
-      chip: `Closed ${formatShortDate(e.closeDate)}`,
+      chip: d ? `Closed ${formatShortDate(d)}` : 'Closed',
       chipUrgent: false,
       chipClosed: true,
     };
@@ -99,12 +104,35 @@ function chipBits(e: Escrow): ChipBits {
   return { chip: label, chipUrgent: left <= 10, chipClosed: false };
 }
 
+/** Deal-list section headers use the shared SectionHeader component
+ * (src/components/SectionHeader.tsx): bordered dropdown-style card,
+ * 52px min-height, proper up/down chevrons. */
+
 export default function DealList() {
   const router = useRouter();
   const [escrows, setEscrows] = useState<Escrow[]>([]);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [profileIncomplete, setProfileIncomplete] = useState(false);
   const [sheetVisible, setSheetVisible] = useState(false);
+  // Deal-list edit round (Sept 2026): the escrow being edited, the escrow
+  // awaiting cancel confirmation, toast state, and the Cancelled section's
+  // collapsed state (collapsed by default; auto-expands on cancel).
+  const [editing, setEditing] = useState<Escrow | null>(null);
+  const [cancelling, setCancelling] = useState<Escrow | null>(null);
+  const [cancelledOpen, setCancelledOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
+  };
+
+  // Collapsible deal-list sections (mockup 01 · ①): Active starts expanded,
+  // Closed starts collapsed.
+  const [activeOpen, setActiveOpen] = useState(true);
+  const [closedOpen, setClosedOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -134,10 +162,15 @@ export default function DealList() {
   );
 
   const open = escrows
-    .filter((e) => e.status !== 'closed')
+    // Neither a closed row (lifecycle per-side semantics) nor cancelled —
+    // cancelled escrows have their own section.
+    .filter((e) => e.status !== 'cancelled' && !isClosedRow(e))
     .sort((a, b) => a.closeDate.localeCompare(b.closeDate));
   const closed = escrows
-    .filter((e) => e.status === 'closed')
+    .filter((e) => isClosedRow(e))
+    .sort((a, b) => b.closeDate.localeCompare(a.closeDate));
+  const cancelled = escrows
+    .filter((e) => e.status === 'cancelled')
     .sort((a, b) => b.closeDate.localeCompare(a.closeDate));
 
   const renderDeal = (e: Escrow) => {
@@ -146,6 +179,7 @@ export default function DealList() {
     return (
       <View key={e.id} style={styles.dealWrap}>
         <DealCard
+          escrowId={e.id}
           address={e.address}
           city={e.city}
           partyLine={partyLine(e)}
@@ -153,19 +187,31 @@ export default function DealList() {
           chip={chip.chip}
           chipUrgent={chip.chipUrgent}
           chipClosed={chip.chipClosed}
+          cancelled={e.status === 'cancelled'}
           fracLabel={bits.fracLabel}
           frac={bits.frac}
           onPress={() => router.push(`/escrow/${e.id}`)}
+          onEdit={() => setEditing(e)}
+          // Closed and cancelled cards show the pencil only — no X.
+          onCancel={e.status === 'open' ? () => setCancelling(e) : null}
         />
       </View>
     );
   };
 
+  const countLine =
+    `${open.length} open · ${closed.length} closed` +
+    (cancelled.length > 0 ? ` · ${cancelled.length} cancelled` : '');
+
+  const firstName = (profile?.name ?? '').trim().split(/\s+/)[0] ?? '';
+
   return (
+    <View style={styles.wrap}>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.headRow}>
         <View>
-          <Kicker>Realtor</Kicker>
+          {/* "Hi {realtor name}" replaces the REALTOR kicker (mockup 01 · ①). */}
+          <Kicker>{firstName ? `Hi ${firstName}` : 'Hi there'}</Kicker>
           <Text style={styles.h2}>Escrows</Text>
         </View>
         <Pressable
@@ -184,7 +230,7 @@ export default function DealList() {
           )}
         </Pressable>
       </View>
-      <Text style={styles.count}>{`${open.length} open · ${closed.length} closed`}</Text>
+      <Text style={styles.count}>{countLine}</Text>
 
       {escrows.length === 0 ? (
         <View style={styles.empty}>
@@ -207,15 +253,41 @@ export default function DealList() {
         </View>
       ) : (
         <>
-          {open.map(renderDeal)}
+          {/* "+ New escrow" sits above the sections (mockup 01 · ①). */}
           <View style={styles.newBtnWrap}>
             <PrimaryButton title="+ New escrow" onPress={() => setSheetVisible(true)} />
           </View>
+          <SectionHeader
+            title="Active escrows"
+            count={open.length}
+            expanded={activeOpen}
+            onToggle={() => setActiveOpen((v) => !v)}
+            testID="section-active"
+          />
+          {activeOpen && open.map(renderDeal)}
           {closed.length > 0 && (
             <>
-              <Text style={styles.sectionHead}>Closed</Text>
-              {closed.map(renderDeal)}
+              <SectionHeader
+                title="Closed escrows"
+                count={closed.length}
+                expanded={closedOpen}
+                onToggle={() => setClosedOpen((v) => !v)}
+                testID="section-closed"
+              />
+              {closedOpen && closed.map(renderDeal)}
             </>
+          )}
+          {cancelled.length > 0 && (
+            <View style={styles.cancelledSection}>
+              <SectionHeader
+                title="Cancelled escrows"
+                count={cancelled.length}
+                expanded={cancelledOpen}
+                onToggle={() => setCancelledOpen((v) => !v)}
+                testID="section-cancelled"
+              />
+              {cancelledOpen && cancelled.map(renderDeal)}
+            </View>
           )}
         </>
       )}
@@ -228,11 +300,49 @@ export default function DealList() {
           router.push(`/escrow/${id}`);
         }}
       />
-    </ScrollView>
+
+      <UpdateEscrowSheet
+        escrow={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(updated) => {
+          setEditing(null);
+          if (updated.status === 'cancelled') {
+            // Cancelled via the sheet's danger action: reveal the move.
+            setCancelledOpen(true);
+          } else {
+            showToast('Escrow updated.');
+          }
+          load();
+        }}
+      />
+
+      <CancelEscrowSheet
+        escrow={cancelling}
+        onClose={() => setCancelling(null)}
+        onCancelled={() => {
+          setCancelling(null);
+          setCancelledOpen(true);
+          load();
+        }}
+      />
+
+      </ScrollView>
+
+      {/* Toast sits above the scroll view so it never scrolls away. */}
+      {toastMsg && (
+        <View style={styles.toast} testID="toast">
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrap: {
+    flex: 1,
+    backgroundColor: colors.paper,
+  },
   screen: {
     flex: 1,
     backgroundColor: colors.paper,
@@ -280,16 +390,11 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   newBtnWrap: {
-    marginTop: 6,
+    marginTop: 2,
+    marginBottom: 14,
   },
-  sectionHead: {
-    fontSize: 12,
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-    color: colors.muted,
-    fontWeight: '700',
+  cancelledSection: {
     marginTop: 22,
-    marginBottom: 10,
   },
   empty: {
     marginTop: 56,
@@ -330,5 +435,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.accent,
     fontWeight: '700',
+  },
+  toast: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 40,
+    backgroundColor: colors.ink,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

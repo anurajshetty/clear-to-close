@@ -207,17 +207,21 @@ def main():
 
         pg.route("**/auth/v1/signup*", fulfill_signup)
 
-        # The app probes the cloud profile after sign-in; the sandbox has no
-        # route to the real project, so stub it hermetically (empty = no
-        # cloud profile yet, which is the expected post-signup state).
-        def fulfill_profiles(route):
+        # Hermetic REST stub: the app's background cloud sync probes escrows,
+        # invites, and the realtor profile after sign-in. The sandbox has no
+        # route to the real Supabase host, so unstubbed requests die with
+        # net::ERR_EMPTY_RESPONSE, which Chromium logs as console errors and
+        # fails the zero-JS-errors check. Every REST read returns no rows so
+        # local state is untouched; writes succeed silently. (Same pattern as
+        # tests/drag_reorder.py.)
+        def fulfill_rest_empty(route):
             if route.request.method == "OPTIONS":
                 route.fulfill(
                     status=200,
                     headers={
                         "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "GET, OPTIONS",
-                        "Access-Control-Allow-Headers": "apikey, Content-Type, Authorization",
+                        "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+                        "Access-Control-Allow-Headers": "apikey, Content-Type, Authorization, Prefer",
                         "Access-Control-Expose-Headers": "Content-Range",
                     },
                 )
@@ -232,7 +236,7 @@ def main():
                 json=[],
             )
 
-        pg.route("**/rest/v1/realtor_profiles*", fulfill_profiles)
+        pg.route("**/rest/v1/*", fulfill_rest_empty)
 
         # 1. Boot -> role picker -> realtor sign-up.
         pg.goto(BASE)

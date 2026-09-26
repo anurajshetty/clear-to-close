@@ -32,10 +32,11 @@ import json
 
 from playwright.sync_api import sync_playwright, expect
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.path.expanduser(os.environ.get("CTC_ROOT", "~/workspace/realtor-app"))
 DIST = os.path.join(ROOT, "dist")
-OUT = "/tmp/ctc-login-routing"
-BASE = "http://127.0.0.1:8905/clear-to-close/"
+OUT = os.environ.get("CTC_LOGIN_OUT", "/tmp/ctc-login-routing")
+PORT = int(os.environ.get("CTC_LOGIN_PORT", "8905"))
+BASE = f"http://127.0.0.1:{PORT}/clear-to-close/"
 LOGIN = BASE + "login"
 
 UID = "test-uid-1"
@@ -77,7 +78,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve():
     h = functools.partial(Handler, directory=DIST)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8905), h)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), h)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -262,7 +263,10 @@ def main():
                 "e.g. 240": "42",
                 "e.g. Santa Clarita, Valencia": "Valencia",
                 "e.g. 01992736": "DRE-123",
-                "For Call / Message buttons": "555-0100",
+                # NOTE: phone placeholder was "For Call / Message buttons" until
+                # Sept 25, when the Call/Message buttons were removed per Anuraj
+                # and the placeholder became the tap-to-call copy below.
+                "Shown as a tap-to-call row on your client profile": "555-0100",
             }
             missing = []
             for placeholder, value in expected.items():

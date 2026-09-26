@@ -5,8 +5,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUT="/tmp/ctc-tests"
-rm -rf "$OUT"
+# Unique per-run output dir: parallel worktrees on the same machine must not
+# clobber each other's compiled tests (a fixed /tmp/ctc-tests raced and
+# deleted .js files mid-run). Override with CTC_TESTS_OUT if needed.
+OUT="${CTC_TESTS_OUT:-}"
+if [ -z "$OUT" ]; then
+  OUT="$(mktemp -d /tmp/ctc-tests.XXXXXX)"
+  trap 'rm -rf "$OUT"' EXIT
+else
+  rm -rf "$OUT"
+fi
 
 npx tsc --ignoreConfig \
   "$ROOT/src/lib/types.ts" \
@@ -19,6 +27,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/bootRoute.ts" \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/dates.ts" \
+  "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
@@ -26,12 +35,15 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/uniqueness.test.ts" \
   "$ROOT/tests/checklist.test.ts" \
   "$ROOT/tests/sidepicker.test.ts" \
+  "$ROOT/tests/editcancel.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
   "$ROOT/tests/dates.test.ts" \
+  "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
   "$ROOT/tests/profilepull.test.ts" \
+  "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
@@ -48,11 +60,14 @@ node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
 node "$OUT/tests/checklist.test.js"
 node "$OUT/tests/sidepicker.test.js"
+node "$OUT/tests/editcancel.test.js"
 node "$OUT/tests/persistence.test.js"
 # Pinned TZ so the DST-crossing day-count regression is deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
 node "$OUT/tests/cloudsync.test.js"
+node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/profilepull.test.js"
+node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"

@@ -13,6 +13,8 @@ import {
   drainOutbox,
   enqueueOutbox,
   ensureCloudUser,
+  fromEscrowRow,
+  isMissingColumnError,
   isUniqueViolation,
   mapClientViewRpc,
   mapRedeemRpc,
@@ -32,6 +34,9 @@ declare const process: { env: Record<string, string | undefined>; exitCode?: num
 // scripted {data, error}. Query builders are thenable, like postgrest-js.
 function makeClient(script: Record<string, { data?: unknown; error?: unknown }[]>) {
   const calls: string[] = [];
+  // writes tracks mutating builder calls separately so tests can assert a
+  // path is read-only (the ping probe must never write to the profile row).
+  const writes: string[] = [];
   const next = (key: string) => {
     calls.push(key);
     const q = script[key];
@@ -43,15 +48,25 @@ function makeClient(script: Record<string, { data?: unknown; error?: unknown }[]
     select: () => builder(key),
     eq: () => builder(key),
     limit: () => builder(key),
-    upsert: () => builder(key),
-    insert: () => builder(key),
-    update: () => builder(key),
+    upsert: () => {
+      writes.push(key);
+      return builder(key);
+    },
+    insert: () => {
+      writes.push(key);
+      return builder(key);
+    },
+    update: () => {
+      writes.push(key);
+      return builder(key);
+    },
     then: (res: (v: unknown) => void) => {
       res(next(key));
     },
   });
   return {
     calls,
+    writes,
     auth: {
       getSession: async () => next('auth.getSession'),
       // Anonymous auth stays disabled: any call is a test failure.
@@ -83,6 +98,8 @@ function escrowFixture() {
     ],
     sellerSteps: [],
     status: 'open' as const,
+    buyerClosedAt: null,
+    sellerClosedAt: null,
     createdAt: '2026-09-25T09:00:00Z',
   };
 }
@@ -94,6 +111,47 @@ async function main(): Promise<void> {
   assert(erow.user_id === UID, 'escrow row stamps user_id');
   assert(erow.open_date === '2026-09-25' && erow.close_date === '2026-11-25', 'escrow row snake_case dates');
   assert(erow.buyer_name === 'Test Buyer' && erow.seller_name === null, 'escrow row party names');
+  assert(erow.buyer_closed_at === null && erow.seller_closed_at === null, 'escrow row per-side close columns (null when open)');
+
+  // Per-side close dates round-trip (migration 0007).
+  const closed = { ...e, buyerClosedAt: '2026-09-26', status: 'closed' as const };
+  const closedRow = toEscrowRow(UID, closed);
+  assert(closedRow.buyer_closed_at === '2026-09-26', 'toEscrowRow maps buyer close date');
+  const back = fromEscrowRow({ ...closedRow, buyer_name: 'Test Buyer' });
+  assert(back.buyerClosedAt === '2026-09-26', 'fromEscrowRow reads buyer close date');
+  assert(back.sellerClosedAt === null, 'fromEscrowRow null for the open side');
+  assert(back.status === 'closed', 'fromEscrowRow derives closed from per-side dates');
+  // Legacy row from before migration 0007: status column still honored.
+  const legacy = fromEscrowRow({ id: 'x', side: 'buy', status: 'closed' });
+  assert(legacy.status === 'closed' && legacy.buyerClosedAt === null, 'legacy closed row keeps status without side dates');
+  const legacyOpen = fromEscrowRow({ id: 'x', side: 'buy', status: 'open' });
+  assert(legacyOpen.status === 'open', 'legacy open row stays open');
+
+  // Missing-column detection (pre-migration databases).
+  assert(isMissingColumnError({ code: '42703', message: 'x' }), '42703 -> missing column');
+  assert(isMissingColumnError({ code: 'PGRST204', message: "Could not find the 'buyer_closed_at' column" }), 'schema-cache message -> missing column');
+  assert(!isMissingColumnError({ code: '42501', message: 'rls blocked' }), 'RLS error is not a missing column');
+  assert(!isMissingColumnError(null), 'null error is not a missing column');
+
+  // pushEscrowNow falls back to the pre-migration column set when the
+  // database hasn't applied 0007 yet (and still pushes the steps).
+  const upserted: Record<string, unknown>[] = [];
+  const fallbackClient = {
+    from: (table: string) => ({
+      upsert: (rows: Record<string, unknown>[]) => {
+        if (table === 'escrows') {
+          upserted.push(rows[0]);
+          if (!('buyer_closed_at' in rows[0])) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({ data: null, error: { code: '42703', message: 'column buyer_closed_at does not exist' } });
+        }
+        return Promise.resolve({ data: null, error: null });
+      },
+    }),
+  };
+  await pushEscrowNow(fallbackClient, UID, closed);
+  assert(upserted.length === 2, 'escrow upsert retried after the missing-column error');
+  assert(!('buyer_closed_at' in upserted[1]) && !('seller_closed_at' in upserted[1]), 'retry drops the per-side close columns');
+  assert(upserted[1].id === closed.id, 'retry still pushes the same escrow');
 
   const srows = toStepRows(e.id, 'buyer', e.buyerSteps);
   assert(srows.length === 2, 'two step rows');
@@ -252,20 +310,26 @@ async function main(): Promise<void> {
   const p2 = await pingCloud(cReadFail);
   assert(p2.ran && !p2.ok && (p2.error ?? '').includes('read probe'), 'ping reports RLS read failure');
 
-  const cWriteFail = makeClient({
+  // The probe is read-only by design: it must never write to the profile
+  // row. (Regression: the old write round-trip upserted { name: null } on
+  // every boot, wiping the realtor's saved name and creating phantom
+  // all-null rows for brand-new accounts.)
+  const cReadOnly = makeClient({
     'auth.getSession': [{ data: { session: { user: { id: UID } } } }],
-    'from:realtor_profiles': [{ data: [] }, { error: { code: '42501', message: 'rls blocked' } }],
+    'from:realtor_profiles': [{ data: [{ user_id: UID }] }],
   });
-  const p3 = await pingCloud(cWriteFail);
-  assert(p3.ran && !p3.ok && (p3.error ?? '').includes('write probe'), 'ping reports RLS write failure');
+  const p3 = await pingCloud(cReadOnly);
+  assert(p3.ran && p3.ok, 'ping succeeds on the read probe alone');
+  assert(cReadOnly.writes.length === 0, 'ping never issues a write (upsert/insert/update)');
 
   const cOk = makeClient({
     'auth.getSession': [{ data: { session: { user: { id: UID } } } }],
-    'from:realtor_profiles': [{ data: [] }, { data: null }, { data: [{ user_id: UID }] }],
+    'from:realtor_profiles': [{ data: [{ user_id: UID }] }],
   });
   const p4 = await pingCloud(cOk);
-  assert(p4.ran && p4.ok && p4.userId === UID, 'ping happy path: session + read + write round-trip');
+  assert(p4.ran && p4.ok && p4.userId === UID, 'ping happy path: session + read probe');
   assert(!cOk.calls.includes('auth.signInAnonymously'), 'ping happy path never signs in anonymously');
+  assert(cOk.writes.length === 0, 'ping happy path performs zero writes');
 
   // ensureCloudUser resolves the persisted session's user, or null.
   const cCache = makeClient({

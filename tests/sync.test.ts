@@ -120,9 +120,25 @@ async function main(): Promise<void> {
   const bv3 = await store.getBuyerView(escrow.id);
   assert(bv3.daysToClose === 0, `daysToClose is 0 on the close date (got ${bv3.daysToClose})`);
 
-  // closeEscrow.
-  const closed = await store.closeEscrow(escrow.id);
-  assert(closed.status === 'closed', 'closeEscrow sets status closed');
+  // closeEscrow is per side (escrow lifecycle, Sept 2026): all steps on the
+  // side must be complete. Closing the buyer side of a dual-agency escrow
+  // leaves the seller side (and the escrow) active.
+  const fresh = await store.getEscrow(escrow.id);
+  for (const s of fresh!.buyerSteps) {
+    if (!s.done) await store.toggleStep(escrow.id, 'buyer', s.id);
+  }
+  const buyerClosed = await store.closeEscrow(escrow.id, 'buyer');
+  assert(buyerClosed.buyerClosedAt !== null, 'closeEscrow stamps the buyer close date');
+  assert(buyerClosed.sellerClosedAt === null, 'seller side stays active');
+  assert(buyerClosed.status === 'open', 'escrow stays open while the seller side is active');
+
+  // Closing the seller side too closes the whole escrow.
+  const fresh2 = await store.getEscrow(escrow.id);
+  for (const s of fresh2!.sellerSteps) {
+    if (!s.done) await store.toggleStep(escrow.id, 'seller', s.id);
+  }
+  const closed = await store.closeEscrow(escrow.id, 'seller');
+  assert(closed.status === 'closed', 'closeEscrow sets status closed when every side is closed');
 
   summary('sync.test');
 }

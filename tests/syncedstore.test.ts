@@ -4,7 +4,8 @@
 // had zero coverage:
 //  - redeemInvite: the 8s-timeout race -> 'network' (the exact path screens
 //    call), unique-violation -> 'device_has_link', bad codes -> 'invalid'
-//  - validateClientLink: revoked -> invalid; transport failure -> fail-open
+//  - validateClientLink: revoked/invalid -> fail-closed invalid; transport
+//    failure -> fail-open valid (never strand a client on a flaky network)
 //  - getClientProfile: linked-first for client devices, local fallback
 // The Supabase client is injected (no network); the public gate is enabled
 // with fake env vars (this file runs in its own node process).
@@ -110,6 +111,39 @@ async function main(): Promise<void> {
     });
     const v = await store.validateClientLink('link-1');
     assert(v.valid === true, 'validateClientLink transport failure -> fail-open valid');
+  }
+  {
+    // Explicit server 'invalid' (no live link row) must fail CLOSED: the
+    // client lands on the dead-link state instead of seeing a stale view.
+    // Regression: this used to fail open like a transport error.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, {
+      cloudClient: () => mockClient(async () => ({ data: { ok: false, error: 'invalid' }, error: null })),
+    });
+    const v = await store.validateClientLink('link-1');
+    assert(v.valid === false, "validateClientLink server 'invalid' -> fail-closed invalid");
+  }
+  {
+    // Case-insensitive server rejection still fails closed.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, {
+      cloudClient: () => mockClient(async () => ({ data: { ok: false, error: 'Revoked' }, error: null })),
+    });
+    const v = await store.validateClientLink('link-1');
+    assert(v.valid === false, "validateClientLink server 'Revoked' -> invalid");
+  }
+  {
+    // A free-form transport-ish message that merely CONTAINS a rejection word
+    // must not be misread as a server rejection -> stays fail-open.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, {
+      cloudClient: () =>
+        mockClient(async () => {
+          throw new TypeError('invalid response from proxy');
+        }),
+    });
+    const v = await store.validateClientLink('link-1');
+    assert(v.valid === true, 'validateClientLink transport message containing a keyword -> fail-open');
   }
 
   // --------------------------------------------------- getClientProfile -----

@@ -94,10 +94,10 @@ export function BackChevron({ label, onPress }: { label: string; onPress: () => 
 
 export function Field({
   label, value, onChangeText, placeholder, multiline,
-  secureTextEntry, keyboardType, autoCapitalize, autoCorrect,
+  secureTextEntry, keyboardType, autoCapitalize, autoCorrect, testID,
 }: {
   label: string; value: string; onChangeText: (t: string) => void;
-  placeholder?: string; multiline?: boolean;
+  placeholder?: string; multiline?: boolean; testID?: string;
   secureTextEntry?: boolean;
   keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
@@ -116,6 +116,7 @@ export function Field({
         keyboardType={keyboardType ?? 'default'}
         autoCapitalize={autoCapitalize ?? 'sentences'}
         autoCorrect={autoCorrect ?? true}
+        testID={testID}
         style={[styles.fieldInput, multiline && styles.fieldInputMultiline]}
       />
     </View>

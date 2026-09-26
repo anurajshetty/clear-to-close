@@ -7,14 +7,25 @@ import { colors } from '../theme';
 const R = 30;
 
 export function ProgressRing({
-  done, total, size = 72,
-}: { done: number; total: number; size?: number }) {
+  done, total, size = 72, radius, strokeWidth, labelSize,
+}: {
+  done: number;
+  total: number;
+  size?: number;
+  // Optional explicit geometry overrides. When omitted, radius/stroke/label
+  // scale from the canonical 72px ring (r=30, stroke=7, label=16) — the
+  // client top card (Sept 2026 polish) passes the mockup's 96px geometry
+  // (r=42, stroke=9, label=20) instead of a uniform scale.
+  radius?: number;
+  strokeWidth?: number;
+  labelSize?: number;
+}) {
   const frac = total > 0 ? Math.min(Math.max(done / total, 0), 1) : 0;
   const pct = Math.round(frac * 100);
   const k = size / 72;
   const center = size / 2;
-  const r = R * k;
-  const stroke = 7 * k;
+  const r = radius ?? R * k;
+  const stroke = strokeWidth ?? 7 * k;
   // The dash pattern must be derived from the ACTUAL rendered radius, which
   // scales with `size`. A hardcoded dasharray (e.g. 2π·30 ≈ 188.5, correct
   // only for size=72) leaves a visible gap at 100% at any other size — the
@@ -38,7 +49,7 @@ export function ProgressRing({
           transform={`rotate(-90 ${center} ${center})`} />
       </Svg>
       <View style={styles.labelWrap} pointerEvents="none">
-        <Text style={[styles.label, { fontSize: Math.round(size * 0.222) }]}>
+        <Text style={[styles.label, { fontSize: labelSize ?? Math.round(size * 0.222) }]}>
           {pct}%
         </Text>
       </View>

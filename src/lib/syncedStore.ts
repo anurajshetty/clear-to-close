@@ -253,11 +253,15 @@ export function createSyncedStore(
      * cleared storage) would otherwise land on profile creation even though
      * their profile exists in the cloud. When the local copy is missing we
      * pull the cloud row once, persist it locally, and return it.
+     *
+     * A locally saved profile is returned as-is regardless of its name: an
+     * existing profile with an empty name still counts as an existing
+     * profile and must not be re-fetched or discarded.
      */
     pullProfileFromCloud: async (): Promise<RealtorProfile | null> => {
       try {
         const existing = await local.getProfile();
-        if (existing && existing.name.trim().length > 0) return existing;
+        if (existing) return existing;
         if (!cloudConfigured()) return existing;
         const c = client();
         if (!c) return existing;
@@ -340,8 +344,28 @@ export function createSyncedStore(
       return e;
     },
 
-    closeEscrow: async (escrowId): Promise<Escrow> => {
-      const e = await local.closeEscrow(escrowId);
+    updateEscrow: async (escrowId, input): Promise<Escrow> => {
+      const e = await local.updateEscrow(escrowId, input);
+      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
+      return e;
+    },
+
+    updateDates: async (escrowId, openDate, closeDate): Promise<Escrow> => {
+      const e = await local.updateDates(escrowId, openDate, closeDate);
+      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
+      return e;
+    },
+
+    cancelEscrow: async (escrowId): Promise<Escrow> => {
+      const e = await local.cancelEscrow(escrowId);
+      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
+      return e;
+    },
+
+    // Per-side close (escrow lifecycle, Sept 2026): closing is per side —
+    // dual-agency escrows close the buyer and seller sides independently.
+    closeEscrow: async (escrowId, role): Promise<Escrow> => {
+      const e = await local.closeEscrow(escrowId, role);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
       return e;
     },
@@ -482,7 +506,13 @@ export function createSyncedStore(
           try {
             const res = await Promise.race([fetchCloudView(c, linkId), timeoutMs(8000)]);
             if (res.ok) return { valid: true };
-            return /revoked/i.test(res.error ?? '') ? { valid: false } : { valid: true };
+            // Fail CLOSED on an explicit server rejection — the link is dead
+            // ('revoked', or 'invalid' when no live link row exists). Fail open
+            // only on transport failures, so a flaky network never strands a
+            // client on the dead-link screen. Exact match: free-form transport
+            // messages must never be misread as a server rejection.
+            const err = (res.error ?? '').trim().toLowerCase();
+            return err === 'revoked' || err === 'invalid' ? { valid: false } : { valid: true };
           } catch {
             return { valid: true };
           }

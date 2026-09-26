@@ -6,7 +6,7 @@
 //  - top row: bold "Hi {name}" headline, "Your purchase"/"Your sale" kicker,
 //    non-bold address — with the realtor's photo circle top-right AT THE
 //    GREETING LEVEL (48px tap target -> realtor profile).
-//  - centered below: "N of N steps" above a bigger (84px) progress ring,
+//  - centered below: "N of N steps" above a bigger (96px) progress ring,
 //    then the single days line — "days left: N" (label 14.5px, number
 //    22px/800); "due today" at 0, red "overdue by N day(s)" past the target.
 //  - when every step is checked, the banner slot shows "Congratulations,
@@ -72,8 +72,11 @@ export function ClientTopCard({
         <View style={styles.head}>
           <Text style={styles.greeting}>{greeting}</Text>
           <Kicker>{kicker}</Kicker>
-          <Text style={styles.byaddr}>
-            {address} · {city}
+          <Text style={styles.byaddr} testID="client-address">
+            {address}
+          </Text>
+          <Text style={styles.bycity} testID="client-city">
+            {city}
           </Text>
         </View>
         <Pressable
@@ -93,9 +96,9 @@ export function ClientTopCard({
           </View>
         </Pressable>
       </View>
-      <View style={styles.center}>
-        <Text style={styles.ringCap}>{`${done} of ${total} steps`}</Text>
-        <ProgressRing done={done} total={total} size={84} />
+      <View style={styles.center} testID="topcard-center">
+        <Text style={styles.ringCap} testID="steps-caption">{`${done} of ${total} steps`}</Text>
+        <ProgressRing done={done} total={total} size={96} radius={42} strokeWidth={9} labelSize={20} />
         <DaysLine daysToClose={daysToClose} />
       </View>
       {complete ? (
@@ -111,6 +114,7 @@ export function ClientTopCard({
 const styles = StyleSheet.create({
   hero: {
     marginTop: 14,
+    marginBottom: 22,
     paddingVertical: 20,
     paddingHorizontal: 16,
   },
@@ -137,6 +141,16 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.body,
     lineHeight: 21,
+    marginBottom: 4,
+  },
+  // City on its own line below the address (mockup 01 · .bycity) —
+  // never the "address · city" duplication.
+  bycity: {
+    fontSize: 14.5,
+    fontWeight: '400',
+    color: colors.body,
+    lineHeight: 21,
+    marginBottom: 14,
   },
   // Realtor photo entry point: 48px tap target at the greeting level.
   rav: {
@@ -170,13 +184,13 @@ const styles = StyleSheet.create({
   // (mockup 01 · .by-center).
   center: {
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 16,
   },
   ringCap: {
     fontSize: 11.5,
     fontWeight: '700',
     color: colors.body,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   // Single centered days line (mockup 01 · .by-big).
   byBig: {
@@ -184,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.body,
     textAlign: 'center',
-    marginTop: 10,
+    marginTop: 8,
   },
   byBigNum: {
     fontSize: 22,

@@ -26,11 +26,37 @@ export interface Escrow {
   closeDate: string;
   buyerSteps: StepT[];
   sellerSteps: StepT[];
-  status: 'open' | 'closed';
+  /** open | closed | cancelled ('cancelled' added for the deal-list edit/cancel round, Sept 2026). */
+  status: 'open' | 'closed' | 'cancelled';
+  /**
+   * Per-side close dates (local 'YYYY-MM-DD'). Escrow lifecycle, Sept 2026:
+   * closing is per side — dual-agency escrows close the buyer and seller
+   * sides independently. `status` is derived: 'closed' only when every side
+   * of the escrow is closed. Local-only (not cloud-synced); `status` still
+   * syncs via the escrows row.
+   */
+  buyerClosedAt: string | null;
+  sellerClosedAt: string | null;
   createdAt: string;
 }
 
 export interface CreateEscrowInput {
+  address: string;
+  city: string;
+  side: Side;
+  buyerName?: string;
+  sellerName?: string;
+  openDate: string;
+  closeDate: string;
+}
+
+/**
+ * Edit-round input (Sept 2026): same fields as creation — the "Update
+ * escrow" sheet is field-identical to the new-escrow form, everything
+ * editable including side switching. Status and steps are never touched by
+ * an update.
+ */
+export interface UpdateEscrowInput {
   address: string;
   city: string;
   side: Side;

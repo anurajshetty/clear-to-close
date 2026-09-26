@@ -22,6 +22,8 @@ without a second device; the rest goes through the UI.
 
 Usage: python3 tests/invite_flow.py  (run from ~/workspace/realtor-app)
 Requires: a fresh `npm run export:web` build in dist/ (uses the built output).
+Honors CTC_ROOT (defaults to ~/workspace/realtor-app), CTC_INVITE_PORT
+(defaults to 8906), CTC_INVITE_OUT (defaults to /tmp/ctc-invite-flow).
 """
 import http.server
 import functools
@@ -34,10 +36,11 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
 DIST = os.path.join(ROOT, "dist")
-OUT = "/tmp/ctc-invite-flow"
-BASE = "http://127.0.0.1:8906/clear-to-close/"
+OUT = os.environ.get("CTC_INVITE_OUT", "/tmp/ctc-invite-flow")
+PORT = int(os.environ.get("CTC_INVITE_PORT", "8906"))
+BASE = f"http://127.0.0.1:{PORT}/clear-to-close/"
 
 CODE_RE = re.compile(r"^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$")
 
@@ -155,7 +158,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve():
     h = functools.partial(Handler, directory=DIST)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8906), h)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), h)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -274,6 +277,29 @@ def main():
                     "Access-Control-Expose-Headers": "Content-Range",
                 })
                 return
+            # Hermetic sync isolation (regression: the client-list overlay
+            # rendered "Buyer · 0 of 2" because every listInvites call stalled
+            # 4s on the cloud path). pingCloud's
+            # read probe is
+            #   GET /rest/v1/realtor_profiles?select=user_id&user_id=eq.<uid>
+            # Answer it with 200 + a malformed JSON body: supabase-js fails
+            # to parse it, so the probe reports unhealthy and cloud sync
+            # stays dormant, leaving the seeded localStorage as the
+            # authoritative fixture. (Without this, store.listInvites takes
+            # the cloud path and every call burns the 4s pullInvitesNow
+            # timeout against the real Supabase, so the overlay still shows
+            # 0 invites at assert time.) A malformed 200 — rather than a
+            # 4xx/5xx — keeps the "zero JS errors" assertion meaningful:
+            # Chromium logs "Failed to load resource" for error statuses.
+            # Profile setup is skipped in this flow, so the ping is the only
+            # realtor_profiles request; anything else keeps the previous
+            # empty-rows stub.
+            if "select=user_id" in route.request.url:
+                route.fulfill(status=200, headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Content-Type": "application/json",
+                }, body="hermetic-test: sync dormant {{{")
+                return
             route.fulfill(status=200, headers={
                 "Access-Control-Allow-Origin": "*",
                 "Content-Type": "application/json",
@@ -284,6 +310,7 @@ def main():
 
         try:
             # 1. Sign up -> skip profile -> deal list.
+            print("STEP 1: sign up", flush=True)
             pg.goto(BASE)
             pg.wait_for_timeout(3500)
             pg.get_by_text("I'm a Realtor").click()
@@ -301,6 +328,7 @@ def main():
             pg.get_by_text("26207 Benito Ct").first.wait_for(timeout=12000)
 
             # 2. Open the buy escrow -> "View clients" (2 seeded invites).
+            print("STEP 2: open buy escrow", flush=True)
             pg.get_by_text("26207 Benito Ct").first.click()
             pg.get_by_text("of 13 steps").wait_for(timeout=12000)
             scroll_res = pg.evaluate(SCROLL_TO_BOTTOM)
@@ -314,6 +342,7 @@ def main():
             pg.screenshot(path=f"{OUT}/01-client-list.png")
 
             # 3. Client-list overlay: heading, pills, code visibility.
+            print("STEP 3: client list overlay", flush=True)
             check("overlay: 'View clients' title", pg.get_by_text("View clients", exact=True).count() > 0)
             check("overlay: 'Buyer · 2 of 2'", pg.get_by_text("Buyer · 2 of 2").count() > 0)
             check("overlay: Invited pill on Alice", pg.get_by_text("Invited", exact=True).count() == 1)
@@ -327,6 +356,7 @@ def main():
                   pg.get_by_text("Invite another buyer", exact=True).count() == 0)
 
             # 4. Regenerate Alice: confirm copy, new code, old code dies.
+            print("STEP 4: regenerate Alice", flush=True)
             res = pg.evaluate(CLICK_IN_ROW, ["Alice Buyer", "Regenerate"])
             check("overlay: Regenerate opens for Alice", str(res).startswith("clicked"), res)
             pg.wait_for_timeout(500)
@@ -344,6 +374,7 @@ def main():
             pg.screenshot(path=f"{OUT}/02-after-regen.png")
 
             # 5. Revoke Carol (Accepted): confirm copy, row disappears, slot frees.
+            print("STEP 5: revoke Carol", flush=True)
             res = pg.evaluate(CLICK_IN_ROW, ["Carol Buyer", "×"])
             check("overlay: revoke opens for Carol", str(res).startswith("clicked"), res)
             pg.wait_for_timeout(500)
@@ -360,6 +391,7 @@ def main():
             pg.screenshot(path=f"{OUT}/03-after-revoke.png")
 
             # 6. "Invite another buyer" -> invite sheet -> name -> Create code -> Copy.
+            print("STEP 6: invite another buyer", flush=True)
             pg.get_by_text("Invite another buyer", exact=True).click()
             pg.wait_for_timeout(800)
             check("sheet: 'Invite the buyer'", pg.get_by_text("Invite the buyer").count() > 0)
@@ -379,6 +411,7 @@ def main():
             check("overlay: Dan Buyer listed", pg.get_by_text("Dan Buyer").count() > 0)
 
             # 7. Close the overlay, close the detail, open the dual-agency escrow.
+            print("STEP 7: dual-agency escrow", flush=True)
             pg.get_by_label("Dismiss sheet").click()
             pg.wait_for_timeout(700)
             pg.get_by_label("Back to escrows").click()

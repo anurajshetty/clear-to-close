@@ -7,7 +7,7 @@ top card (mockup 01, devices 4/5/11/14):
   - top row: bold "Hi {name}" + "Your purchase"/"Your sale" + non-bold
     address, with the realtor photo button top-right AT THE GREETING LEVEL
     (48px tap target -> opens the realtor profile).
-  - centered below: "N of N steps" above the bigger 84px ring, then the
+  - centered below: "N of N steps" above the bigger 96px ring, then the
     single centered days line: "days left: N" / "due today" / red
     "overdue by N day(s)" (singular handled).
   - completion banner "Congratulations, your checklist is complete" when
@@ -33,10 +33,11 @@ import datetime
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
 DIST = os.path.join(ROOT, "dist")
-OUT = "/tmp/ctc-redesign-client"
-BASE = "http://127.0.0.1:8905/clear-to-close/"
+OUT = os.environ.get("CTC_OUT", "/tmp/ctc-redesign-client")
+PORT = int(os.environ.get("CTC_PORT", "8905"))
+BASE = f"http://127.0.0.1:{PORT}/clear-to-close/"
 
 BUY_STEPS = [
     "Escrow open",
@@ -179,7 +180,7 @@ ORDER_JS = """(TITLES) => {
 }"""
 
 # Geometry of the reworked top card: photo button (top-right at the greeting
-# level), the "N of N steps" caption above the 84px ring, and the centered
+# level), the "N of N steps" caption above the 96px ring, and the centered
 # days line.
 TOPCARD_JS = """(EXPECTED) => {
   const deepest = (t) => {
@@ -250,7 +251,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 def serve():
     h = functools.partial(Handler, directory=DIST)
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 8905), h)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), h)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
 
@@ -315,7 +316,19 @@ def main():
             body = pg.inner_text("body")
             check(f"{role}: greeting headline", "Hi Priya Nair" in body)
             check(f"{role}: kicker '{kicker}'", kicker in body)
-            check(f"{role}: non-bold address line", "26207 Benito Ct · Santa Clarita" in body)
+            # Spec §2.8: street address and city on separate lines (14.5px/400),
+            # never "·"-joined.
+            addr_weight = pg.evaluate("""() => {
+              const els = [...document.querySelectorAll('*')].filter(e =>
+                e.childNodes.length === 1 && e.childNodes[0].nodeType === 3 &&
+                e.textContent.trim() === '26207 Benito Ct');
+              return els.length ? getComputedStyle(els[0]).fontWeight : 'missing';
+            }""")
+            check(f"{role}: non-bold address line",
+                  "26207 Benito Ct" in body and "Santa Clarita" in body
+                  and "26207 Benito Ct · Santa Clarita" not in body
+                  and addr_weight == "400",
+                  f"weight={addr_weight}")
 
             tc = pg.evaluate(TOPCARD_JS, {"caption": "3 of 13 steps"})
             check(f"{role}: photo button present", tc["photoBtn"])
@@ -325,8 +338,8 @@ def main():
             check(f"{role}: photo beside greeting (flex row, above ring)",
                   tc.get("photoParentRow") and tc.get("photoTop", 1e9) < tc.get("ringTop", 0),
                   f"row={tc.get('photoParentRow')} photoTop={tc.get('photoTop')} ringTop={tc.get('ringTop')}")
-            check(f"{role}: ring present and 84px",
-                  tc["ring"] and tc.get("ringW") == 84 and tc.get("ringH") == 84,
+            check(f"{role}: ring present and 96px",
+                  tc["ring"] and tc.get("ringW") == 96 and tc.get("ringH") == 96,
                   f"w={tc.get('ringW')} h={tc.get('ringH')}")
             check(f"{role}: 'N of N steps' caption above ring",
                   tc["caption"] and tc.get("captionAboveRing"),

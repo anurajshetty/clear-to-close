@@ -10,12 +10,47 @@ central user; the buyers and sellers they represent are the other parties.
 
 **For realtors**
 
-- **Deal list** — every open escrow as a card with its own progress bar; empty
-  state with a shortcut to create the first escrow.
+- **Deal list** — "Hi {realtor name}" greeting, "Escrows" title, and
+  "{N} open · {M} closed · {K} cancelled" summary (the cancelled segment
+  appears only when > 0). **+ New escrow** sits above the sections. Three
+  collapsible sections — **Active escrows** (expanded), **Closed escrows**
+  (collapsed), **Cancelled escrows** (collapsed) — each a bordered
+  dropdown-style card header with up/down chevrons and 52px touch height.
+  Deal cards show the address, the city on its own line, and the
+  **buyer/seller name on its own line below**, then the countdown chip + step
+  count + mini progress bar. Closed rows carry the **Closed** tag; cancelled
+  rows are greyed with a **Cancelled** tag. Each card carries a pencil (edit)
+  and X (cancel) icon in the upper-right corner (closed and cancelled cards
+  show the pencil only). Empty state with a shortcut to create the first
+  escrow.
+- **Escrow lifecycle** — the time-tracker card's **Opened / Target close
+  dates carry pencil icons** that open an **"Edit dates"** sheet (both dates
+  editable; the target close must be on or after the opened date — the
+  tracker recomputes day X of Y, the bar, and days-left). Past the target
+  date the tracker turns red with a quiet **"Update target date"** action
+  that opens the same sheet. The **"N days left to close"** line is centered.
+  When every step is checked, the sage **"Close escrow"** banner appears —
+  once closed it becomes a **"Closed" indicator** (sage tag + "Closed {date}.",
+  no button) and the escrow moves under **Closed escrows**. **Unchecking any
+  step moves the escrow back to Active** (indicator hides, banner returns when
+  re-completed). **Dual agency closes per side**: each tab has its own
+  **"Close buyer side" / "Close seller side"** button and **"Closed"
+  indicator** — closing the buyer side leaves the seller side active and vice
+  versa; unchecking reopens only that side. The pencil date-edit on the
+  shared tracker applies to the whole escrow.
 - **New escrow** — open an escrow with open/end dates and a side picker
   (Buy side / Sell side, multi-select for dual agency). Client-name fields
   adapt: one field for a single side, buyer + seller fields when both are
   picked.
+- **Edit escrow** — the pencil opens an "Update escrow" sheet identical to
+  the new-escrow form with every value pre-populated and editable, including
+  buyer↔seller↔both side switching. Saving updates the card in place with an
+  "Escrow updated." toast.
+- **Cancel escrow** — the X (or the "Cancel this escrow" action inside the
+  update sheet) asks for confirmation, then moves the card to a collapsible
+  "Cancelled escrows" section, greyed with a Cancelled tag; the header
+  counts update ("N open · N closed · N cancelled"). Closed and cancelled
+  cards show the pencil only.
 - **Transaction detail** — per-escrow home with:
   - **Time tracker** — escrow open date, end date, and where today falls
     between them (day X of Y). Turns red with "Update target date" once the
@@ -30,8 +65,9 @@ central user; the buyers and sellers they represent are the other parties.
     checklists are fully separate, each with its own ring, reorder, and
     custom steps; rows carry Buyer/Seller tags.
 - **Realtor profile** — photo, about/bio, experience, areas served, optional
-  DRE/license number (shown on the client-facing profile only if entered).
-  Editable anytime via the avatar in the deal-list header.
+  DRE/license number (shown on the client-facing profile only if entered),
+  and an optional **phone number** (syncs to the cloud profile). Editable
+  anytime via the avatar in the deal-list header.
 - **Share / invites** — per-escrow, per-party single-use invite codes
   (6 characters, globally unique). Each code is bound to
   (escrow, role, party name); name and code must both match at redeem time.
@@ -69,8 +105,12 @@ central user; the buyers and sellers they represent are the other parties.
   "days left: N", "due today" on the target date, red "overdue by N day(s)"
   past it. When every step is checked, the banner slot shows
   "Congratulations, your checklist is complete".
-- **Realtor profile (client view)** — prominent "Back to my escrow" button
-  returns to the client's home screen. No Call / Message actions.
+- **Realtor profile (client view)** — hero card with the 96px photo, name,
+  the license line (only when the realtor entered one), and a **tap-to-call
+  phone row** (PHONE label, opens the dialer); About / stats / areas cards
+  evenly spaced; the "One profile — shown across all escrows" footer note.
+  A prominent "Back to my escrow" button returns to the client's home
+  screen. No Call / Message actions.
 - **Live updates** — every realtor checkoff updates the client home and
   progress bar. Custom steps render like any other step (no "Custom" tag on
   client views).
@@ -78,7 +118,18 @@ central user; the buyers and sellers they represent are the other parties.
 
 **Sync** — Supabase-backed cloud sync activates under the realtor's
 email/password identity. Checklist state lives on the escrow, never on the
-device; the device link is only the access key.
+device; the device link is only the access key. Per-side close dates sync via
+the `buyer_closed_at` / `seller_closed_at` columns on `escrows` (migration
+`supabase/migrations/0007_per_side_close_dates.sql` — **apply it on the
+Supabase dashboard SQL editor**; until it is applied, escrow pushes fall back
+to the pre-migration column set instead of failing, and close dates stay
+local-only).
+
+**Native modules** — the "Edit dates" sheet uses
+`@react-native-community/datetimepicker` (native iOS spinner / Android dialog,
+`<input type="date">` on web). The iOS and web exports stay green, but the
+module is picked up by the next `eas build` via autolinking — a binary
+rebuild, not just a web deploy.
 
 ## Tech
 
@@ -118,6 +169,12 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   `regenerate_invite` reordered to revoke-then-insert so rotation still works
   at 2/2 (revoked links/invites were already rejected by `get_client_view`
   since 0002)
+- `supabase/migrations/0006_escrow_cancelled.sql` — widens the `escrows`
+  status check to `('open', 'closed', 'cancelled')` for the deal-list
+  edit/cancel round
+- `supabase/migrations/0007_per_side_close_dates.sql` — adds
+  `buyer_closed_at` / `seller_closed_at` date columns on `escrows` for the
+  per-side close lifecycle (dual agency closes buyer/seller independently)
 
 ## Scripts
 

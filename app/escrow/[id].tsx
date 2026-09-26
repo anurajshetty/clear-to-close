@@ -16,22 +16,14 @@ import { store } from '../../src/lib/store-instance';
 import type { ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
+import { EditDatesSheet } from '../../src/components/EditDatesSheet';
 import { EditableChecklist } from '../../src/components/Checklist';
 import { InviteSheet } from '../../src/components/InviteSheet';
 import { ClientList } from '../../src/components/ClientList';
 import { Field, Kicker, PrimaryButton, SecondaryButton } from '../../src/components/ui';
+import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function isRealDate(v: string): boolean {
-  if (!DATE_RE.test(v)) return false;
-  const [y, m, d] = v.split('-').map(Number);
-  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
-  const dt = new Date(y, m - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
-}
 
 function sortedSteps(raw: StepT[]): StepT[] {
   return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -48,9 +40,9 @@ export default function TransactionDetail() {
   const [adding, setAdding] = useState<ClientRole | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [saving, setSaving] = useState(false);
-  const [dateFormOpen, setDateFormOpen] = useState(false);
-  const [newCloseDate, setNewCloseDate] = useState('');
-  const [dateError, setDateError] = useState<string | undefined>(undefined);
+  // "Edit dates" sheet (escrow lifecycle, Sept 2026) — opened from the
+  // pencil icons on the time-tracker card or the past-target action.
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
   // Both-side tab state (mockup 01 · device 12).
   const [tab, setTab] = useState<ClientRole>('buyer');
   // Invite-client flow (approved Sept 2026): per-side invites live at the end
@@ -122,30 +114,28 @@ export default function TransactionDetail() {
     }
   };
 
-  const closeEscrowNow = async () => {
-    if (!escrow) return;
+  const closeEscrowNow = async (r: ClientRole) => {
+    if (!escrow || saving) return;
+    setSaving(true);
     try {
-      await store.closeEscrow(escrow.id);
-      router.back();
+      // Per-side close (dual agency closes independently). Stay on the page
+      // so the "Closed" indicator renders in place of the banner.
+      setEscrow(await store.closeEscrow(escrow.id, r));
     } catch (err) {
       console.warn('closeEscrow failed', err);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const saveTargetDate = async () => {
+  const saveDates = async (openDate: string, closeDate: string) => {
     if (!escrow || saving) return;
-    if (!isRealDate(newCloseDate)) {
-      setDateError('Use YYYY-MM-DD.');
-      return;
-    }
-    setDateError(undefined);
     setSaving(true);
     try {
-      setEscrow(await store.updateTargetDate(escrow.id, newCloseDate));
-      setNewCloseDate('');
-      setDateFormOpen(false);
+      setEscrow(await store.updateDates(escrow.id, openDate, closeDate));
+      setDateSheetOpen(false);
     } catch (err) {
-      console.warn('updateTargetDate failed', err);
+      console.warn('updateDates failed', err);
     } finally {
       setSaving(false);
     }
@@ -175,51 +165,51 @@ export default function TransactionDetail() {
 
   const subtitle = both ? `${escrow.city} · Dual agency` : `${escrow.city} · ${partyLine(escrow)}`;
 
-  const renderDateForm = dateFormOpen ? (
-    <View style={styles.addForm}>
-      <Field
-        label="New target close date"
-        value={newCloseDate}
-        onChangeText={(v) => {
-          setNewCloseDate(v);
-          setDateError(undefined);
-        }}
-        placeholder="YYYY-MM-DD"
-      />
-      {dateError ? <Text style={styles.error}>{dateError}</Text> : null}
-      <View style={styles.addBtns}>
-        <View style={styles.addPrimary}>
-          <PrimaryButton
-            title={saving ? 'Saving…' : 'Save'}
-            onPress={saveTargetDate}
-            disabled={saving || !newCloseDate.trim()}
-          />
+  // Escrow lifecycle (approved Sept 2026): the all-steps-complete sage
+  // banner carries the close button — once closed it becomes the "Closed"
+  // indicator (sage tag + "Closed {date}.", no button). Unchecking any step
+  // in a closed side moves that side back to Active (store-level), so the
+  // banner returns when re-completed.
+  const renderLifecycle = (r: ClientRole) => {
+    if (!escrow) return null;
+    const closedAt = sideClosedAt(escrow, r);
+    // Legacy rows closed before per-side dates existed carry status='closed'
+    // with no side dates — render the indicator without a date.
+    const legacyClosed =
+      escrow.status === 'closed' && closedDisplayDate(escrow) === null;
+    if (closedAt !== null || legacyClosed) {
+      return (
+        <View style={styles.closedInd} testID={`closed-indicator-${r}`}>
+          <View style={styles.closedTag}>
+            <Text style={styles.closedTagText}>Closed</Text>
+          </View>
+          <Text style={styles.closedDate}>
+            {closedAt ? `Closed ${formatClosedDate(closedAt)}.` : 'Closed.'}
+          </Text>
+          <Text style={styles.closedNote}>
+            {both
+              ? r === 'buyer'
+                ? 'The buyer side is closed — the seller side stays active. Uncheck any step to move this side back to Active.'
+                : 'The seller side is closed — the buyer side stays active. Uncheck any step to move this side back to Active.'
+              : 'This escrow sits under Closed escrows on the deal list. Uncheck any step to move it back to Active.'}
+          </Text>
         </View>
-        <Pressable
-          onPress={() => {
-            setDateFormOpen(false);
-            setNewCloseDate('');
-            setDateError(undefined);
-          }}
-          hitSlop={8}
-          style={styles.cancelBtn}
-        >
-          <Text style={styles.cancelText}>Cancel</Text>
-        </Pressable>
-      </View>
-    </View>
-  ) : null;
-
-  const renderDoneBanner = (r: ClientRole) => {
+      );
+    }
     const steps = stepsFor(r);
     const done = steps.filter((s) => s.done).length;
     if (steps.length === 0 || done !== steps.length) return null;
     return (
-      <View style={styles.banner}>
+      <View style={styles.banner} testID={`close-escrow-banner-${r}`}>
         <Text style={styles.bannerTitle}>{`All ${steps.length} steps complete.`}</Text>
-        <Text style={styles.bannerSub}>This escrow is ready to move to Closed.</Text>
+        <Text style={styles.bannerSub}>
+          {both ? 'This side is ready to move to Closed.' : 'This escrow is ready to move to Closed.'}
+        </Text>
         <View style={styles.bannerBtn}>
-          <SecondaryButton title="Close escrow" onPress={closeEscrowNow} />
+          <SecondaryButton
+            title={both ? (r === 'buyer' ? 'Close buyer side' : 'Close seller side') : 'Close escrow'}
+            onPress={() => closeEscrowNow(r)}
+          />
         </View>
       </View>
     );
@@ -302,7 +292,7 @@ export default function TransactionDetail() {
             <Text style={styles.tabCap}>Checked off independently</Text>
           </View>
         </View>
-        {renderDoneBanner(r)}
+        {renderLifecycle(r)}
         <EditableChecklist
           steps={steps}
           sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
@@ -361,11 +351,8 @@ export default function TransactionDetail() {
             <TimeTrackerCard
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
-              onUpdateDate={() => {
-                setNewCloseDate('');
-                setDateError(undefined);
-                setDateFormOpen(true);
-              }}
+              onUpdateDate={() => setDateSheetOpen(true)}
+              onEditDates={() => setDateSheetOpen(true)}
             />
             <View style={styles.shareBtnWrap}>
               <SecondaryButton
@@ -373,7 +360,6 @@ export default function TransactionDetail() {
                 onPress={() => router.push(`/share/${escrow.id}`)}
               />
             </View>
-            {renderDateForm}
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -407,11 +393,8 @@ export default function TransactionDetail() {
               <TimeTrackerCard
                 openDate={escrow.openDate}
                 closeDate={escrow.closeDate}
-                onUpdateDate={() => {
-                  setNewCloseDate('');
-                  setDateError(undefined);
-                  setDateFormOpen(true);
-                }}
+                onUpdateDate={() => setDateSheetOpen(true)}
+                onEditDates={() => setDateSheetOpen(true)}
               />
               <View style={styles.shareBtnWrap}>
                 <SecondaryButton
@@ -419,8 +402,7 @@ export default function TransactionDetail() {
                   onPress={() => router.push(`/share/${escrow.id}`)}
                 />
               </View>
-              {renderDateForm}
-              {renderDoneBanner(role)}
+              {renderLifecycle(role)}
             </View>
           }
           ListFooterComponent={
@@ -444,6 +426,14 @@ export default function TransactionDetail() {
           onCreated={refreshInvites}
         />
       )}
+      <EditDatesSheet
+        visible={dateSheetOpen}
+        openDate={escrow.openDate}
+        closeDate={escrow.closeDate}
+        saving={saving}
+        onClose={() => setDateSheetOpen(false)}
+        onSave={saveDates}
+      />
       {clientSide && (
         <ClientList
           visible
@@ -536,6 +526,40 @@ const styles = StyleSheet.create({
   },
   bannerBtn: {
     marginTop: 12,
+  },
+  // "Closed" indicator (escrow lifecycle): sage tag + "Closed {date}.",
+  // no button. Unchecking any step moves the side back to Active.
+  closedInd: {
+    backgroundColor: colors.sageSoft,
+    borderRadius: 14,
+    padding: 16,
+    marginTop: 14,
+  },
+  closedTag: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#E4EBDF',
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+  },
+  closedTagText: {
+    color: colors.sage,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  closedDate: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+    marginTop: 10,
+  },
+  closedNote: {
+    fontSize: 13.5,
+    color: colors.body,
+    marginTop: 4,
+    lineHeight: 19,
   },
   addDashed: {
     borderWidth: 2,

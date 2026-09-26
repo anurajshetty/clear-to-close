@@ -6,10 +6,12 @@
     "start": "expo start",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "export:web": "WEB_DEPLOY=1 expo export --platform web"
+    "export:web": "WEB_DEPLOY=1 expo export --platform web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^3.1.1",
+    "@react-native-community/datetimepicker": "9.1.0",
     "@supabase/supabase-js": "^2.117.2",
     "expo": "57.0.23",
     "expo-clipboard": "^57.0.2",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@types/react": "19.2.18",
+    "patch-package": "^8.0.1",
     "typescript": "6.0.3"
   },
   "private": true
