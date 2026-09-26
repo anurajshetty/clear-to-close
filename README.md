@@ -110,10 +110,12 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   realtor-only (authenticated role)
 - `supabase/migrations/0004_revoke_regen_anon.sql` — explicit
   `regenerate_invite` revoke from `anon` (belt-and-braces alongside 0003)
-- `supabase/migrations/0005_two_per_side_cap_and_revoke_kills_access.sql` —
-  database trigger enforcing the two-active-clients-per-side cap on `invites`
-  inserts; `get_client_view` rejects revoked links/invites so a revoked
-  client loses access (not just future redemption)
+- `supabase/migrations/0005_two_per_side_cap.sql` — database trigger
+  enforcing the two-active-clients-per-side cap on `invites` inserts
+  (per-side advisory lock so concurrent inserts can't slip under the cap);
+  `regenerate_invite` reordered to revoke-then-insert so rotation still works
+  at 2/2 (revoked links/invites were already rejected by `get_client_view`
+  since 0002)
 
 ## Scripts
 
