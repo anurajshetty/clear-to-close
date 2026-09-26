@@ -65,8 +65,6 @@ export function mapSignUpError(err: unknown): SignUpErrorCode {
   if (/already registered|already exists|duplicate/i.test(msg)) return 'duplicate_email';
   // HTTP 429 from GoTrue ("over_email_send_rate_limit"): the project's email
   // quota is exhausted. The account was NOT created — retryable after a wait.
-  // HTTP 429 from GoTrue ("over_email_send_rate_limit"): the project's email
-  // quota is exhausted. The account was NOT created — retryable after a wait.
   if (e.status === 429 || e.code === 'over_email_send_rate_limit' || /rate.?limit/i.test(msg))
     return 'rate_limited';
   if (/password/i.test(msg)) return 'weak_password';
