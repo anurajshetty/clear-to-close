@@ -2,7 +2,7 @@
 // Faithful to APPROVED mockup 01 · Escrow tracker v1. react-native + react-native-web compatible.
 import React, { ReactNode, useEffect, useRef } from 'react';
 import {
-  Animated, Modal, PanResponder, Pressable, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
+  Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
 } from 'react-native';
 import { colors, radius } from '../theme';
 
@@ -183,7 +183,22 @@ export function Sheet({
         ) : (
           <View style={styles.grabber} />
         )}
-        {children}
+        {/* The grabber stays OUTSIDE the scroll region: it is always visible and
+            remains the drag-to-dismiss handle, while the content region scrolls.
+            (Sept 2026 sheet-scroll fix: sheet content used to grow unbounded and
+            overflow small screens, leaving lower fields and the save button
+            unreachable. The ScrollView is height-bounded so it scrolls on native
+            and on web alike; the 480 bound matches the existing ClientList sheet
+            pattern.) */}
+        <ScrollView
+          style={styles.sheetScroll}
+          contentContainerStyle={styles.sheetScrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          testID="sheet-scroll"
+        >
+          {children}
+        </ScrollView>
       </Animated.View>
     </Modal>
   );
@@ -256,6 +271,17 @@ const styles = StyleSheet.create({
   // Taller drag target around the grabber for drag-to-dismiss sheets.
   grabberZone: {
     alignItems: 'center', paddingVertical: 10, marginTop: -10, marginBottom: 6,
+  },
+  // Sheet content scroll region (Sept 2026 sheet-scroll fix). The bound
+  // lives on the ScrollView itself — not on the sheet container — so it
+  // constrains the scrolling element on native and on web (react-native-web
+  // only scrolls a ScrollView with a definite height bound). Matches the
+  // pre-existing ClientList "View clients" sheet pattern.
+  sheetScroll: {
+    maxHeight: 480,
+  },
+  sheetScrollContent: {
+    // Content padding stays on the sheet container; nothing needed here.
   },
   grip: {
     flexDirection: 'row', flexWrap: 'wrap', width: 10, height: 18,

@@ -1,45 +1,36 @@
 // Clear to Close — "Edit dates" sheet.
 // Approved escrow lifecycle (mockup 01 · devices 2/3/12, Sept 2026): opened
-// from the pencil icons on the time-tracker card; both dates editable via the
-// NATIVE date picker — iOS spinner / Android dialog via
-// @react-native-community/datetimepicker, and a real <input type="date"> on
-// web (the community picker renders nothing on web, so web gets its own
-// branch); the target close must be on or after the opened date; saving
-// recomputes day X of Y, the bar, and days-left.
-//
-// NOTE: this adds the first new native module to the app. The iOS and web
-// exports stay green (JS-only), but Anuraj's next `eas build` picks the
-// native module up via autolinking — flag it as a binary-rebuild item.
-import React, { createElement, useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import DateTimePicker, {
-  type DateTimePickerEvent,
-} from '@react-native-community/datetimepicker';
-import { Kicker, PrimaryButton, Sheet } from './ui';
+// from the pencil icons on the time-tracker card; both dates are plain
+// text-box inputs exactly like the create-escrow form's date inputs
+// (YYYY-MM-DD) — the calendar picker popup was dropped Sept 2026 (Anuraj:
+// it rendered broken/overlapping). The target close must be on or after the
+// opened date; saving recomputes day X of Y, the bar, and days-left.
+import React, { useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Field, Kicker, PrimaryButton, Sheet } from './ui';
 import { colors } from '../theme';
-import { formatClosedDate } from '../lib/lifecycle';
 
-function isoToDate(iso: string): Date {
-  const [y, m, d] = iso.split('-').map(Number);
-  return new Date(y, m - 1, d);
-}
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function dateToISO(dt: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+// Same real-date guard as the create-escrow form's date inputs.
+function isRealDate(v: string): boolean {
+  if (!DATE_RE.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
 
 function toMs(iso: string): number {
-  return isoToDate(iso).getTime();
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).getTime();
 }
-
-type Picking = 'opened' | 'target' | null;
 
 export function EditDatesSheet({
   visible, openDate, closeDate, saving, onClose, onSave,
 }: {
   visible: boolean;
-  /** Current dates, used to prefill the picker when the sheet opens. */
+  /** Current dates, used to prefill the inputs when the sheet opens. */
   openDate: string;
   closeDate: string;
   saving: boolean;
@@ -48,7 +39,6 @@ export function EditDatesSheet({
 }) {
   const [opened, setOpened] = useState(openDate);
   const [target, setTarget] = useState(closeDate);
-  const [picking, setPicking] = useState<Picking>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Prefill fresh every time the sheet opens.
@@ -56,89 +46,48 @@ export function EditDatesSheet({
     if (visible) {
       setOpened(openDate);
       setTarget(closeDate);
-      setPicking(null);
       setError(null);
     }
   }, [visible, openDate, closeDate]);
 
-  const onPick = (event: DateTimePickerEvent, date?: Date) => {
-    if (Platform.OS === 'android') setPicking(null);
-    if (event.type === 'dismissed') return;
-    if (!date || !picking) return;
-    const iso = dateToISO(date);
-    if (picking === 'opened') setOpened(iso);
-    else setTarget(iso);
-  };
-
   const submit = () => {
+    if (!isRealDate(opened) || !isRealDate(target)) {
+      setError('Use YYYY-MM-DD.');
+      return;
+    }
     if (toMs(target) < toMs(opened)) {
       setError("The target close can't be before the opened date.");
       return;
     }
     setError(null);
-    setPicking(null);
     onSave(opened, target);
   };
-
-  const row = (key: Exclude<Picking, null>, label: string, value: string) => (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Change ${label}, currently ${formatClosedDate(value)}`}
-      onPress={() => setPicking((p) => (p === key ? null : key))}
-      style={({ pressed }) => [styles.dateRow, pressed && { opacity: 0.6 }]}
-    >
-      <Text style={styles.dateLabel}>{label}</Text>
-      <Text style={styles.dateValue}>{formatClosedDate(value)}</Text>
-    </Pressable>
-  );
 
   return (
     <Sheet visible={visible} onClose={onClose}>
       <Kicker>Escrow dates</Kicker>
       <Text style={styles.title}>Edit dates</Text>
 
-      {row('opened', 'Opened', opened)}
-      {row('target', 'Target close', target)}
-
-      {picking !== null && (
-        <View style={styles.pickerWrap}>
-          {Platform.OS === 'web' ? (
-            // The community picker renders nothing on web — use the real
-            // native date input instead. Value stays 'YYYY-MM-DD' (local).
-            createElement('input', {
-              type: 'date',
-              value: picking === 'opened' ? opened : target,
-              'aria-label': picking === 'opened' ? 'Opened date' : 'Target close date',
-              onChange: (e: { target?: { value?: string } }) => {
-                const v = e?.target?.value;
-                if (!v) return;
-                if (picking === 'opened') setOpened(v);
-                else setTarget(v);
-              },
-              style: styles.webDateInput,
-            })
-          ) : (
-            <>
-              {Platform.OS === 'ios' && (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Done picking date"
-                  onPress={() => setPicking(null)}
-                  style={styles.pickerDone}
-                >
-                  <Text style={styles.pickerDoneText}>Done</Text>
-                </Pressable>
-              )}
-              <DateTimePicker
-                value={isoToDate(picking === 'opened' ? opened : target)}
-                mode="date"
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={onPick}
-              />
-            </>
-          )}
-        </View>
-      )}
+      <Field
+        label="Escrow open date"
+        value={opened}
+        onChangeText={(v) => {
+          setOpened(v);
+          setError(null);
+        }}
+        placeholder="YYYY-MM-DD"
+        testID="edit-open-date"
+      />
+      <Field
+        label="Target close date"
+        value={target}
+        onChangeText={(v) => {
+          setTarget(v);
+          setError(null);
+        }}
+        placeholder="YYYY-MM-DD"
+        testID="edit-target-date"
+      />
 
       {error && <Text style={styles.error}>{error}</Text>}
       <Text style={styles.hint}>The time tracker recomputes from these dates.</Text>
@@ -166,52 +115,6 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginTop: 6,
     marginBottom: 14,
-  },
-  dateRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    minHeight: 52,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    backgroundColor: colors.paper,
-    borderWidth: 1,
-    borderColor: 'rgba(231,224,211,.9)',
-    marginBottom: 10,
-  },
-  dateLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.body,
-  },
-  dateValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.accent,
-  },
-  pickerWrap: {
-    marginBottom: 10,
-  },
-  // Web-only: the native date input rendered via createElement.
-  webDateInput: {
-    width: '100%',
-    fontSize: 16,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 12,
-    backgroundColor: '#FFFFFF',
-    color: colors.ink,
-  },
-  pickerDone: {
-    alignSelf: 'flex-end',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  pickerDoneText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.accent,
   },
   error: {
     fontSize: 13.5,

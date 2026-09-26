@@ -14,7 +14,8 @@ Deal list
 
 Transaction detail
   - Pencil buttons beside Opened / Target close open the "Edit dates" sheet,
-    which uses a NATIVE date input (web: <input type="date">).
+    which uses plain text-box date inputs (YYYY-MM-DD) — no picker popup
+    (the calendar picker was dropped Sept 2026).
   - "N days left to close" is centered.
   - All-steps-done -> sage "Close escrow" banner; tapping it -> sage
     "Closed" indicator + "Closed {date}." and the escrow moves to Closed.
@@ -315,21 +316,21 @@ def main():
         pg.get_by_text("4187 Oakmont Dr").first.click()
         pg.get_by_test_id("days-left").wait_for(timeout=12000)
 
-        # Pencil buttons open the Edit-dates sheet with a NATIVE date input.
+        # Pencil buttons open the Edit-dates sheet with plain text-box date
+        # inputs (YYYY-MM-DD) — the calendar picker popup was dropped Sept 2026.
         check("pencil: Edit opened date", pg.get_by_label("Edit opened date").count() > 0)
         check("pencil: Edit target close date",
               pg.get_by_label("Edit target close date").count() > 0)
         pg.get_by_label("Edit opened date").click()
         pg.get_by_text("Edit dates", exact=True).wait_for(timeout=5000)
-        check("Edit-dates picker hidden until a row is tapped",
+        check("Edit-dates sheet has NO picker popup",
               pg.locator('input[type="date"]').count() == 0)
-        pg.get_by_label(re.compile(r"Change Target close")).click()
-        pg.wait_for_timeout(500)
-        native_input = pg.locator('input[type="date"]')
-        check("Edit-dates sheet uses a native date input", native_input.count() > 0)
+        target_input = pg.get_by_test_id("edit-target-date")
+        check("Edit-dates sheet has text date inputs",
+              pg.get_by_test_id("edit-open-date").count() > 0 and target_input.count() > 0)
         pg.screenshot(path=os.path.join(OUT, "edit-dates-sheet.png"))
         # Move the target close to tomorrow; the tracker recomputes on Save.
-        native_input.first.fill(TOMORROW_ISO)
+        target_input.fill(TOMORROW_ISO)
         pg.wait_for_timeout(400)
         pg.get_by_text("Save", exact=True).click()
         pg.get_by_test_id("days-left").wait_for(timeout=5000)

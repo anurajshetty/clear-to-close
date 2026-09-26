@@ -129,11 +129,11 @@ Supabase dashboard SQL editor**; until it is applied, escrow pushes fall back
 to the pre-migration column set instead of failing, and close dates stay
 local-only).
 
-**Native modules** — the "Edit dates" sheet uses
-`@react-native-community/datetimepicker` (native iOS spinner / Android dialog,
-`<input type="date">` on web). The iOS and web exports stay green, but the
-module is picked up by the next `eas build` via autolinking — a binary
-rebuild, not just a web deploy.
+**Sheets on small screens** — every modal sheet wraps its content in a
+height-bounded scroll region (the grabber stays outside it), so lower fields
+and the primary button are reachable by scrolling at any viewport. The
+"Edit dates" sheet uses plain text-box date inputs (same as the create-escrow
+form) instead of a popup picker.
 
 ## Tech
 
