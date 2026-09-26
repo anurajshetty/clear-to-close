@@ -1,10 +1,10 @@
 // Clear to Close — checklist step row, built ONCE and reused everywhere.
 //
 // Faithful to APPROVED mockup 01 · device 2/3 (realtor editable) and 4/5/11/14
-// (client read-only): node + drag grip + body order, short connector segments
-// are drawn by the Checklist wrapper (no continuous spine), Custom tag on the
-// realtor view only, UP NEXT on the first remaining step on BOTH variants,
-// "Just now" tag on the client read-only variant only.
+// (client read-only), reworked Sept 26: node + drag grip + body order, short
+// connector segments are drawn by the Checklist wrapper (no continuous spine),
+// Custom tag on the realtor view only, UP NEXT on the first remaining step on
+// BOTH variants. No recency markers (removed per Anuraj's review, Sept 26).
 //
 // Interactive variant (realtor transaction view): tappable, drag grip on every
 // row, Custom tag on custom steps.
@@ -27,8 +27,6 @@ type StepRowBase = {
   sideTag?: 'Buyer' | 'Seller';
   /** "Up next" tag on the first remaining step — both variants. */
   upNext?: boolean;
-  /** "Just now" tag: checkoff still inside the recency window — read-only only. */
-  recent?: boolean;
 };
 
 type StepRowProps = StepRowBase &
@@ -76,7 +74,6 @@ export function StepRow(props: StepRowProps) {
         </Text>
       ) : null}
       {interactive && props.custom ? <Text style={styles.customTag}>  Custom</Text> : null}
-      {!interactive && props.recent ? <Text style={styles.justNowTag}>  Just now</Text> : null}
     </Text>
   );
 
@@ -179,17 +176,6 @@ const styles = StyleSheet.create({
     color: colors.sellBrown,
     backgroundColor: colors.sellSoft,
     borderRadius: 5,
-  },
-  justNowTag: {
-    fontSize: 10.5,
-    fontWeight: '800',
-    letterSpacing: 0.63,
-    textTransform: 'uppercase',
-    color: colors.accent,
-    backgroundColor: colors.accentSoft,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
   },
   upNextWrap: { marginTop: 6, alignItems: 'flex-start' },
   upNextTag: {

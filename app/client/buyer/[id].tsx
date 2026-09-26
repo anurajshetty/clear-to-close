@@ -1,20 +1,25 @@
 // Clear to Close — buyer home view (read-only).
-// Faithful to APPROVED mockup 01 · device 4 (+ device 11 live-update details):
-// bold "Hi {name}" greeting, "Your purchase" kicker + non-bold address, the
-// realtor's photo circle above the progress ring (tap -> full profile), and
-// the single ordered checklist in the realtor's order — checked steps stay in
-// place, UP NEXT on the first remaining step, no tap targets, no drag grips,
-// no Custom tag. The standalone realtor card is removed (Sept 25).
+// Faithful to APPROVED mockup 01 · device 4 (+ device 11 live-update details),
+// reworked Sept 26: the client top card (see ClientTopCard) leads with a bold
+// "Hi {name}" greeting, "Your purchase" kicker + non-bold address, the
+// realtor's photo circle top-right at the greeting level (tap -> full
+// profile); centered below: "N of N steps" above the bigger progress ring,
+// then the days-left line ("days left: N" / "due today" / red "overdue by N
+// day(s)"). When every step is checked, the banner slot shows "Congratulations,
+// your checklist is complete". The single ordered checklist in the realtor's
+// order sits below — checked steps stay in place, UP NEXT on the first
+// remaining step, no tap targets, no drag grips, no Custom tag, no JUST NOW
+// markers. The standalone realtor card is removed (Sept 25).
 import React, { useCallback, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import type { ClientView, RealtorProfile } from '../../../src/lib/types';
-import { Card, Kicker, SecondaryButton, initialsOf } from '../../../src/components/ui';
-import { ProgressRing } from '../../../src/components/ProgressRing';
-import { ReadOnlyChecklist, RecentUpdatePill } from '../../../src/components/Checklist';
+import { SecondaryButton } from '../../../src/components/ui';
+import { ClientTopCard } from '../../../src/components/ClientTopCard';
+import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
 
 export default function BuyerView() {
@@ -86,52 +91,19 @@ export default function BuyerView() {
         <Text style={styles.loading}>Loading…</Text>
       ) : (
         <>
-          <Card style={styles.hero}>
-            <Text style={styles.greeting}>{greeting}</Text>
-            <Kicker>Your purchase</Kicker>
-            <Text style={styles.byaddr}>
-              {view.address} · {view.city}
-            </Text>
-            <View style={styles.daysRow}>
-              {view.daysToClose < 0 ? (
-                <Text style={styles.pastTarget}>
-                  {Math.abs(view.daysToClose)} days past target
-                </Text>
-              ) : (
-                <View>
-                  <Text style={styles.big}>{view.daysToClose}</Text>
-                  <Text style={styles.daysLabel}>days to close</Text>
-                </View>
-              )}
-              <View style={styles.ringWrap}>
-                <Pressable
-                  onPress={() =>
-                    router.push({ pathname: '/client/profile', params: { escrowId: id } })
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel={`View your realtor ${profile?.name ?? ''}'s full profile`}
-                  style={styles.rav}
-                >
-                  <View style={styles.rphotoHalo}>
-                    {profile?.photoUri ? (
-                      <Image source={{ uri: profile.photoUri }} style={styles.rphoto} />
-                    ) : (
-                      <View style={styles.rphoto}>
-                        <Text style={styles.rphotoInitials}>
-                          {initialsOf(profile?.name ?? '')}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </Pressable>
-                <ProgressRing done={view.done} total={view.total} size={72} />
-                <Text style={styles.ringCap}>
-                  {view.done} of {view.total} steps
-                </Text>
-              </View>
-            </View>
-            <RecentUpdatePill steps={view.steps} />
-          </Card>
+          <ClientTopCard
+            greeting={greeting}
+            kicker="Your purchase"
+            address={view.address}
+            city={view.city}
+            daysToClose={view.daysToClose}
+            done={view.done}
+            total={view.total}
+            profile={profile}
+            onProfilePress={() =>
+              router.push({ pathname: '/client/profile', params: { escrowId: id } })
+            }
+          />
 
           <ReadOnlyChecklist steps={view.steps} />
 
@@ -171,88 +143,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     textAlign: 'center',
     marginBottom: 18,
-  },
-  hero: {
-    marginTop: 14,
-    paddingVertical: 20,
-    paddingHorizontal: 16,
-  },
-  greeting: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.ink,
-    letterSpacing: -0.24,
-    marginBottom: 6,
-  },
-  byaddr: {
-    fontSize: 14.5,
-    fontWeight: '400',
-    color: colors.body,
-    lineHeight: 21,
-    marginBottom: 14,
-  },
-  daysRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  big: {
-    fontSize: 44,
-    fontWeight: '800',
-    color: colors.ink,
-    letterSpacing: -0.88,
-    lineHeight: 44,
-  },
-  daysLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.body,
-    marginTop: 4,
-  },
-  pastTarget: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: colors.red,
-    flexShrink: 1,
-  },
-  ringWrap: {
-    alignItems: 'center',
-  },
-  // Realtor photo entry point: circle above the ring (mockup 01 · .rav).
-  rav: {
-    minWidth: 48,
-    minHeight: 48,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  rphotoHalo: {
-    // Soft accent halo outside the white ring (mockup 01 · .rav .rphoto).
-    backgroundColor: colors.accentSoft,
-    borderRadius: 29,
-    padding: 2,
-  },
-  rphoto: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-  },
-  rphotoInitials: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 17,
-  },
-  ringCap: {
-    fontSize: 11.5,
-    fontWeight: '700',
-    color: colors.body,
-    marginTop: 4,
   },
   note: {
     fontSize: 12.5,

@@ -60,17 +60,19 @@ central user; the buyers and sellers they represent are the other parties.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
   circles, short connector segments, subtitles, UP NEXT tag) but with no tap
   targets, no drag grips, and no "Custom" tag. One single list in the
-  realtor's order — checked steps stay in place. "Just now" recency markers
-  expire 4 hours after checkoff.
+  realtor's order — checked steps stay in place. No recency markers of any
+  kind.
 - **Client home top card** — bold "Hi {name}" headline, "Your purchase" /
-  "Your sale" plus the address in non-bold below. The realtor's photo sits as
-  a circle above the progress ring; tapping it opens the realtor profile.
+  "Your sale" plus the address in non-bold below, with the realtor's photo as
+  a circle top-right at the greeting level (tap → realtor profile). Centered
+  below: "N of N steps" above a bigger progress ring, then the days line —
+  "days left: N", "due today" on the target date, red "overdue by N day(s)"
+  past it. When every step is checked, the banner slot shows
+  "Congratulations, your checklist is complete".
 - **Realtor profile (client view)** — prominent "Back to my escrow" button
   returns to the client's home screen. No Call / Message actions.
 - **Live updates** — every realtor checkoff updates the client home and
-  progress bar. The "Just now" tag on the step and the "your realtor checked
-  off X just now" notice expire 4 hours after checkoff (the step itself stays
-  in place). Custom steps render like any other step (no "Custom" tag on
+  progress bar. Custom steps render like any other step (no "Custom" tag on
   client views).
 - Buyer access can never expose seller data and vice versa.
 

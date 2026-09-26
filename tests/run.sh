@@ -17,16 +17,13 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/supabase.ts" \
   "$ROOT/src/lib/auth.ts" \
   "$ROOT/src/lib/bootRoute.ts" \
-  "$ROOT/src/lib/recency.ts" \
   "$ROOT/src/lib/sidePicker.ts" \
-  "$ROOT/src/lib/clientView.ts" \
   "$ROOT/src/lib/dates.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
   "$ROOT/tests/sync.test.ts" \
   "$ROOT/tests/uniqueness.test.ts" \
-  "$ROOT/tests/recency.test.ts" \
   "$ROOT/tests/checklist.test.ts" \
   "$ROOT/tests/sidepicker.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
@@ -49,7 +46,6 @@ export NODE_PATH="$ROOT/node_modules"
 node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
-node "$OUT/tests/recency.test.js"
 node "$OUT/tests/checklist.test.js"
 node "$OUT/tests/sidepicker.test.js"
 node "$OUT/tests/persistence.test.js"

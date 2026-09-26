@@ -30,8 +30,6 @@ import DraggableFlatList from 'react-native-draggable-flatlist';
 import { Card, Grip } from './ui';
 import { StepRow } from './StepRow';
 import type { StepT } from '../lib/types';
-import { isRecent } from '../lib/recency';
-import { mostRecentCheckoff } from '../lib/clientView';
 import { colors } from '../theme';
 
 // Circle geometry (must match StepRow): row paddingHorizontal 4 + node
@@ -154,13 +152,11 @@ export function EditableChecklist({
 
 /**
  * Client read-only checklist: the same single ordered list — checked steps in
- * place, UP NEXT on the first remaining step, JUST NOW tag while the checkoff
- * is inside the recency window — but rows are plain Views (no tap targets),
- * no drag grips, and custom steps render exactly like default steps.
+ * place, UP NEXT on the first remaining step — but rows are plain Views (no
+ * tap targets), no drag grips, and custom steps render exactly like default
+ * steps. No recency markers (removed per Anuraj's review, Sept 26).
  */
-export function ReadOnlyChecklist({ steps, now }: { steps: StepT[]; now?: number }) {
-  // Computed once at render from the device clock — no live ticking.
-  const t = now ?? Date.now();
+export function ReadOnlyChecklist({ steps }: { steps: StepT[] }) {
   const upNextId = steps.find((s) => !s.done)?.id;
   return (
     <Card style={styles.listCard}>
@@ -172,26 +168,10 @@ export function ReadOnlyChecklist({ steps, now }: { steps: StepT[]; now?: number
             subtitle={s.subtitle}
             done={s.done}
             upNext={s.id === upNextId}
-            recent={isRecent(s.completedAt, t)}
           />
         </ChecklistRow>
       ))}
     </Card>
-  );
-}
-
-/**
- * "Your realtor checked off X just now." pill. Shown only while the most
- * recent checkoff is inside the recency window; renders nothing after expiry.
- */
-export function RecentUpdatePill({ steps }: { steps: StepT[] }) {
-  const recent = mostRecentCheckoff(steps);
-  if (!recent) return null;
-  return (
-    <View style={styles.pill}>
-      <View style={styles.dot} />
-      <Text style={styles.pillText}>Your realtor checked off “{recent.title}” just now.</Text>
-    </View>
   );
 }
 
@@ -235,29 +215,5 @@ const styles = StyleSheet.create({
   // pan-y so finger drags anywhere else scroll (mockup 01: .grip touch-action:none).
   gripHit: {
     ...(Platform.OS === 'web' ? ({ touchAction: 'none' } as object) : null),
-  },
-  pill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.accentSoft,
-    borderRadius: 999,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    marginTop: 14,
-  },
-  dot: {
-    flexShrink: 0,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.accent,
-  },
-  pillText: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.accent,
-    lineHeight: 18.2,
   },
 });
