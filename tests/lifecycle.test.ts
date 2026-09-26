@@ -1,6 +1,6 @@
 // lifecycle.test.ts — escrow lifecycle semantics (approved Sept 2026):
 // per-side close, auto-reopen on uncheck, dual-agency independence,
-// "Edit dates" validation, and the profile phone round-trip.
+// target-date validation, and the profile phone round-trip.
 // Every test below fails on the pre-lifecycle code and passes with it.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
@@ -157,7 +157,10 @@ async function main(): Promise<void> {
     assert(reloaded!.status === 'closed', 'closed status persists across reload');
   }
 
-  // --- "Edit dates" validation ----------------------------------------------
+  // --- Target-date validation ----------------------------------------------
+  // (The "Edit dates" sheet and its store.updateDates were removed Sept 2026:
+  // dates are display-only on the detail screen and edited from the home
+  // page's "Update escrow" flow, which shares the same close >= open rule.)
   {
     const store = createStore(memoryKV());
     const e = await store.createEscrow({
@@ -169,30 +172,16 @@ async function main(): Promise<void> {
       closeDate: '2026-11-01',
     });
 
-    let threw = false;
-    try {
-      await store.updateDates(e.id, '2026-09-01', '2026-08-15');
-    } catch {
-      threw = true;
-    }
-    assert(threw, 'updateDates rejects target close before opened');
-
-    // Target == opened is allowed (target ≥ opened).
-    const sameDay = await store.updateDates(e.id, '2026-09-01', '2026-09-01');
+    const moved = await store.updateTargetDate(e.id, '2026-12-01');
     assert(
-      sameDay.openDate === '2026-09-01' && sameDay.closeDate === '2026-09-01',
-      'updateDates allows target close equal to opened',
-    );
-
-    const moved = await store.updateDates(e.id, '2026-09-10', '2026-12-01');
-    assert(
-      moved.openDate === '2026-09-10' && moved.closeDate === '2026-12-01',
-      'updateDates saves both dates (tracker recomputes from them)',
+      moved.openDate === '2026-09-01' && moved.closeDate === '2026-12-01',
+      'updateTargetDate saves the new target date (tracker recomputes from it)',
     );
 
     let targetThrew = false;
     try {
-      await store.updateTargetDate(e.id, '2026-09-01'); // before openDate 2026-09-10
+      await store.updateTargetDate(e.id, '2026-09-01'); // equal to opened: allowed
+      await store.updateTargetDate(e.id, '2026-08-15'); // before opened: rejects
     } catch {
       targetThrew = true;
     }

@@ -96,15 +96,15 @@ function PasswordField({
 function serverErrorCopy(code: ChangePasswordErrorCode): string {
   switch (code) {
     case 'wrong_current':
-      return 'Current password is incorrect — try again.';
+      return 'Current password is incorrect. Try again.';
     case 'weak_password':
       return 'Password needs 8+ characters.';
     case 'network':
-      return "Couldn't reach the server — check your connection and try again.";
+      return "Couldn't reach the server. Check your connection and try again.";
     case 'unconfigured':
       return 'Sign-in is not configured on this device yet.';
     default:
-      return 'Something went wrong — try again.';
+      return 'Something went wrong. Try again.';
   }
 }
 
@@ -177,7 +177,7 @@ export function ChangePasswordSheet({
     <Sheet visible={visible} onClose={onClose} dragToDismiss>
       <Text style={styles.title}>Change password</Text>
       <Text style={styles.hint}>
-        Use 8 or more characters — same rule as when you signed up.
+        Use 8 or more characters. Same rule as when you signed up.
       </Text>
 
       <PasswordField

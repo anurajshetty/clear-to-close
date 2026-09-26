@@ -85,7 +85,7 @@ export default function RolePicker() {
         <Kicker>Clear to Close</Kicker>
         <Text style={styles.h1}>How are you joining?</Text>
         <Text style={styles.sub}>
-          Pick the path that fits. You only see this once — the app remembers.
+          Pick the path that fits. You only see this once. The app remembers.
         </Text>
 
         <View style={styles.cards}>

@@ -79,11 +79,11 @@ export function InviteSheet({
       {phase === 'name' ? (
         <View>
           <Kicker>
-            {label} invite — {address}
+            {label} invite · {address}
           </Kicker>
           <Text style={styles.h3}>Invite the {noun}</Text>
           <Text style={styles.hint}>
-            Name the invite first — their name becomes part of the code.
+            Name the invite first. Their name becomes part of the code.
           </Text>
           <Field
             label={label === 'Buyer' ? "Buyer's name" : "Seller's name"}
@@ -92,7 +92,7 @@ export function InviteSheet({
             placeholder={`${label}'s name`}
           />
           <Text style={styles.hint}>
-            They’ll enter this exact name with the code — it has to match.
+            They’ll enter this exact name with the code. It has to match.
           </Text>
           <View style={styles.btnWrap}>
             <PrimaryButton
@@ -105,11 +105,11 @@ export function InviteSheet({
       ) : (
         <View>
           <Kicker>
-            {label} invite — {address}
+            {label} invite · {address}
           </Kicker>
           <Text style={styles.bigCode}>{code}</Text>
           <Text style={styles.hintCenter}>
-            Share this code with them — it works once.
+            Share this code with them. It works once.
           </Text>
           <View style={styles.btnWrap}>
             <PrimaryButton title="Copy" onPress={copy} />

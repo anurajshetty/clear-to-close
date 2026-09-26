@@ -21,13 +21,13 @@ import { colors } from '../src/theme';
 type RedeemError = Exclude<RedeemResult, { ok: true }>['error'];
 
 const ERROR_COPY: Record<RedeemError, string> = {
-  invalid: "This code doesn't look right — check it and try again.",
-  already_used: 'This code was already used — ask your realtor for a new code.',
-  revoked: 'This code is no longer active — ask your realtor for the new code.',
-  name_mismatch: "That name doesn't match this invite — check the spelling and try again.",
-  network: 'Something went wrong on our end — check your connection and try again.',
+  invalid: "This code doesn't look right. Check it and try again.",
+  already_used: 'This code was already used. Ask your realtor for a new code.',
+  revoked: 'This code is no longer active. Ask your realtor for the new code.',
+  name_mismatch: "That name doesn't match this invite. Check the spelling and try again.",
+  network: 'Something went wrong on our end. Check your connection and try again.',
   device_has_link:
-    'This device is already linked to another escrow — ask your realtor to release it, then try again.',
+    'This device is already linked to another escrow. Ask your realtor to release it, then try again.',
 };
 
 export default function Redeem() {
@@ -81,7 +81,7 @@ export default function Redeem() {
       <SafeAreaView style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
           <Kicker>Client access</Kicker>
-          <Text style={styles.h1}>You&apos;re linked up</Text>
+          <Text style={styles.h1}>Hooray! Your escrow is open.</Text>
           <Text style={styles.sub}>This device is now linked to your escrow</Text>
           <View style={styles.cta}>
             <PrimaryButton

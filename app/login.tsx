@@ -121,7 +121,7 @@ export default function Login() {
             <Kicker>Reset password</Kicker>
             <Text style={styles.h1}>Reset your password</Text>
             <Text style={styles.sub}>
-              Enter your account email — we&apos;ll send a reset link.
+              Enter your account email. We&apos;ll send a reset link.
             </Text>
             <View style={styles.form}>
               <Field
@@ -143,7 +143,7 @@ export default function Login() {
             </View>
             {resetNetworkError ? (
               <Text style={styles.inlineError}>
-                Couldn&apos;t reach the server — check your connection and try again.
+                Couldn&apos;t reach the server. Check your connection and try again.
               </Text>
             ) : null}
             <Pressable accessibilityRole="button" onPress={goLogin} style={styles.centerRow}>
@@ -157,7 +157,7 @@ export default function Login() {
             <Text style={styles.sub}>Log in to pick up where you left off.</Text>
             {expired ? (
               <View style={styles.expiredCard}>
-                <Text style={styles.expiredText}>Your session expired — log in again.</Text>
+                <Text style={styles.expiredText}>Your session expired. Log in again.</Text>
               </View>
             ) : null}
             <View style={styles.form}>
@@ -180,15 +180,15 @@ export default function Login() {
                 autoCorrect={false}
               />
               {error === 'invalid_credentials' ? (
-                <Text style={styles.inlineError}>Wrong email or password — try again.</Text>
+                <Text style={styles.inlineError}>Wrong email or password. Try again.</Text>
               ) : null}
               {error === 'network' ? (
                 <Text style={styles.inlineError}>
-                  Couldn&apos;t reach the server — check your connection and try again.
+                  Couldn&apos;t reach the server. Check your connection and try again.
                 </Text>
               ) : null}
               {error === 'unconfigured' || error === 'unknown' ? (
-                <Text style={styles.inlineError}>Something went wrong — please try again.</Text>
+                <Text style={styles.inlineError}>Something went wrong. Please try again.</Text>
               ) : null}
             </View>
             <View style={styles.cta}>

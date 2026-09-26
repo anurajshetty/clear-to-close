@@ -149,7 +149,7 @@ export default function ShareEscrow() {
       await refreshInvites();
     } catch (err) {
       console.warn('regenerateInvite failed', err);
-      showToast('Could not create a new code — try again.');
+      showToast('Could not create a new code. Try again.');
     } finally {
       setRegenBusy(false);
       setRegenConfirmId(null);
@@ -258,7 +258,7 @@ export default function ShareEscrow() {
                   <View style={styles.regenNote}>
                     <Text style={styles.regenNoteText}>
                       <Text style={styles.regenNoteBold}>Regenerated</Text>
-                      {' — the previous code '}
+                      {': the previous code '}
                       <Text style={styles.strike}>{lastRegen.oldCode}</Text>
                       {' no longer works, and the old device link is revoked.'}
                     </Text>
@@ -272,7 +272,7 @@ export default function ShareEscrow() {
             <View style={styles.confirmBox}>
               <Text style={styles.confirmTitle}>New code for {regenInvite.partyName}?</Text>
               <Text style={styles.confirmText}>
-                {`A fresh single-use code is created for this ${regenSide?.noun ?? 'client'} — same escrow, same party. `}
+                {`A fresh single-use code is created for this ${regenSide?.noun ?? 'client'} : same escrow, same party. `}
                 <Text style={styles.confirmBold}>The old code and its device link stop working.</Text>
               </Text>
               <View style={styles.confirmBtns}>
@@ -302,7 +302,7 @@ export default function ShareEscrow() {
           <Text style={styles.hint}>
             {'Buyer and seller each get their '}
             <Text style={styles.hintBold}>own code</Text>
-            {' for this escrow — one invite per side. '}
+            {' for this escrow (one invite per side). '}
             <Text style={styles.hintBold}>Regenerate</Text>
             {' covers a reinstall or a new device: the old code was already consumed.'}
           </Text>

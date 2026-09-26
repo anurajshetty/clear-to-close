@@ -12,12 +12,8 @@ Covers EVERY sheet in the app at 390x844, 375x667, AND tablet 768x1024:
   1. New escrow sheet ("+ New escrow" button)
   2. Update escrow sheet (pencil on a card)
   3. Cancel escrow confirm (danger action inside the update sheet)
-  4. Edit dates sheet (escrow detail, "Edit target close date") — includes the
-     Sept 2026 picker-drop coverage: text date inputs shown (no picker popup),
-     typing updates the value, opened <= target validation still rejects an
-     invalid range
-  5. Invite sheet (escrow detail, "Invite client")
-  6. View clients sheet (escrow detail, "View clients")
+  4. Invite sheet (escrow detail, "Invite client")
+  5. View clients sheet (escrow detail, "View clients")
 
 Per sheet, by rendered geometry:
   - the sheet-scroll region exists (testID "sheet-scroll");
@@ -286,50 +282,10 @@ def main():
 
             # --- escrow detail sheets --------------------------------------
             pg.get_by_text("4187 Oakmont Dr").first.click()
-            pg.get_by_label("Edit target close date").wait_for(timeout=12000)
+            pg.get_by_test_id("days-left").wait_for(timeout=12000)
             pg.wait_for_timeout(800)
 
-            # --- 4. Edit dates sheet ---------------------------------------
-            # Text-box date inputs like the create-escrow form (the calendar
-            # picker popup was dropped) — plus the scroll regression checks.
-            pg.get_by_label("Edit target close date").click()
-            pg.get_by_text("Edit dates", exact=True).wait_for(timeout=8000)
-            pg.wait_for_timeout(700)
-            sc = top_scroller()
-            check(f"[{tag}] edit dates: sheet-scroll region exists", sc.count() == 1)
-            open_input = pg.get_by_test_id("edit-open-date")
-            target_input = pg.get_by_test_id("edit-target-date")
-            check(f"[{tag}] edit dates: text date inputs shown",
-                  open_input.count() == 1 and target_input.count() == 1)
-            check(f"[{tag}] edit dates: no picker rows or date popup",
-                  pg.get_by_label(re.compile(r"Change .*currently")).count() == 0
-                  and pg.locator('input[type="date"]').count() == 0)
-            # Typing a valid date updates the value in place.
-            target_input.fill("2026-12-15")
-            pg.wait_for_timeout(300)
-            check(f"[{tag}] edit dates: typing updates the date value",
-                  target_input.input_value() == "2026-12-15")
-            # opened <= target validation still rejects an invalid range.
-            target_input.fill("2026-01-15")
-            pg.get_by_text("Save", exact=True).click()
-            pg.wait_for_timeout(600)
-            check(f"[{tag}] edit dates: invalid range rejected",
-                  pg.get_by_text("The target close can't be before the opened date.").count() >= 1
-                  and pg.get_by_text("Edit dates", exact=True).count() == 1,
-                  "no range error after saving target before opened")
-            # Restore a valid range, then save for real.
-            target_input.fill("2026-12-15")
-            pg.wait_for_timeout(300)
-            scroll_to_bottom(sc)
-            save_btn = pg.get_by_text("Save", exact=True)
-            check(f"[{tag}] edit dates: Save inside visible sheet area after scroll",
-                  within_scrollport(save_btn, sc))
-            save_btn.click()
-            pg.wait_for_timeout(1200)
-            check(f"[{tag}] edit dates: Save clickable — sheet closed after save",
-                  pg.get_by_text("Edit dates", exact=True).count() == 0)
-
-            # --- 5. Invite sheet --------------------------------------------
+            # --- 4. Invite sheet --------------------------------------------
             pg.get_by_text("Invite client").first.scroll_into_view_if_needed()
             pg.wait_for_timeout(400)
             pg.get_by_text("Invite client").first.click()
@@ -355,7 +311,7 @@ def main():
             check(f"[{tag}] invite: scrim tap dismisses",
                   pg.get_by_text("Copy", exact=True).count() == 0)
 
-            # --- 6. View clients sheet ---------------------------------------
+            # --- 5. View clients sheet ---------------------------------------
             # The invite just created flips the button to "View clients".
             pg.get_by_text("View clients").first.scroll_into_view_if_needed()
             pg.wait_for_timeout(400)

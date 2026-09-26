@@ -71,3 +71,7 @@ node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/profilepull.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
+
+# Em/en-dash sweep (Sept 2026): user-facing copy must read professional and
+# human — no em dashes (—) or en dashes (–) outside code comments.
+python3 "$ROOT/tests/em_dash_sweep.py"

@@ -87,11 +87,11 @@ export function ClientList({
     try {
       await store.regenerateInvite(regenId);
       setRegenId(null);
-      showToast('New code issued — the old code no longer works.');
+      showToast('New code issued. The old code no longer works.');
       await refresh();
     } catch (err) {
       console.warn('regenerateInvite failed', err);
-      showToast('Could not create a new code — try again.');
+      showToast('Could not create a new code. Try again.');
     } finally {
       setBusy(false);
     }
@@ -107,7 +107,7 @@ export function ClientList({
       await refresh();
     } catch (err) {
       console.warn('revokeInvite failed', err);
-      showToast('Could not remove the invite — try again.');
+      showToast('Could not remove the invite. Try again.');
     } finally {
       setBusy(false);
     }
@@ -125,7 +125,7 @@ export function ClientList({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Kicker>Clients — {address}</Kicker>
+            <Kicker>Clients · {address}</Kicker>
             <Text style={styles.title}>View clients</Text>
 
             <Text style={styles.seclab}>
@@ -227,7 +227,7 @@ export function ClientList({
                   New code for {regenInvite.partyName}?
                 </Text>
                 <Text style={styles.confirmText}>
-                  The old code stops working — any linked device loses access to
+                  The old code stops working. Any linked device loses access to
                   this escrow.
                 </Text>
                 <View style={styles.confirmBtns}>

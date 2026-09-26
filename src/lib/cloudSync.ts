@@ -109,10 +109,16 @@ export function toStepRows(escrowId: string, role: ClientRole, steps: StepT[]): 
 }
 
 export function toProfileRow(userId: string, p: RealtorProfile | null): Record<string, unknown> {
+  // Device-local web captures (data:/blob:) never sync: photos stay
+  // device-local (Anuraj, Sept 2026). Pushing a megabyte data URI on every
+  // profile push would be pure waste. file:// passes through as before.
+  const uri = p?.photoUri ?? null;
+  const syncable =
+    uri !== null && (uri.startsWith('data:') || uri.startsWith('blob:')) ? null : uri;
   return {
     user_id: userId,
     name: p?.name ?? null,
-    photo_url: p?.photoUri ?? null,
+    photo_url: syncable,
     about: p?.about ?? null,
     years_experience: p?.yearsExperience ?? null,
     deals_closed: p?.dealsClosed ?? null,
@@ -423,7 +429,7 @@ export async function pingCloud(client: Cloud): Promise<PingResult> {
   }
   const userId = await ensureCloudUser(client);
   if (!userId) {
-    return { ran: true, ok: false, error: 'no realtor session — sign in to enable sync' };
+    return { ran: true, ok: false, error: 'no realtor session; sign in to enable sync' };
   }
   try {
     // Read: own profile rows (RLS owner policy).

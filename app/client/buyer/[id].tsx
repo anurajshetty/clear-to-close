@@ -83,7 +83,7 @@ export default function BuyerView() {
       ) : gateState === 'error' ? (
         <View style={styles.gateError}>
           <Text style={styles.gateErrorText}>
-            Couldn&apos;t verify your invite link — check your connection and try again.
+            Couldn&apos;t verify your invite link. Check your connection and try again.
           </Text>
           <SecondaryButton title="Try again" onPress={retry} />
         </View>

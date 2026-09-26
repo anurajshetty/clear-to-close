@@ -34,7 +34,7 @@ import threading
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-change-password"
 BASE = "http://127.0.0.1:8917/clear-to-close/"

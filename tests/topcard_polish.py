@@ -19,8 +19,8 @@ Guards (real rendered component, 390x844, client buyer view):
   - card height within tolerance of the spec'd 322px.
   - zero JS errors.
 
-Usage: CTC_ROOT=~/workspace/realtor-app-wt-topcard python3 tests/topcard_polish.py
-Requires: a fresh `npm run export:web` build in <CTC_ROOT>/dist.
+Usage: APP_ROOT=/home/hatch/workspace/realtor-app-wt-dragrow python3 tests/topcard_polish.py
+Requires: a fresh `npm run export:web` build in <APP_ROOT>/dist.
 """
 import http.server
 import functools
@@ -35,7 +35,7 @@ from playwright.sync_api import sync_playwright
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 import progress_ring  # noqa: E402  (reuses make_escrow / make_clientlink / ring_state)
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-topcard-polish"
 BASE = "http://127.0.0.1:8916/clear-to-close/"

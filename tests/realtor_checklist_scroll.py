@@ -32,7 +32,7 @@ import time
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.path.expanduser("~/workspace/realtor-app")
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-checklist-scroll"
 BASE = "http://127.0.0.1:8904/clear-to-close/"
@@ -425,8 +425,9 @@ def main():
             )
             pg.screenshot(path=f"{OUT}/05-detail-top-again.png")
 
-        # 6. Tap-to-check in place: tap an unchecked step, ring recounts,
-        # the step stays in position (no regrouping).
+        # 6. Tap-to-check in place: tap the CHECKBOX (row text taps are inert
+        # since the Sept 2026 drag-row UX: whole-row long-press arms drag),
+        # ring recounts, the step stays in position (no regrouping).
         pg.evaluate(
             """(TITLES) => {
               const el = [...document.querySelectorAll('*')].find(e =>
@@ -442,7 +443,7 @@ def main():
             BUY_STEPS,
         )
         pg.wait_for_timeout(400)
-        pg.get_by_text("Appraisal scheduled", exact=True).click()
+        pg.get_by_test_id("step-checkbox-Appraisal scheduled").click()
         pg.wait_for_timeout(800)
         body2 = pg.inner_text("body")
         check("checklist: tap checks off in place, ring recounts", "4 of 13 steps" in body2)

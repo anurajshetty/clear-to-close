@@ -5,11 +5,16 @@
 // try/catch), so this module can be imported in a Node test environment
 // where the package may not be installed yet.
 //
-// Auth session storage is platform-differentiated (approved spec §4):
+// Auth session storage is platform-differentiated (Anuraj, Sept 26, 2026 —
+// this REVERSES the Sept 25 "web = sign-in screen on every return"
+// decision):
 //   - native iOS: the session persists in AsyncStorage — returning realtors
 //     go straight into the app, no re-sign-in.
-//   - web: an in-memory store with persistSession:false — returning realtors
-//     see the email + password sign-in screen on every visit, no auto-login.
+//   - web: the session persists in localStorage — a refresh keeps the
+//     realtor signed in, on the same screen. The session ends ONLY on Log
+//     out, or when the browser session ends (in incognito, closing the
+//     incognito window wipes localStorage automatically, so that keeps
+//     working).
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const require: (id: string) => any;
@@ -31,6 +36,42 @@ interface AuthStorage {
   removeItem(k: string): Promise<void>;
 }
 
+/**
+ * Web auth storage: the Supabase session lives in localStorage, so it
+ * survives page refreshes. In incognito, closing the incognito window wipes
+ * localStorage, so the session still ends with the browser session there.
+ * localStorage is read lazily: this module also loads in Node test runs
+ * where it is undefined.
+ */
+function webAuthStorage(): AuthStorage {
+  const ls = (): Storage | null =>
+    typeof localStorage !== 'undefined' ? localStorage : null;
+  return {
+    async getItem(k: string): Promise<string | null> {
+      try {
+        return ls()?.getItem(k) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    async setItem(k: string, v: string): Promise<void> {
+      try {
+        ls()?.setItem(k, v);
+      } catch {
+        // Quota/full: the session just won't survive the refresh.
+      }
+    },
+    async removeItem(k: string): Promise<void> {
+      try {
+        ls()?.removeItem(k);
+      } catch {
+        // ignore
+      }
+    },
+  };
+}
+
+/** In-memory fallback for native when AsyncStorage can't be loaded. */
 function memoryAuthStorage(): AuthStorage {
   const map = new Map<string, string>();
   return {
@@ -72,15 +113,14 @@ export function getSupabaseClient(kind: AuthStorageKind): any | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { createClient } = require('@supabase/supabase-js');
-    const persist = kind === 'native';
     cached[kind] = createClient(
       process.env.EXPO_PUBLIC_SUPABASE_URL!,
       process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!,
       {
         auth: {
-          storage: persist ? asyncAuthStorage() : memoryAuthStorage(),
-          persistSession: persist,
-          autoRefreshToken: persist,
+          storage: kind === 'native' ? asyncAuthStorage() : webAuthStorage(),
+          persistSession: true,
+          autoRefreshToken: true,
           detectSessionInUrl: false,
         },
       },

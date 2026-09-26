@@ -6,10 +6,12 @@
 // plus full name and phone. Buttons and headers belong to the screens;
 // this component owns the fields only.
 
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
+import { deleteLegacyPhotoFile, saveManagedPhoto } from '../lib/photoFile';
 import { Field } from './ui';
 import { initialsOf } from './ui';
 import { colors } from '../theme';
@@ -57,16 +59,87 @@ function CameraIcon() {
   );
 }
 
+// Profile-photo size cap (Sept 2026, automatic — no user prompt): at pick
+// time the long edge is scaled to at most 1024px and the image is saved as
+// JPEG at ~0.8 quality, targeting ≤ ~1MB. Both the signup profile step and
+// the edit-profile "Change photo" flow share this form, so both get it.
+const MAX_PHOTO_EDGE = 1024;
+
+async function cappedPhotoUri(
+  uri: string,
+  width?: number,
+  height?: number,
+): Promise<string> {
+  let w = width ?? 0;
+  let h = height ?? 0;
+  if (!w || !h) {
+    // Best-effort dimension lookup for pickers that omit them.
+    const size = await new Promise<{ width: number; height: number } | null>(
+      (resolve) => {
+        Image.getSize(
+          uri,
+          (sw, sh) => resolve({ width: sw, height: sh }),
+          () => resolve(null),
+        );
+      },
+    );
+    if (!size) return uri;
+    w = size.width;
+    h = size.height;
+  }
+  const longEdge = Math.max(w, h);
+  const actions: { resize: { width: number; height: number } }[] =
+    longEdge > MAX_PHOTO_EDGE
+      ? [
+          {
+            resize: {
+              width: Math.round((w * MAX_PHOTO_EDGE) / longEdge),
+              height: Math.round((h * MAX_PHOTO_EDGE) / longEdge),
+            },
+          },
+        ]
+      : [];
+  const out = await manipulateAsync(uri, actions, {
+    compress: 0.8,
+    format: SaveFormat.JPEG,
+  });
+  return out.uri;
+}
+
 export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
+  // A saved photo URI can go stale (e.g. a dead file/blob URI). Fall back
+  // to initials rather than rendering a broken image; resets per URI.
+  const [photoBroken, setPhotoBroken] = useState(false);
+  useEffect(() => {
+    setPhotoBroken(false);
+  }, [value.photoUri]);
+  // Quiet inline error when a picked image genuinely can't be processed.
+  const [photoError, setPhotoError] = useState<string | null>(null);
+
   const pickPhoto = async () => {
+    setPhotoError(null);
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
-      quality: 0.7,
+      // Full quality here: we resize + JPEG-compress ourselves below.
+      quality: 1,
     });
-    if (!res.canceled && res.assets && res.assets[0]?.uri) {
-      onChange({ photoUri: res.assets[0].uri });
+    if (res.canceled || !res.assets?.[0]?.uri) return;
+    const asset = res.assets[0];
+    try {
+      const capped = await cappedPhotoUri(asset.uri, asset.width, asset.height);
+      const previous = value.photoUri;
+      // Single managed file (Sept 2026): the final image is copied to one
+      // fixed location, overwriting the previous photo, so files never pile up.
+      const managed = await saveManagedPhoto(capped);
+      // Drop the stale file from the previous pick, if any (the old flow
+      // stored unique cache URIs). The managed file itself was overwritten,
+      // never deleted.
+      await deleteLegacyPhotoFile(previous);
+      onChange({ photoUri: managed });
+    } catch {
+      setPhotoError('Couldn’t use that photo. Try a different one.');
     }
   };
 
@@ -81,7 +154,13 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
           onPress={pickPhoto}
           style={[styles.photoBtn, value.photoUri && styles.photoBtnPicked]}
         >
-          {value.photoUri ? (
+          {value.photoUri && !photoBroken ? (
+            <Image
+              source={{ uri: value.photoUri }}
+              style={styles.photoImg}
+              onError={() => setPhotoBroken(true)}
+            />
+          ) : value.photoUri ? (
             <Text style={styles.photoInitials}>{initialsOf(value.name)}</Text>
           ) : (
             <CameraIcon />
@@ -96,6 +175,7 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
           </Text>
         </View>
       </View>
+      {photoError ? <Text style={styles.photoError}>{photoError}</Text> : null}
 
       <Field label="Full name" value={value.name} onChangeText={set('name')} placeholder="e.g. Maya Chen" />
       {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
@@ -168,6 +248,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
+  photoImg: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+  },
   photoText: {
     flex: 1,
   },
@@ -188,5 +273,12 @@ const styles = StyleSheet.create({
     color: '#D44',
     marginTop: 6,
     marginBottom: -10,
+  },
+  photoError: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#D44',
+    marginTop: 6,
+    marginBottom: 2,
   },
 });

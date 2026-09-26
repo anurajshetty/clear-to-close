@@ -12,7 +12,7 @@
 // visuals — same node, connectors, titles, subtitles, UP NEXT tag — but the
 // root is a plain View (NO onPress at all), there is no drag grip, and custom
 // steps render exactly like normal steps (no Custom tag, no special styling).
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useRef, useState } from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../theme';
@@ -35,6 +35,8 @@ type StepRowProps = StepRowBase &
         interactive?: true;
         onToggle: () => void;
         dragHandle?: ReactNode;
+        /** Library drag-arm callback (renderItem `drag`) — row long-press. */
+        onDragStart: () => void;
         /** True while this row is the active drag row (library `isActive`). */
         active?: boolean;
       }
@@ -102,23 +104,62 @@ export function StepRow(props: StepRowProps) {
     );
   }
 
+  // Realtor rows, Sept 2026: the check circle is its own pressable — tap
+  // toggles, long-press does nothing and never arms a drag. The rest of the
+  // row (text included) long-presses to arm the drag; a quick tap on the row
+  // text is inert. The grip keeps its long-press-to-drag.
+  const suppressCheckboxToggle = useRef(false);
+  const [checkboxPressed, setCheckboxPressed] = useState(false);
+
   return (
     <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Step: ${title}${done ? ' — completed. Tap to undo.' : ' — tap to check off.'}`}
-      accessibilityState={{ checked: done }}
-      onPress={props.onToggle}
+      testID="step-row"
+      // Not a button: the row body is a drag surface, not a tap target. The
+      // checkbox (toggle) and the grip (reorder) carry their own semantics.
+      onPress={() => {
+        // Quick tap on row text stays inert by design (Sept 2026): only the
+        // check circle toggles, and only a long-press arms the drag. A
+        // release right after a drag-arming long-press lands here too and
+        // must not toggle the step.
+      }}
+      onLongPress={() => {
+        props.onDragStart();
+      }}
       // Active drag row: lifted card — solid background so it occludes the
       // rows it passes over (mid-drag text collision, Sept 2026), slight
       // scale + shadow + zIndex so it reads as floating above the list.
       // Resting rows are untouched (no card background per the mockup).
       style={({ pressed }) => [
         styles.row,
-        pressed && { opacity: 0.7 },
+        (pressed || checkboxPressed) && { opacity: 0.7 },
         props.active && styles.rowActive,
       ]}
     >
-      {node}
+      <Pressable
+        accessibilityRole="checkbox"
+        accessibilityState={{ checked: done }}
+        accessibilityLabel={`${title}. ${done ? 'completed. Activate to undo.' : 'not completed. Activate to check off.'}`}
+        testID={`step-checkbox-${props.title}`}
+        hitSlop={10}
+        onPressIn={() => {
+          setCheckboxPressed(true);
+          suppressCheckboxToggle.current = false;
+        }}
+        onPressOut={() => setCheckboxPressed(false)}
+        onPress={() => {
+          // A checkbox long-press must never toggle.
+          if (suppressCheckboxToggle.current) {
+            suppressCheckboxToggle.current = false;
+            return;
+          }
+          props.onToggle();
+        }}
+        onLongPress={() => {
+          suppressCheckboxToggle.current = true;
+        }}
+      >
+        {node}
+      </Pressable>
       <View style={styles.gripZone}>{props.dragHandle ?? <Grip />}</View>
       {body}
     </Pressable>

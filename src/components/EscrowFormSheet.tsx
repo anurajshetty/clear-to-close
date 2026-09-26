@@ -15,6 +15,7 @@ import {
 } from '../lib/sidePicker';
 import type { CreateEscrowInput, Escrow, Side } from '../lib/types';
 import { Field, Kicker, PrimaryButton, Sheet } from '../components/ui';
+import DateField from './DateField';
 import { colors } from '../theme';
 
 export interface EscrowFormInitial {
@@ -54,7 +55,14 @@ function toMs(v: string): number {
   return new Date(y, m - 1, d).getTime();
 }
 
-type ErrorKey = 'address' | 'buyerName' | 'sellerName' | 'openDate' | 'closeDate' | 'submit';
+type ErrorKey =
+  | 'address'
+  | 'city'
+  | 'buyerName'
+  | 'sellerName'
+  | 'openDate'
+  | 'closeDate'
+  | 'submit';
 type Errors = Partial<Record<ErrorKey, string>>;
 
 function FieldWrap({ error, children }: { error?: string; children: React.ReactNode }) {
@@ -137,18 +145,36 @@ export function EscrowFormSheet({
 
   const validate = (): boolean => {
     const e: Errors = {};
-    if (!address.trim()) e.address = 'Enter the property address.';
+    // Every required field gets its own inline message (Sept 2026): no
+    // generic banner for validation failures. Sentence case, plain words.
+    if (!address.trim()) e.address = 'Please enter the property address.';
+    if (!city.trim()) e.city = 'Please enter the city.';
+    // The side picker always keeps one side selected (toggleSide guard), so
+    // the side itself needs no error; the client-name wording follows the
+    // field label ("Client name" single side vs "Buyer/Seller name" dual).
     if (sel.buy && !buyerName.trim()) {
-      e.buyerName = "Enter the buyer's name.";
+      e.buyerName = dual
+        ? "Please enter the buyer's name."
+        : "Please enter the client's name.";
     }
     if (sel.sell && !sellerName.trim()) {
-      e.sellerName = "Enter the seller's name.";
+      e.sellerName = dual
+        ? "Please enter the seller's name."
+        : "Please enter the client's name.";
     }
-    if (!isRealDate(openDate)) e.openDate = 'Use YYYY-MM-DD.';
-    if (!isRealDate(closeDate)) {
-      e.closeDate = 'Use YYYY-MM-DD.';
-    } else if (isRealDate(openDate) && toMs(closeDate) <= toMs(openDate)) {
-      e.closeDate = 'Target close must be after the open date.';
+    if (!openDate.trim()) {
+      e.openDate = 'Please enter the escrow open date.';
+    } else if (!isRealDate(openDate)) {
+      e.openDate = 'Please use the format YYYY-MM-DD.';
+    }
+    if (!closeDate.trim()) {
+      e.closeDate = 'Please enter the target close date.';
+    } else if (!isRealDate(closeDate)) {
+      e.closeDate = 'Please use the format YYYY-MM-DD.';
+    } else if (isRealDate(openDate) && toMs(closeDate) < toMs(openDate)) {
+      // The ONLY date rule (Sept 2026): the target close must not be before
+      // the escrow open date. Equal is fine.
+      e.closeDate = "The target close can't be before the opened date.";
     }
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -223,11 +249,14 @@ export function EscrowFormSheet({
         />
       </FieldWrap>
 
-      <FieldWrap>
+      <FieldWrap error={errors.city}>
         <Field
           label="City"
           value={city}
-          onChangeText={setCity}
+          onChangeText={(v) => {
+            setCity(v);
+            clear('city');
+          }}
           placeholder="Valencia, CA 91355"
           testID="escrow-city"
         />
@@ -281,27 +310,25 @@ export function EscrowFormSheet({
       )}
 
       <FieldWrap error={errors.openDate}>
-        <Field
+        <DateField
           label="Escrow open date"
           value={openDate}
-          onChangeText={(v) => {
+          onChange={(v) => {
             setOpenDate(v);
             clear('openDate');
           }}
-          placeholder="YYYY-MM-DD"
           testID="escrow-open-date"
         />
       </FieldWrap>
 
       <FieldWrap error={errors.closeDate}>
-        <Field
+        <DateField
           label="Target close date"
           value={closeDate}
-          onChangeText={(v) => {
+          onChange={(v) => {
             setCloseDate(v);
             clear('closeDate');
           }}
-          placeholder="YYYY-MM-DD"
           testID="escrow-close-date"
         />
       </FieldWrap>

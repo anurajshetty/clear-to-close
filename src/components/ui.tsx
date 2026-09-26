@@ -1,8 +1,9 @@
 // Clear to Close — shared UI primitives (Kicker, Card, buttons, Field, Sheet, Grip)
 // Faithful to APPROVED mockup 01 · Escrow tracker v1. react-native + react-native-web compatible.
-import React, { ReactNode, useEffect, useRef } from 'react';
+import React, { ReactNode, useEffect, useRef, useState } from 'react';
 import {
-  Animated, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
+  Animated, Keyboard, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
+  useWindowDimensions,
 } from 'react-native';
 import { colors, radius } from '../theme';
 
@@ -123,6 +124,46 @@ export function Field({
   );
 }
 
+// Chrome around the sheet's scroll region: grabber + sheet vertical padding.
+const SHEET_CHROME = 80;
+
+/**
+ * Height of the software keyboard in px, 0 when hidden. Web tracks
+ * window.visualViewport (the layout viewport does not shrink for the
+ * keyboard on iOS Safari); native tracks Keyboard events. Android is
+ * skipped: the OS resizes the window (adjustResize), which
+ * useWindowDimensions already reflects.
+ */
+function useKeyboardHeight(): number {
+  const [kb, setKb] = useState(0);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const vv = (window as unknown as { visualViewport?: VisualViewport }).visualViewport;
+      if (!vv) return;
+      const update = () => {
+        setKb(Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0)));
+      };
+      update();
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    }
+    if (Platform.OS === 'android') return;
+    const show = Keyboard.addListener('keyboardDidShow', (e) =>
+      setKb(e.endCoordinates ? e.endCoordinates.height : 0),
+    );
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKb(0));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+  return kb;
+}
+
 export function Sheet({
   visible, onClose, children, dragToDismiss,
 }: {
@@ -136,6 +177,26 @@ export function Sheet({
   const translateY = useRef(new Animated.Value(0)).current;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  // Keyboard avoidance (Sept 2026): when the software keyboard opens, the
+  // whole sheet lifts above it (marginBottom) and the scroll region shrinks
+  // to the visible area above the keyboard, so the focused field stays
+  // reachable and the save button is never buried — no overlap, no
+  // half-buried buttons. Lives here in the SHARED Sheet so every sheet in
+  // the app benefits, not just the escrow forms.
+  const kbHeight = useKeyboardHeight();
+  const { height: winHeight } = useWindowDimensions();
+  // Visible height above the keyboard. Web: iOS Safari never resizes the
+  // layout viewport for the keyboard, so subtract the visualViewport delta.
+  // Android: the OS already resizes the window (adjustResize), so the
+  // Keyboard listener is skipped there and winHeight is the visible height.
+  const visibleHeight =
+    (Platform.OS === 'web' ? window.innerHeight : winHeight) - kbHeight;
+  // Chrome around the scroll region (grabber + sheet vertical padding).
+  const scrollMaxHeight = Math.max(
+    160,
+    Math.min(480, visibleHeight - SHEET_CHROME),
+  );
 
   // A dragged-then-closed sheet must reopen at rest position.
   useEffect(() => {
@@ -171,7 +232,18 @@ export function Sheet({
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss sheet" />
-      <Animated.View style={[styles.sheet, dragToDismiss && { transform: [{ translateY }] }]}>
+      <Animated.View
+        style={[
+          styles.sheet,
+          // Keyboard avoidance (Sept 2026): lift the whole sheet above the
+          // keyboard AND shrink the scroll region to the visible area, so the
+          // focused field stays reachable and the save button is never buried
+          // behind the keyboard. (Android: kbHeight is 0 — the OS resizes the
+          // window itself via adjustResize.)
+          { marginBottom: kbHeight },
+          dragToDismiss && { transform: [{ translateY }] },
+        ]}
+      >
         {dragToDismiss ? (
           <View
             style={styles.grabberZone}
@@ -191,7 +263,7 @@ export function Sheet({
             and on web alike; the 480 bound matches the existing ClientList sheet
             pattern.) */}
         <ScrollView
-          style={styles.sheetScroll}
+          style={[styles.sheetScroll, { maxHeight: scrollMaxHeight }]}
           contentContainerStyle={styles.sheetScrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -272,11 +344,15 @@ const styles = StyleSheet.create({
   grabberZone: {
     alignItems: 'center', paddingVertical: 10, marginTop: -10, marginBottom: 6,
   },
-  // Sheet content scroll region (Sept 2026 sheet-scroll fix). The bound
-  // lives on the ScrollView itself — not on the sheet container — so it
-  // constrains the scrolling element on native and on web (react-native-web
-  // only scrolls a ScrollView with a definite height bound). Matches the
-  // pre-existing ClientList "View clients" sheet pattern.
+  // Sheet content scroll region (Sept 2026 sheet-scroll fix, Sept 2026
+  // keyboard-avoidance update). The bound lives on the ScrollView itself —
+  // not on the sheet container — so it constrains the scrolling element on
+  // native and on web (react-native-web only scrolls a ScrollView with a
+  // definite height bound). Matches the pre-existing ClientList "View
+  // clients" sheet pattern. The Sheet component overrides maxHeight at
+  // render time: it never exceeds the visible window (minus chrome), and it
+  // shrinks further when the software keyboard is open so the focused field
+  // and the save button stay above the keyboard.
   sheetScroll: {
     maxHeight: 480,
   },

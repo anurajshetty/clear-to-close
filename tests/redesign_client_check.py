@@ -33,7 +33,7 @@ import datetime
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = os.environ.get("CTC_OUT", "/tmp/ctc-redesign-client")
 PORT = int(os.environ.get("CTC_PORT", "8905"))

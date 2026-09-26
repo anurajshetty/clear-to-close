@@ -33,7 +33,7 @@ Guards, all with real touch gestures against the real built output at
 
 Usage: python3 tests/drag_reorder2.py  (run from the repo root)
 Requires: a fresh `npm run export:web` build in dist/.
-Honors CTC_ROOT (defaults to ~/workspace/realtor-app).
+Honors APP_ROOT (defaults to the wt-dragrow worktree).
 """
 import http.server
 import functools
@@ -45,7 +45,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-drag-reorder2"
 BASE = "http://127.0.0.1:8908/clear-to-close/"
@@ -485,19 +485,16 @@ def main():
         assert_no_overlap("after moving added row", stored_titles())
 
         # --- 6. order survives a full reload ------------------------------
-        # Web never restores the realtor session (approved behavior): after a
-        # reload the remembered role routes to /login; signing back in must
-        # show the escrow with the reordered checklist intact.
+        # Web now restores the realtor session (Sept 2026: session persists in
+        # localStorage, ends only on Log out or browser-session end): after a
+        # reload the app stays signed in on the escrow with the reordered
+        # checklist intact — no re-login needed.
         expected = stored_titles()
         pg.goto(BASE)
         pg.wait_for_timeout(3500)
-        pg.get_by_text("Log in to pick up where you left off.").wait_for(timeout=12000)
-        login_inputs = pg.locator("input")
-        login_inputs.nth(0).fill("rita@example.com")
-        login_inputs.nth(1).fill("longenoughpassword")
-        pg.wait_for_timeout(300)
-        pg.get_by_text("Log in", exact=True).last.click()
         pg.get_by_text("26207 Benito Ct").first.wait_for(timeout=12000)
+        check("reload: session survives reload (still signed in)",
+              pg.get_by_text("Log in to pick up where you left off.").count() == 0)
         pg.get_by_text("26207 Benito Ct").first.click()
         pg.get_by_text(re.compile(r"4 of 1[67] steps")).wait_for(timeout=12000)
         pg.wait_for_timeout(800)

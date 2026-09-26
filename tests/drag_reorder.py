@@ -37,7 +37,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-drag-reorder"
 BASE = "http://127.0.0.1:8907/clear-to-close/"
@@ -172,11 +172,11 @@ DRAG_ARMED_JS = """() => {
 ACTIVE_ROW_STYLE_JS = """() => {
   const cell = [...document.querySelectorAll('*')].find(e => e.style && e.style.zIndex === '999');
   if (!cell) return null;
-  const row = cell.querySelector('[aria-label^="Step:"]');
+  const row = cell.querySelector('[data-testid="step-row"]');
   if (!row) return null;
   const cs = getComputedStyle(row);
   return { bg: cs.backgroundColor, transform: cs.transform, shadow: cs.boxShadow,
-           label: row.getAttribute('aria-label') };
+           label: row.getAttribute('data-testid') };
 }"""
 
 # Deepest element per step title -> bounding box (for overlap checks).

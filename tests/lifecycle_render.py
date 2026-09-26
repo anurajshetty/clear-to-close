@@ -13,9 +13,9 @@ Deal list
     line below; closed rows carry the "Closed" tag.
 
 Transaction detail
-  - Pencil buttons beside Opened / Target close open the "Edit dates" sheet,
-    which uses plain text-box date inputs (YYYY-MM-DD) — no picker popup
-    (the calendar picker was dropped Sept 2026).
+  - The Opened / Target close dates are display-only: no pencil icons, no
+    "Edit dates" sheet, no "Update target date" action (removed Sept 2026).
+    Date edits happen from the home page's "Update escrow" flow.
   - "N days left to close" is centered.
   - All-steps-done -> sage "Close escrow" banner; tapping it -> sage
     "Closed" indicator + "Closed {date}." and the escrow moves to Closed.
@@ -41,13 +41,12 @@ import datetime
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-lifecycle-render"
 BASE = "http://127.0.0.1:8913/clear-to-close/"
 TODAY = datetime.date.today()
 TODAY_ISO = TODAY.isoformat()
-TOMORROW_ISO = (TODAY + datetime.timedelta(days=1)).isoformat()
 CLOSED_LABEL = TODAY.strftime("%b %-d, %Y")
 
 
@@ -316,26 +315,22 @@ def main():
         pg.get_by_text("4187 Oakmont Dr").first.click()
         pg.get_by_test_id("days-left").wait_for(timeout=12000)
 
-        # Pencil buttons open the Edit-dates sheet with plain text-box date
-        # inputs (YYYY-MM-DD) — the calendar picker popup was dropped Sept 2026.
-        check("pencil: Edit opened date", pg.get_by_label("Edit opened date").count() > 0)
-        check("pencil: Edit target close date",
-              pg.get_by_label("Edit target close date").count() > 0)
-        pg.get_by_label("Edit opened date").click()
-        pg.get_by_text("Edit dates", exact=True).wait_for(timeout=5000)
-        check("Edit-dates sheet has NO picker popup",
-              pg.locator('input[type="date"]').count() == 0)
-        target_input = pg.get_by_test_id("edit-target-date")
-        check("Edit-dates sheet has text date inputs",
-              pg.get_by_test_id("edit-open-date").count() > 0 and target_input.count() > 0)
-        pg.screenshot(path=os.path.join(OUT, "edit-dates-sheet.png"))
-        # Move the target close to tomorrow; the tracker recomputes on Save.
-        target_input.fill(TOMORROW_ISO)
-        pg.wait_for_timeout(400)
-        pg.get_by_text("Save", exact=True).click()
-        pg.get_by_test_id("days-left").wait_for(timeout=5000)
-        check("tracker recomputes after date edit",
-              "1 day left to close" in pg.get_by_test_id("days-left").inner_text())
+        # Detail-screen dates are display-only (Sept 2026): the pencil icons
+        # beside Opened / Target close and the "Edit dates" sheet were
+        # removed — date edits happen from the home page's "Update escrow"
+        # flow. The dates themselves still render, with no edit affordance.
+        check("no pencil: Edit opened date removed",
+              pg.get_by_label("Edit opened date").count() == 0)
+        check("no pencil: Edit target close date removed",
+              pg.get_by_label("Edit target close date").count() == 0)
+        check("no Update target date action on detail",
+              pg.get_by_text("Update target date").count() == 0)
+        check("no Edit dates sheet entry point",
+              pg.get_by_text("Edit dates", exact=True).count() == 0)
+        check("Opened label renders",
+              pg.get_by_text("Opened", exact=True).count() > 0)
+        check("Target close label renders",
+              pg.get_by_text("Target close", exact=True).count() > 0)
 
         # Days-left line is centered.
         align = pg.get_by_test_id("days-left").evaluate(
@@ -365,7 +360,7 @@ def main():
         # Unchecking a step moves it back to Active.
         pg.get_by_text("4187 Oakmont Dr").first.click()
         pg.get_by_test_id("closed-indicator-buyer").wait_for(timeout=12000)
-        pg.get_by_label("Step: Buyer step 1").first.click()
+        pg.get_by_test_id("step-checkbox-Buyer step 1").first.click()
         pg.wait_for_timeout(800)
         check("uncheck hides the Closed indicator",
               pg.get_by_test_id("closed-indicator-buyer").count() == 0)
@@ -409,7 +404,7 @@ def main():
         # Unchecking a buyer step reopens only the buyer side.
         pg2.get_by_text("99 Dual Agency Way").first.click()
         pg2.get_by_test_id("closed-indicator-buyer").wait_for(timeout=12000)
-        pg2.get_by_label("Step: Buyer step 1").first.click()
+        pg2.get_by_test_id("step-checkbox-Buyer step 1").first.click()
         pg2.wait_for_timeout(800)
         check("dual: buyer side reopens on uncheck",
               pg2.get_by_test_id("closed-indicator-buyer").count() == 0)

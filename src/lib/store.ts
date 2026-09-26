@@ -76,8 +76,6 @@ export interface Store {
   addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow>;
   reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow>;
   updateTargetDate(escrowId: string, closeDate: string): Promise<Escrow>;
-  /** "Edit dates" sheet: both dates editable; target close must be ≥ opened. */
-  updateDates(escrowId: string, openDate: string, closeDate: string): Promise<Escrow>;
   /**
    * Close one side of an escrow (per-side lifecycle). Dual-agency sides
    * close independently; the escrow-level status flips to 'closed' only
@@ -451,26 +449,6 @@ export function createStore(kv: KV): Store {
     },
 
     /**
-     * "Edit dates" sheet (approved escrow lifecycle, Sept 2026): both dates
-     * are editable in place; the target close must be on or after the opened
-     * date. The time tracker recomputes from these dates.
-     */
-    async updateDates(escrowId: string, openDate: string, closeDate: string): Promise<Escrow> {
-      await ensureLoaded();
-      assertDate(openDate, 'openDate');
-      assertDate(closeDate, 'closeDate');
-      if (parseLocalMidnight(closeDate) < parseLocalMidnight(openDate)) {
-        throw new Error('updateDates: closeDate cannot be before openDate');
-      }
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      e.openDate = openDate;
-      e.closeDate = closeDate;
-      const next = replaceEscrow(e);
-      await persist();
-      return next;
-    },
-
-    /**
      * Close one side of an escrow (approved escrow lifecycle, Sept 2026).
      * Dual-agency sides close independently — closing the buyer side leaves
      * the seller side active and vice versa. The escrow-level `status` flips
@@ -543,7 +521,7 @@ export function createStore(kv: KV): Store {
         (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
       ).length;
       if (activeForSide >= MAX_CLIENTS_PER_SIDE) {
-        throw new Error('createInvite: two clients per side max — revoke one to invite someone new');
+        throw new Error('createInvite: two clients per side max. Revoke one to invite someone new');
       }
       const existing = new Set(data.invites.map((i) => i.code));
       let code = '';

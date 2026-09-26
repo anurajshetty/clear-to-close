@@ -1,8 +1,9 @@
 // Clear to Close — root layout + launch router (approved onboarding/auth).
 //
 // Boot order:
-//   1. Read the remembered role, the persisted session (native only — web
-//      never restores a session), and the device client link.
+//   1. Read the remembered role, the persisted session (both platforms —
+//      web keeps it in localStorage, native in AsyncStorage), and the
+//      device client link.
 //   2. Resolve the launch destination (role picker → signup/redeem steps →
 //      deal list / client escrow), replacing the route so onboarding can't
 //      be backed out of.
@@ -36,9 +37,11 @@ export default function RootLayout() {
           auth.getClientLink(),
           auth.getHasAccount(),
         ]);
-        // Web never restores the realtor session (memory-only auth storage):
-        // returning web realtors sign in every visit.
-        const sessionUserId = isWeb ? null : await auth.getSessionUserId();
+        // The realtor session persists on both platforms (web: localStorage,
+        // native: AsyncStorage): a refresh keeps the realtor signed in, on
+        // the same screen. The session ends on Log out, or when the
+        // browser/incognito session ends.
+        const sessionUserId = await auth.getSessionUserId();
         let href = resolveBootHref({ role, sessionUserId, clientLink, hasAccount, isWeb });
         if (href === '/' && sessionUserId) {
           // Mid-onboarding resume: an account with no profile (and no skip)

@@ -1,7 +1,7 @@
 // Clear to Close — launch routing (approved onboarding/auth, spec §4).
 //
 // Pure, unit-testable: given the stored onboarding role, the persisted
-// session user (native only; web never restores a session), and the stored
+// session user (restored on both platforms), and the stored
 // device client link, decide where the app should open.
 
 import type { DeviceClientLink, RealtorProfile } from './types';
@@ -9,7 +9,7 @@ import type { DeviceClientLink, RealtorProfile } from './types';
 export interface BootInput {
   /** Role chosen on the role picker ('realtor' | 'client'), or null. */
   role: 'realtor' | 'client' | null;
-  /** Persisted Supabase session user id, or null. Web is always null. */
+  /** Persisted Supabase session user id (restored on both platforms), or null. */
   sessionUserId: string | null;
   /** Device client link from a previous client redeem, or null. */
   clientLink: DeviceClientLink | null;
@@ -33,9 +33,9 @@ export function resolveBootHref(input: BootInput): string {
     return '/';
   }
   if (input.role === 'realtor') {
-    // Web never restores a session: the realtor signs in every visit.
-    // Native with a lapsed session: an existing account goes to login,
-    // a never-completed sign-up goes back to sign-up.
+    // No live session: web goes to login; native with a lapsed session
+    // sends an existing account to login, a never-completed sign-up back
+    // to sign-up.
     if (input.isWeb) return '/login';
     return input.hasAccount ? '/login' : '/signup';
   }

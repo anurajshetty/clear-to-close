@@ -237,7 +237,7 @@ export default function DealList() {
           <Text style={styles.emptyKicker}>Get started</Text>
           <Text style={styles.emptyTitle}>No escrows yet</Text>
           <Text style={styles.emptyText}>
-            Open your first escrow to start tracking it — your buyer or seller
+            Open your first escrow to start tracking it. Your buyer or seller
             can follow along from their phone.
           </Text>
           <PrimaryButton title="+ New escrow" onPress={() => setSheetVisible(true)} />

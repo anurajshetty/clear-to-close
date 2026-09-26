@@ -35,7 +35,7 @@ import json
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = "/tmp/ctc-progress-ring"
 BASE = "http://127.0.0.1:8915/clear-to-close/"

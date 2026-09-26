@@ -22,7 +22,7 @@ without a second device; the rest goes through the UI.
 
 Usage: python3 tests/invite_flow.py  (run from ~/workspace/realtor-app)
 Requires: a fresh `npm run export:web` build in dist/ (uses the built output).
-Honors CTC_ROOT (defaults to ~/workspace/realtor-app), CTC_INVITE_PORT
+Honors APP_ROOT (defaults to the wt-dragrow worktree), CTC_INVITE_PORT
 (defaults to 8906), CTC_INVITE_OUT (defaults to /tmp/ctc-invite-flow).
 """
 import http.server
@@ -36,7 +36,7 @@ import re
 
 from playwright.sync_api import sync_playwright
 
-ROOT = os.environ.get("CTC_ROOT", os.path.expanduser("~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = os.environ.get("CTC_INVITE_OUT", "/tmp/ctc-invite-flow")
 PORT = int(os.environ.get("CTC_INVITE_PORT", "8906"))
@@ -190,7 +190,7 @@ BTN_AFTER_FOOTNOTE = """() => {
     cands.sort((a, b) => depth(b) - depth(a));
     return cands[0];
   };
-  const foot = deepest(/Drag the grip to reorder steps/);
+  const foot = deepest(/Press and hold any step to reorder the list/);
   const btn = deepest(/^Invite client$/) || deepest(/^View clients$/);
   if (!foot || !btn) return 'missing: foot=' + !!foot + ' btn=' + !!btn;
   const pos = foot.compareDocumentPosition(btn);
@@ -362,11 +362,11 @@ def main():
             pg.wait_for_timeout(500)
             check("regen: confirm title", pg.get_by_text("New code for Alice Buyer?").count() > 0)
             check("regen: confirm body",
-                  pg.get_by_text("The old code stops working — any linked device loses access to this escrow.").count() > 0)
+                  pg.get_by_text("The old code stops working. Any linked device loses access to this escrow.").count() > 0)
             pg.get_by_text("Create new code", exact=True).click()
             pg.wait_for_timeout(900)
             check("regen: success toast",
-                  pg.get_by_text("New code issued — the old code no longer works.").count() > 0)
+                  pg.get_by_text("New code issued. The old code no longer works.").count() > 0)
             chips2 = pg.evaluate(CODE_CHIPS)
             check("regen: Alice has a fresh code, old code gone",
                   len(chips2) == 1 and CODE_RE.match(chips2[0]) and chips2[0] != "QK7M2X",

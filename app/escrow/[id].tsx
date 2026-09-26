@@ -16,7 +16,6 @@ import { store } from '../../src/lib/store-instance';
 import type { ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
-import { EditDatesSheet } from '../../src/components/EditDatesSheet';
 import { EditableChecklist } from '../../src/components/Checklist';
 import { InviteSheet } from '../../src/components/InviteSheet';
 import { ClientList } from '../../src/components/ClientList';
@@ -40,9 +39,6 @@ export default function TransactionDetail() {
   const [adding, setAdding] = useState<ClientRole | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [saving, setSaving] = useState(false);
-  // "Edit dates" sheet (escrow lifecycle, Sept 2026) — opened from the
-  // pencil icons on the time-tracker card or the past-target action.
-  const [dateSheetOpen, setDateSheetOpen] = useState(false);
   // Both-side tab state (mockup 01 · device 12).
   const [tab, setTab] = useState<ClientRole>('buyer');
   // Invite-client flow (approved Sept 2026): per-side invites live at the end
@@ -128,19 +124,6 @@ export default function TransactionDetail() {
     }
   };
 
-  const saveDates = async (openDate: string, closeDate: string) => {
-    if (!escrow || saving) return;
-    setSaving(true);
-    try {
-      setEscrow(await store.updateDates(escrow.id, openDate, closeDate));
-      setDateSheetOpen(false);
-    } catch (err) {
-      console.warn('updateDates failed', err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
   if (!loaded) {
     return (
       <View style={styles.center}>
@@ -189,8 +172,8 @@ export default function TransactionDetail() {
           <Text style={styles.closedNote}>
             {both
               ? r === 'buyer'
-                ? 'The buyer side is closed — the seller side stays active. Uncheck any step to move this side back to Active.'
-                : 'The seller side is closed — the buyer side stays active. Uncheck any step to move this side back to Active.'
+                ? 'The buyer side is closed. The seller side stays active. Uncheck any step to move this side back to Active.'
+                : 'The seller side is closed. The buyer side stays active. Uncheck any step to move this side back to Active.'
               : 'This escrow sits under Closed escrows on the deal list. Uncheck any step to move it back to Active.'}
           </Text>
         </View>
@@ -302,7 +285,7 @@ export default function TransactionDetail() {
             <View>
               {renderAddStep(r)}
               <Text style={styles.footnote}>
-                {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
+                {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
               </Text>
               {renderInviteButton(r)}
             </View>
@@ -351,15 +334,13 @@ export default function TransactionDetail() {
             <TimeTrackerCard
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
-              onUpdateDate={() => setDateSheetOpen(true)}
-              onEditDates={() => setDateSheetOpen(true)}
             />
-            <View style={styles.shareBtnWrap}>
-              <SecondaryButton
-                title="Share this escrow"
-                onPress={() => router.push(`/share/${escrow.id}`)}
-              />
-            </View>
+            {/* Reorder hint in the removed "Share this escrow" spot (Sept
+                2026): quiet line, realtor view only — client checklists are
+                read-only and live on separate screens. */}
+            <Text style={styles.reorderHint} testID="reorder-hint">
+              Long-press any checklist item to reorder it.
+            </Text>
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -393,15 +374,12 @@ export default function TransactionDetail() {
               <TimeTrackerCard
                 openDate={escrow.openDate}
                 closeDate={escrow.closeDate}
-                onUpdateDate={() => setDateSheetOpen(true)}
-                onEditDates={() => setDateSheetOpen(true)}
               />
-              <View style={styles.shareBtnWrap}>
-                <SecondaryButton
-                  title="Share this escrow"
-                  onPress={() => router.push(`/share/${escrow.id}`)}
-                />
-              </View>
+              {/* Reorder hint in the removed "Share this escrow" spot (Sept
+                  2026): quiet line, realtor view only. */}
+              <Text style={styles.reorderHint} testID="reorder-hint">
+                Long-press any checklist item to reorder it.
+              </Text>
               {renderLifecycle(role)}
             </View>
           }
@@ -409,7 +387,7 @@ export default function TransactionDetail() {
             <View>
               {renderAddStep(role)}
               <Text style={styles.footnote}>
-                {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
+                {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
               </Text>
               {renderInviteButton(role)}
             </View>
@@ -426,14 +404,6 @@ export default function TransactionDetail() {
           onCreated={refreshInvites}
         />
       )}
-      <EditDatesSheet
-        visible={dateSheetOpen}
-        openDate={escrow.openDate}
-        closeDate={escrow.closeDate}
-        saving={saving}
-        onClose={() => setDateSheetOpen(false)}
-        onSave={saveDates}
-      />
       {clientSide && (
         <ClientList
           visible
@@ -504,9 +474,6 @@ const styles = StyleSheet.create({
     color: colors.body,
     marginTop: 4,
     textAlign: 'center',
-  },
-  shareBtnWrap: {
-    marginTop: 14,
   },
   banner: {
     backgroundColor: colors.sageSoft,
@@ -612,6 +579,16 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: 'center',
     marginTop: 18,
+  },
+  // Quiet reorder hint in the removed "Share this escrow" spot: same
+  // type/color tokens as the footnote, tighter spacing to sit between the
+  // time-tracker card and the checklist.
+  reorderHint: {
+    fontSize: 12.5,
+    lineHeight: 19,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 14,
   },
   inviteBtnWrap: {
     marginTop: 14,

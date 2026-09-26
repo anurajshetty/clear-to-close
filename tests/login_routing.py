@@ -32,7 +32,7 @@ import json
 
 from playwright.sync_api import sync_playwright, expect
 
-ROOT = os.path.expanduser(os.environ.get("CTC_ROOT", "~/workspace/realtor-app"))
+ROOT = os.environ.get("APP_ROOT", "/home/hatch/workspace/realtor-app-wt-dragrow")
 DIST = os.path.join(ROOT, "dist")
 OUT = os.environ.get("CTC_LOGIN_OUT", "/tmp/ctc-login-routing")
 PORT = int(os.environ.get("CTC_LOGIN_PORT", "8905"))

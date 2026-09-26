@@ -3,11 +3,14 @@
 // Realtor identity: Supabase Auth email/password. Client identity: a
 // device-bound client link (name + code redeem), no account.
 //
-// Session persistence is platform-differentiated (approved spec §4):
-//   - native iOS: the supabase session persists (AsyncStorage) — returning
-//     realtors go straight into the deal list, no re-sign-in.
-//   - web: in-memory session only — returning realtors see the email +
-//     password sign-in screen on every visit, no auto-login.
+// Session persistence (Anuraj, Sept 26, 2026 — this REVERSES the Sept 25
+// "web = sign-in screen on every return" decision):
+//   - native iOS: the Supabase session persists in AsyncStorage — returning
+//     realtors go straight into the app, no re-sign-in.
+//   - web: the Supabase session persists in localStorage — a refresh keeps
+//     the realtor signed in, on the same screen. The session ends ONLY on
+//     Log out, or when the browser session ends (in incognito, closing the
+//     incognito window wipes localStorage automatically).
 //
 // The service is created with injectable deps (client factory, KV,
 // platform) so the auth edge-case matrix is unit-testable with a scripted
@@ -471,7 +474,18 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
     },
 
-    /** Sign out: clears the session, the remembered role, and the has-account flag. Never throws. */
+    /**
+     * Sign out: clears the Supabase session and any onboarding leftovers
+     * that could leak into another account's flow. Never throws.
+     *
+     * The remembered device role (ctc:role) and the has-account flag stay:
+     * the role picker promises "you only see this once", and the boot
+     * router sends a signed-out realtor (role remembered, no session)
+     * straight to the login screen — after sign-out clears the persisted
+     * session. Clearing the role would instead
+     * funnel a logged-out realtor back through the role picker into
+     * sign-up, breaking "protected routes redirect to login".
+     */
     async signOut(): Promise<void> {
       const client = deps.getClient();
       if (client) {
@@ -482,8 +496,6 @@ export function createAuthService(deps: AuthServiceDeps) {
         }
       }
       try {
-        await kv.removeItem(K_ROLE);
-        await kv.removeItem(K_HAS_ACCOUNT);
         // A different realtor may use this device next: never leak the
         // previous account's onboarding state into their session.
         await kv.removeItem(K_PROFILE_SKIPPED);

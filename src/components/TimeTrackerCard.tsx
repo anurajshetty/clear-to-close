@@ -1,10 +1,9 @@
 // Clear to Close — escrow time-tracker card
 // Faithful to APPROVED mockup 01 · Escrow tracker v1.
 import React from 'react';
-import { Pressable, View, Text, StyleSheet } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import { View, Text, StyleSheet } from 'react-native';
 import { colors, radius } from '../theme';
-import { Kicker, Card, SecondaryButton } from './ui';
+import { Kicker, Card } from './ui';
 import { daysToClose, timeline } from '../lib/dates';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -31,46 +30,24 @@ function daysLabel(n: number, past: boolean): string {
   return past ? `${n} ${unit} past target close` : `${n} ${unit} left to close`;
 }
 
-/** Pencil icon beside each date row (mockup 01 · .penbtn): the approved SVG. */
-function PencilIcon() {
-  return (
-    <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted}
-      strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-      <Path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-    </Svg>
-  );
-}
-
-function DateRow({ label, date, onEditDates, bordered }: {
-  label: string; date: string; onEditDates?: () => void; bordered?: boolean;
+function DateRow({ label, date, bordered }: {
+  label: string; date: string; bordered?: boolean;
 }) {
   return (
     <View style={[styles.dateRow, bordered && styles.dateRowBorder]}>
       <Text style={styles.dateLabel}>{label}</Text>
-      <View style={styles.dateValueRow}>
-        <Text style={styles.dateValue}>{formatLongDate(date)}</Text>
-        {onEditDates ? (
-          <Pressable
-            onPress={onEditDates}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={`Edit ${label.toLowerCase()} date`}
-            style={styles.penBtn}
-          >
-            <PencilIcon />
-          </Pressable>
-        ) : null}
-      </View>
+      <Text style={styles.dateValue}>{formatLongDate(date)}</Text>
     </View>
   );
 }
 
+// Dates are display-only (Sept 2026): the pencil icons and the past-target
+// "Update target date" action were removed — date edits happen from the
+// home page's "Update escrow" flow.
 export function TimeTrackerCard({
-  openDate, closeDate, onUpdateDate, onEditDates,
+  openDate, closeDate,
 }: {
-  openDate: string; closeDate: string; onUpdateDate?: () => void;
-  /** When provided, a pencil affordance appears beside each date row. */
-  onEditDates?: () => void;
+  openDate: string; closeDate: string;
 }) {
   // One shared convention (src/lib/dates.ts): whole calendar days, DST-safe.
   // "day 1 of 61" always pairs with "61 days left to close".
@@ -89,8 +66,8 @@ export function TimeTrackerCard({
         <Kicker>Escrow · time tracker</Kicker>
       </View>
 
-      <DateRow label="Opened" date={openDate} onEditDates={onEditDates} />
-      <DateRow label="Target close" date={closeDate} onEditDates={onEditDates} bordered />
+      <DateRow label="Opened" date={openDate} />
+      <DateRow label="Target close" date={closeDate} bordered />
 
       <View
         style={styles.bar}
@@ -116,12 +93,6 @@ export function TimeTrackerCard({
       <Text testID="days-left" style={[styles.left, { color: state === 'normal' ? colors.ink : tone }]}>
         {daysLabel(state === 'over' ? Math.abs(daysLeft) : daysLeft, state === 'over')}
       </Text>
-
-      {state === 'over' && onUpdateDate && (
-        <View style={styles.updateBtn}>
-          <SecondaryButton title="Update target date" onPress={onUpdateDate} />
-        </View>
-      )}
     </Card>
   );
 }
@@ -135,14 +106,7 @@ const styles = StyleSheet.create({
   },
   dateRowBorder: { borderTopWidth: 1, borderTopColor: colors.line },
   dateLabel: { fontSize: 14.5, color: colors.muted },
-  dateValueRow: { flexDirection: 'row', alignItems: 'center' },
   dateValue: { fontSize: 14.5, fontWeight: '700', color: colors.ink },
-  // Pencil affordance beside each date (mockup 01 · .penbtn): 44pt tap
-  // target, muted — opens the "Edit dates" sheet.
-  penBtn: {
-    width: 44, height: 44, marginRight: -12,
-    alignItems: 'center', justifyContent: 'center',
-  },
   bar: {
     position: 'relative', height: 8, backgroundColor: colors.line,
     borderRadius: 99, marginTop: 14, marginBottom: 8, overflow: 'visible',
@@ -163,5 +127,4 @@ const styles = StyleSheet.create({
     // "N days left to close" is centered (per Anuraj, Sept 25).
     textAlign: 'center',
   },
-  updateBtn: { marginTop: 10 },
 });

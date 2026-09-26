@@ -350,12 +350,6 @@ export function createSyncedStore(
       return e;
     },
 
-    updateDates: async (escrowId, openDate, closeDate): Promise<Escrow> => {
-      const e = await local.updateDates(escrowId, openDate, closeDate);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
-    },
-
     cancelEscrow: async (escrowId): Promise<Escrow> => {
       const e = await local.cancelEscrow(escrowId);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });

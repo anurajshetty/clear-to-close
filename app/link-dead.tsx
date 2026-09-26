@@ -55,7 +55,7 @@ export default function LinkDead() {
         </View>
         <Text style={styles.h1}>This code no longer works</Text>
         <Text style={styles.sub}>
-          Your realtor created a new code for this escrow — the old one and its
+          Your realtor created a new code for this escrow. The old one and its
           device link were replaced. Ask your realtor for the new code.
         </Text>
         <View style={styles.cta}>

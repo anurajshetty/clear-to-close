@@ -4,15 +4,15 @@
 //    failure (no phantom state)
 //  - login: wrong password / unregistered email -> clear inline code, no throw
 //  - password reset: anti-enumeration — identical ok for known/unknown email
-//  - sessions: web never restores (fresh client starts sessionless);
-//    native restores; logout clears everything and never throws
+//  - sessions: both platforms persist (web: localStorage, native:
+//    AsyncStorage); logout clears everything and never throws
 //  - client redeem: invalid / already-used / revoked / name mismatch
 //  - device linking: one device id per link; atomic regeneration kills the
 //    old code + old link while issuing the new one; old device lands on an
 //    explicit dead-link state; new device redeems into current escrow state
 //  - checklist state lives on the escrow, never on the device link
 //  - boot routing: first launch, mid-onboarding relaunch, native lapsed
-//    session -> login, web returning realtor -> login every visit
+//    session -> login, web realtor with no live session -> login
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import type { KV } from '../src/lib/store';
@@ -367,9 +367,9 @@ async function main(): Promise<void> {
 
   // ------------------------------------------------- sessions + logout ----
   {
-    // Web never restores: no persisted session means null.
+    // No stored session means null on either platform.
     const svc = serviceFor(mockClient({ session: null }), memoryKV(), 'web');
-    assert((await svc.getSessionUserId()) === null, 'web: no session restored on launch');
+    assert((await svc.getSessionUserId()) === null, 'web: no stored session -> null');
   }
   {
     // Native restores the persisted session.
@@ -377,8 +377,12 @@ async function main(): Promise<void> {
     assert((await svc.getSessionUserId()) === UID, 'native: persisted session restored');
   }
   {
-    // Logout clears the session, the remembered role, and the has-account
-    // flag — and never throws, even when the remote sign-out fails.
+    // Logout clears the session and never throws, even when the remote
+    // sign-out fails. The remembered device role and the has-account flag
+    // stay: the boot router sends a signed-out realtor (role remembered,
+    // no session) straight to the login screen. Clearing the role would
+    // funnel a logged-out realtor back through the role picker into
+    // sign-up, breaking "protected routes redirect to login" (Sept 2026).
     const kv = memoryKV();
     let remoteSignOut = 0;
     const svc = serviceFor(
@@ -389,8 +393,8 @@ async function main(): Promise<void> {
     await svc.setHasAccount(true);
     await svc.signOut();
     assert(remoteSignOut === 1, 'logout attempts the remote sign-out');
-    assert((await kv.getItem('ctc:role')) === null, 'logout clears the remembered role');
-    assert((await svc.getHasAccount()) === false, 'logout clears the has-account flag');
+    assert((await kv.getItem('ctc:role')) === 'realtor', 'logout keeps the remembered device role');
+    assert((await svc.getHasAccount()) === true, 'logout keeps the has-account flag');
   }
   {
     // A different realtor may use this device next: logout also clears the
@@ -445,7 +449,9 @@ async function main(): Promise<void> {
     assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLink: null, hasAccount: true, isWeb: false }) === '/login',
       'native: lapsed session with an existing account -> login (not sign-up)');
     assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLink: null, hasAccount: true, isWeb: true }) === '/login',
-      'web: returning realtor signs in every visit');
+      'web: realtor with no live session -> login');
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLink: null, hasAccount: true, isWeb: true }) === '/',
+      'web: live session survives refresh -> deal list');
     assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLink: null, hasAccount: true, isWeb: false }) === '/',
       'native: live session -> deal list (mid-onboarding resume handled by the layout)');
     assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLink: null, hasAccount: false, isWeb: false }) === '/redeem',
@@ -618,25 +624,39 @@ async function supabasePlatformTests(): Promise<void> {
   assert(captured.length === 2, 'both platform clients are created through createClient');
   const webOpts = captured[0].opts;
   const nativeOpts = captured[1].opts;
-  assert(webOpts.auth.persistSession === false, 'web: persistSession false — no session restore');
-  assert(webOpts.auth.autoRefreshToken === false, 'web: autoRefreshToken false');
+  assert(webOpts.auth.persistSession === true, 'web: persistSession true — session survives refresh');
+  assert(webOpts.auth.autoRefreshToken === true, 'web: autoRefreshToken true');
   assert(webOpts.auth.detectSessionInUrl === false, 'web: detectSessionInUrl false');
   assert(nativeOpts.auth.persistSession === true, 'native: persistSession true — session restored');
   assert(nativeOpts.auth.autoRefreshToken === true, 'native: autoRefreshToken true');
   assert(webOpts.auth.storage !== nativeOpts.auth.storage, 'web and native get isolated storage instances');
-  // The web storage is memory-backed: it round-trips within the instance.
+  // The web storage is localStorage-backed: it delegates to localStorage
+  // (installed fake here — the module reads it lazily so Node stays safe).
+  const fakeStore = new Map<string, string>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (globalThis as any).localStorage = {
+    getItem: (k: string) => (fakeStore.has(k) ? fakeStore.get(k)! : null),
+    setItem: (k: string, v: string) => { fakeStore.set(k, v); },
+    removeItem: (k: string) => { fakeStore.delete(k); },
+  };
   await webOpts.auth.storage.setItem('k', 'v');
-  assert((await webOpts.auth.storage.getItem('k')) === 'v', 'web storage round-trips in memory');
+  assert(fakeStore.get('k') === 'v', 'web storage writes through to localStorage');
+  assert((await webOpts.auth.storage.getItem('k')) === 'v', 'web storage reads back from localStorage');
+  await webOpts.auth.storage.removeItem('k');
+  assert(!fakeStore.has('k'), 'web storage removeItem clears localStorage');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  delete (globalThis as any).localStorage;
 
   // A brand-new web client (fresh page load) starts with no session — the
-  // real client, not the stub.
+  // real client, not the stub. (In a browser, a session stored by an
+  // earlier visit would be restored from localStorage here.)
   delete require.cache[spec];
   delete require.cache[supabasePath];
   const real = require(supabasePath);
   const webClient = real.getSupabaseClient('web');
   assert(webClient !== null, 'configured web client is created');
   const { data } = await webClient.auth.getSession();
-  assert(data.session === null || data.session === undefined, 'fresh web client has no session (never restored)');
+  assert(data.session === null || data.session === undefined, 'fresh web client (no stored session) has no session');
 
   // Unconfigured -> null client.
   delete process.env.EXPO_PUBLIC_SUPABASE_URL;

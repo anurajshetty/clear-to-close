@@ -23,23 +23,25 @@ central user; the buyers and sellers they represent are the other parties.
   and X (cancel) icon in the upper-right corner (closed and cancelled cards
   show the pencil only). Empty state with a shortcut to create the first
   escrow.
-- **Escrow lifecycle** — the time-tracker card's **Opened / Target close
-  dates carry pencil icons** that open an **"Edit dates"** sheet (both dates
-  editable; the target close must be on or after the opened date — the
-  tracker recomputes day X of Y, the bar, and days-left). Past the target
-  date the tracker turns red with a quiet **"Update target date"** action
-  that opens the same sheet. The **"N days left to close"** line is centered.
-  When every step is checked, the sage **"Close escrow"** banner appears —
+- **Escrow lifecycle** — the time-tracker card shows the **Opened / Target close
+  dates as display-only** (no edit controls on the detail screen — dates are
+  changed from the home page's "Update escrow" flow, which covers both dates).
+  The only date rule: the target close can't be before the opened date (equal
+  is fine). The tracker recomputes day X of Y, the bar, and days-left from
+  the dates. Past the target date the tracker turns red. The **"N days left
+  to close"** line is centered. When every step is checked, the sage **"Close
+  escrow"** banner appears —
   once closed it becomes a **"Closed" indicator** (sage tag + "Closed {date}.",
   no button) and the escrow moves under **Closed escrows**. **Unchecking any
   step moves the escrow back to Active** (indicator hides, banner returns when
   re-completed). **Dual agency closes per side**: each tab has its own
   **"Close buyer side" / "Close seller side"** button and **"Closed"
   indicator** — closing the buyer side leaves the seller side active and vice
-  versa; unchecking reopens only that side. The pencil date-edit on the
-  shared tracker applies to the whole escrow.
+  versa; unchecking reopens only that side.
 - **New escrow** — open an escrow with open/end dates and a side picker
-  (Buy side / Sell side, multi-select for dual agency). Client-name fields
+  (Buy side / Sell side, multi-select for dual agency). Dates use a simple
+  date picker (native date input on web, minimal inline picker on native —
+  no popup-overlap pattern). Client-name fields
   adapt: one field for a single side, buyer + seller fields when both are
   picked.
 - **Edit escrow** — the pencil opens an "Update escrow" sheet identical to
@@ -52,9 +54,8 @@ central user; the buyers and sellers they represent are the other parties.
   counts update ("N open · N closed · N cancelled"). Closed and cancelled
   cards show the pencil only.
 - **Transaction detail** — per-escrow home with:
-  - **Time tracker** — escrow open date, end date, and where today falls
-    between them (day X of Y). Turns red with "Update target date" once the
-    end date passes.
+  - **Time tracker** — escrow open date, end date (display-only), and where
+    today falls between them (day X of Y). Turns red once the end date passes.
   - **Checklist stepper** — default steps per side (13 buyer steps, 12 seller
     steps, mirroring the approved design), plus realtor-added **custom steps**
     placeable anywhere via drag reorder. Only the realtor checks steps off,
@@ -64,14 +65,21 @@ central user; the buyers and sellers they represent are the other parties.
   - Dual-agency escrows get independent **Buyer | Seller** tabs — the two
     checklists are fully separate, each with its own ring, reorder, and
     custom steps; rows carry Buyer/Seller tags.
-- **Realtor profile** — photo, about/bio, experience, areas served, optional
-  DRE/license number (shown on the client-facing profile only if entered),
-  and an optional **phone number** (syncs to the cloud profile). Editable
+- **Realtor profile** — photo, about/bio, experience, areas served, optional  DRE/license number (shown on the client-facing profile only if entered),
+  and an optional **phone number** (syncs to the cloud profile). Profile
+  photos are auto-downscaled at pick time (long edge ≤ 1024px, JPEG ~0.8,
+  target ≤ ~1MB) and stored as a single managed file — one fixed filename
+  in the app's document directory, overwritten on every pick (one
+  localStorage key on web) — so old photo files never pile up and the OS
+  can't purge the photo. Device-local photos never sync to the cloud.
+  Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current
   password is verified server-side, and success shows a "Password updated."
-  toast.
+  toast. A quiet **Log out** row below it signs out immediately (no
+  confirmation): web returns to the login screen, native clears the persisted
+  session fully and returns to the role picker.
 - **Share / invites** — per-escrow, per-party single-use invite codes
   (6 characters, globally unique). Each code is bound to
   (escrow, role, party name); name and code must both match at redeem time.
@@ -89,13 +97,15 @@ central user; the buyers and sellers they represent are the other parties.
   ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
   with email + password in two steps: account creation, then profile creation
   (skippable — "Skip for now" goes straight to the deal list). Login is email
-  + password; password reset via email. Sessions are platform-differentiated:
-  **web** shows the sign-in screen on every visit; **native iOS** caches the
-  session and goes straight in (logout clears it).
+  + password; password reset via email. The session persists on both
+  platforms — **web** in localStorage, **native iOS** in its own storage —
+  so a refresh keeps the realtor signed in, on the same screen. The session
+  ends on Log out, or when the browser/incognito session ends.
 
 **For buyers / sellers (clients)**
 
-- No account — redeem with **name + invite code**. Redemption binds access to
+- No account — redeem with **name + invite code**. The confirmation screen is
+  headlined **"Hooray! Your escrow is open."** Redemption binds access to
   the device; reopening the app goes straight back into the escrow.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
   circles, short connector segments, subtitles, UP NEXT tag) but with no tap
@@ -131,9 +141,10 @@ local-only).
 
 **Sheets on small screens** — every modal sheet wraps its content in a
 height-bounded scroll region (the grabber stays outside it), so lower fields
-and the primary button are reachable by scrolling at any viewport. The
-"Edit dates" sheet uses plain text-box date inputs (same as the create-escrow
-form) instead of a popup picker.
+and the primary button are reachable by scrolling at any viewport. When the
+software keyboard opens, the shared sheet lifts above it and the scroll
+region shrinks to the visible area — the focused field stays visible and the
+save button is never buried behind the keyboard.
 
 ## Tech
 
@@ -196,6 +207,10 @@ python3 scripts/deploy_gh_pages.py   # deploy web to gh-pages
 eas build --platform ios
 eas submit --platform ios
 ```
+
+This release adds the `@react-native-community/datetimepicker` native module
+(inline date picker on New/Edit escrow) — the installed iPhone app needs a
+fresh `eas build` to pick it up; the web deploy alone won't include it.
 
 Every web feature/fix ships identically on iOS — the two must never drift.
 

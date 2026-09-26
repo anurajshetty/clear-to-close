@@ -25,7 +25,6 @@ export default function SignUp() {
   const [error, setError] = useState<SignUpErrorCode | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const isWeb = auth.isWeb();
   const passwordShort = password.length > 0 && password.length < 8;
   const canSubmit =
     name.trim().length > 0 && email.trim().length > 0 && password.length >= 8 && !busy;
@@ -67,9 +66,7 @@ export default function SignUp() {
         <Kicker>Step 1 of 2 · Realtor</Kicker>
         <Text style={styles.h1}>Create your account</Text>
         <Text style={styles.sub}>
-          {isWeb
-            ? "You'll sign in with email + password on every visit."
-            : 'One account runs all your escrows. On this device, you stay signed in.'}
+          One account runs all your escrows. You stay signed in on this device until you log out.
         </Text>
 
         <View style={styles.form}>
@@ -103,7 +100,7 @@ export default function SignUp() {
           ) : null}
           {error === 'weak_password' ? (
             <Text style={styles.inlineError}>
-              That password doesn&apos;t meet the requirements — try a longer one.
+              That password doesn&apos;t meet the requirements. Try a longer one.
             </Text>
           ) : null}
         </View>
@@ -131,7 +128,7 @@ export default function SignUp() {
         {error === 'network' ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Couldn&apos;t reach the server</Text>
-            <Text style={styles.errorSub}>Check your connection and try again — nothing was created.</Text>
+            <Text style={styles.errorSub}>Check your connection and try again. Nothing was created.</Text>
           </View>
         ) : null}
         {error === 'unconfigured' ? (
@@ -144,7 +141,7 @@ export default function SignUp() {
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Too many sign-up attempts</Text>
             <Text style={styles.errorSub}>
-              Please wait a few minutes and try again — no account was created.
+              Please wait a few minutes and try again. No account was created.
             </Text>
           </View>
         ) : null}

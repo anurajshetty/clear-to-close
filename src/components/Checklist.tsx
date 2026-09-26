@@ -24,7 +24,7 @@
 // and asserts the LAST step is visible in the viewport. Unit tests were all
 // green during the cutoff bug (the data was correct) — only rendered geometry
 // caught it, so the guard asserts the visible outcome.
-import React, { ReactElement, ReactNode, useCallback } from 'react';
+import React, { ReactElement, ReactNode, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import { Card, Grip } from './ui';
@@ -102,6 +102,73 @@ export function EditableChecklist({
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
 
+  // Web: the draggable list's autoscroll holds stale Reanimated state after a
+  // drag (Sept 2026 — an up-drag followed by a down-drag never autoscrolls;
+  // the library's reset() does not clear it). Remounting on order change
+  // clears it. Scroll position is preserved across the remount so the list
+  // does not jump.
+  const orderKey = steps.map((s) => s.id).join(',');
+  const containerElRef = useRef<HTMLElement | null>(null);
+  const pendingScrollRef = useRef<number | null>(null);
+
+  function findScroller(el: HTMLElement | null): HTMLElement | null {
+    if (Platform.OS !== 'web') return null;
+    // Prefer the checklist container; fall back to the document if the ref
+    // is stale (e.g. mid-remount).
+    const root: HTMLElement | null =
+      el && el.isConnected ? el : (document.body as HTMLElement);
+    let best: HTMLElement | null = null;
+    const all = root.querySelectorAll('*');
+    for (let i = 0; i < all.length; i++) {
+      const c = all[i] as HTMLElement;
+      if (c.scrollHeight > c.clientHeight + 4 && c.scrollHeight > 200) {
+        if (!best || c.scrollHeight > best.scrollHeight) best = c;
+      }
+    }
+    return best;
+  }
+
+  useLayoutEffect(() => {
+    if (pendingScrollRef.current != null && Platform.OS === 'web') {
+      const target = pendingScrollRef.current;
+      pendingScrollRef.current = null;
+      // Defer to the next frame: the remounted list's ScrollView may not be
+      // laid out yet when this effect runs.
+      requestAnimationFrame(() => {
+        const scroller = findScroller(containerElRef.current);
+        if (scroller) scroller.scrollTop = target;
+      });
+    }
+  }, [orderKey]);
+
+  const onContainerLayout = useCallback(
+    ({ containerRef }: { containerRef: React.RefObject<View> }) => {
+      allowTouchScroll({ containerRef });
+      if (Platform.OS === 'web') {
+        containerElRef.current = containerRef.current as unknown as HTMLElement | null;
+      }
+    },
+    [],
+  );
+
+  // Web touch-drag from the row (Sept 2026): the list container is
+  // touch-action pan-y so finger drags scroll, which means the browser would
+  // otherwise claim a row-drag touch for native scrolling the moment the
+  // finger moves — the library's Pan gesture would never see the moves and an
+  // armed row drag would die. While a drag is active, preventDefault the
+  // touchmove so the Pan gesture tracks the finger (the grip already works
+  // because it is touch-action none). Native is untouched: the gesture
+  // system arbitrates there.
+  const dragActiveRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const prevent = (e: TouchEvent) => {
+      if (dragActiveRef.current) e.preventDefault();
+    };
+    window.addEventListener('touchmove', prevent, { passive: false });
+    return () => window.removeEventListener('touchmove', prevent);
+  }, []);
+
   // Drag-reorder safety (Sept 2026 — live bug, root-caused with real gestures):
   // the grip used to call drag() on onPressIn — i.e. on touchstart/mousedown,
   // BEFORE any movement or hold. That instantly set the library's active cell,
@@ -133,13 +200,17 @@ export function EditableChecklist({
     <DraggableFlatList
       data={steps}
       keyExtractor={(s) => s.id}
+      // Web-only remount on order change (see orderKey above). Native does
+      // not need it: the gesture system does not hold the stale autoscroll
+      // state, and remounting would needlessly drop scroll position.
+      key={Platform.OS === 'web' ? orderKey : undefined}
       style={styles.list}
       // Bounds the OUTER wrapper to the remaining viewport space: without
       // this the inner ScrollView grows to its full content height on web and
       // the steps below the fold become unreachable (no scroll container is
       // ever created).
       containerStyle={styles.listContainer}
-      onContainerLayout={allowTouchScroll}
+      onContainerLayout={onContainerLayout}
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={ListHeaderComponent}
       renderItem={({ item, getIndex, drag, isActive }) => (
@@ -153,11 +224,23 @@ export function EditableChecklist({
             upNext={item.id === upNextId}
             active={isActive}
             onToggle={() => onToggle(item.id)}
+            onDragStart={drag}
             dragHandle={renderGrip(item.title, drag)}
           />
         </ChecklistRow>
       )}
-      onDragEnd={({ data }) => onReorder(data.map((s) => s.id))}
+      onDragBegin={() => {
+        dragActiveRef.current = true;
+      }}
+      onDragEnd={({ data }) => {
+        dragActiveRef.current = false;
+        // Preserve scroll across the order-change remount (see orderKey).
+        if (Platform.OS === 'web') {
+          const scroller = findScroller(containerElRef.current);
+          if (scroller) pendingScrollRef.current = scroller.scrollTop;
+        }
+        onReorder(data.map((s) => s.id));
+      }}
       ListFooterComponent={ListFooterComponent}
     />
   );

@@ -16,7 +16,7 @@ import { colors } from '../../src/theme';
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <View style={styles.stat}>
-      <Text style={styles.statValue}>{value || '—'}</Text>
+      <Text style={styles.statValue}>{value || '·'}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -92,7 +92,7 @@ export default function ClientRealtorProfile() {
       {!profile ? (
         failed ? (
           <Text style={styles.loading}>
-            Couldn&apos;t load your realtor&apos;s profile — check your connection and try again.
+            Couldn&apos;t load your realtor&apos;s profile. Check your connection and try again.
           </Text>
         ) : (
           <Text style={styles.loading}>Loading…</Text>
@@ -167,8 +167,8 @@ export default function ClientRealtorProfile() {
 
           <Text style={styles.note}>
             {firstName
-              ? `One profile — shown across all of ${firstName}'s escrows.\nRead-only for clients.`
-              : `One profile — shown across every escrow.\nRead-only for clients.`}
+              ? `One profile, shown across all of ${firstName}'s escrows.\nRead-only for clients.`
+              : `One profile, shown across every escrow.\nRead-only for clients.`}
           </Text>
         </>
       )}

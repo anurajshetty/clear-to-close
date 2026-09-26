@@ -1,7 +1,8 @@
 // Clear to Close — realtor profile update (approved onboarding/auth ㉕ + ㉑).
 // Opens from the deal-list header avatar. Same shared ProfileForm, Save
-// returns to the deal list. Log out is native-only (㉑): web shows no
-// logout affordance. Logout clears the session fully → role picker.
+// returns to the deal list. "Log out" is a quiet row below "Change password"
+// (Sept 2026): web returns to the login screen, native clears the persisted
+// session fully and returns to the role-picker entry screen.
 import React, { useCallback, useRef, useState } from 'react';
 import {
   Pressable,
@@ -101,7 +102,9 @@ export default function ProfileUpdate() {
     try {
       await auth.signOut();
     } finally {
-      router.replace('/role');
+      // Web → login screen. Native → the persisted session is fully cleared
+      // by signOut(); land on the role-picker entry screen.
+      router.replace(auth.isWeb() ? '/login' : '/role');
     }
   };
 
@@ -140,17 +143,23 @@ export default function ProfileUpdate() {
           <Text style={styles.pwlinkText}>Change password</Text>
         </Pressable>
 
-        {auth.isWeb() ? null : (
-          <Pressable
-            accessibilityRole="button"
-            onPress={onLogout}
-            style={styles.logoutRow}
-          >
-            <Text style={styles.logoutText}>
-              {loggingOut ? 'Logging out…' : 'Log out'}
-            </Text>
-          </Pressable>
-        )}
+        {/* Quiet "Log out" row below "Change password" (Sept 2026) — same
+            treatment, no confirmation. Web → login screen; native → the
+            persisted session is cleared fully → role picker. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Log out"
+          onPress={onLogout}
+          testID="logout-row"
+          style={({ pressed }) => [
+            styles.pwlink,
+            pressed && { backgroundColor: colors.accentSoft },
+          ]}
+        >
+          <Text style={styles.pwlinkText}>
+            {loggingOut ? 'Logging out…' : 'Log out'}
+          </Text>
+        </Pressable>
       </ScrollView>
 
       <ChangePasswordSheet
@@ -211,12 +220,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
-  logoutRow: {
-    marginTop: 28,
-    paddingVertical: 14,
-    borderTopWidth: 1,
-    borderTopColor: colors.line,
-    alignItems: 'center',
-  },
-  logoutText: { fontSize: 16, fontWeight: '700', color: colors.red },
 });

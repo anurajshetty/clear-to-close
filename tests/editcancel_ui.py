@@ -289,11 +289,10 @@ def main():
         # --- 7. persistence across reload --------------------------------
         pg.goto(BASE)
         pg.wait_for_timeout(2500)
-        # Web drops the session on reload (native persists it) — sign back in.
-        login_inputs = pg.locator("input")
-        login_inputs.nth(0).fill("rita@example.com")
-        login_inputs.nth(1).fill("longenoughpassword")
-        pg.get_by_text("Log in", exact=True).last.click()
+        # Web now persists the session (Sept 2026): still signed in after
+        # reload — no re-login needed.
+        check("reload: session survives reload (still signed in)",
+              pg.get_by_text("Log in to pick up where you left off.").count() == 0)
         pg.get_by_text("1 open · 1 closed · 1 cancelled", exact=True).wait_for(timeout=12000)
         check("reload: counts persist",
               pg.get_by_text("1 open · 1 closed · 1 cancelled", exact=True).count() == 1)
