@@ -51,6 +51,10 @@ export default function RootLayout() {
               auth.getProfileSkipped(),
             ]);
             href = resolvePostAuthHref({ sessionUserId, profile, skipped });
+            // A realtor resuming on a device whose local KV was never seeded
+            // must see their existing escrows: hydrate the deal list from
+            // the cloud before it renders (never throws; falls back local).
+            await store.pullEscrowsFromCloud();
           } catch {
             // Profile read failure: fall through to the deal list.
           }

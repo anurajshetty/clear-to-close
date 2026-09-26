@@ -35,6 +35,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
   "$ROOT/tests/profilepull.test.ts" \
+  "$ROOT/tests/escrowpull.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -58,3 +59,4 @@ node "$OUT/tests/cloudsync.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/profilepull.test.js"
+node "$OUT/tests/escrowpull.test.js"

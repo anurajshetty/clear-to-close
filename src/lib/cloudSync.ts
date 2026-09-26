@@ -67,6 +67,9 @@ interface OutboxOp {
   attempts: number;
 }
 
+/** Exported for the pull-merge: rows with a queued push keep the local copy. */
+export type { OutboxOp };
+
 // ------------------------------------------------------------------ mappers --
 
 export function toEscrowRow(userId: string, e: Escrow): Record<string, unknown> {
@@ -149,6 +152,88 @@ export async function pullProfileNow(
     if (error || !data || data.length === 0) return null;
     const p = fromProfileRow(data[0] as Record<string, unknown>);
     return p.name.trim().length > 0 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Map one escrows row to the local Escrow shape (steps attached separately). */
+export function fromEscrowRow(row: Record<string, unknown>): Escrow {
+  const side = String(row.side ?? 'buy');
+  return {
+    id: String(row.id ?? ''),
+    address: String(row.address ?? ''),
+    city: String(row.city ?? ''),
+    side: side === 'sell' || side === 'both' ? side : 'buy',
+    buyerName: (row.buyer_name as string) ?? null,
+    sellerName: (row.seller_name as string) ?? null,
+    openDate: String(row.open_date ?? ''),
+    closeDate: String(row.close_date ?? ''),
+    buyerSteps: [],
+    sellerSteps: [],
+    status: row.status === 'closed' ? 'closed' : 'open',
+    createdAt: String(row.created_at ?? new Date().toISOString()),
+  };
+}
+
+/** Map one steps row to the local StepT shape. */
+export function fromStepRow(row: Record<string, unknown>): StepT {
+  return {
+    id: String(row.id ?? ''),
+    title: String(row.title ?? ''),
+    subtitle: String(row.subtitle ?? ''),
+    done: row.done === true,
+    custom: row.custom === true,
+    order: Number(row.position ?? 0),
+    completedAt: (row.completed_at as string) ?? null,
+  };
+}
+
+/**
+ * Pull the signed-in realtor's escrows (with both roles' steps, in position
+ * order) from Supabase. RLS scopes the read to auth.uid()'s rows; the
+ * user_id filter below is a second, app-layer guard so a misconfigured
+ * policy can never leak another realtor's deals into this device.
+ *
+ * Returns the escrow list (possibly empty — a legitimate empty deal list),
+ * or null when the pull failed (no session / transport error) so the caller
+ * keeps the local list untouched.
+ */
+export async function pullEscrowsNow(client: Cloud): Promise<Escrow[] | null> {
+  try {
+    if (!client) return null;
+    const uid = await ensureCloudUser(client);
+    if (!uid) return null;
+    const { data: escrowData, error: escrowError } = await client.from('escrows').select('*');
+    if (escrowError) return null;
+    const rows = ((escrowData ?? []) as Record<string, unknown>[]).filter(
+      (r) => String(r.user_id ?? '') === uid,
+    );
+    if (rows.length === 0) return [];
+    const ids = rows.map((r) => String(r.id));
+    const { data: stepData, error: stepError } = await client
+      .from('steps')
+      .select('*')
+      .in('escrow_id', ids);
+    if (stepError) return null;
+    const stepsByEscrow = new Map<string, { buyer: StepT[]; seller: StepT[] }>();
+    for (const s of (stepData ?? []) as Record<string, unknown>[]) {
+      const eid = String(s.escrow_id ?? '');
+      if (!ids.includes(eid)) continue;
+      let g = stepsByEscrow.get(eid);
+      if (!g) {
+        g = { buyer: [], seller: [] };
+        stepsByEscrow.set(eid, g);
+      }
+      (String(s.role ?? '') === 'seller' ? g.seller : g.buyer).push(fromStepRow(s));
+    }
+    return rows.map((r) => {
+      const e = fromEscrowRow(r);
+      const g = stepsByEscrow.get(e.id);
+      e.buyerSteps = (g?.buyer ?? []).sort((a, b) => a.order - b.order);
+      e.sellerSteps = (g?.seller ?? []).sort((a, b) => a.order - b.order);
+      return e;
+    });
   } catch {
     return null;
   }
@@ -469,6 +554,11 @@ async function readOutbox(kv: KV): Promise<OutboxOp[]> {
   } catch {
     return [];
   }
+}
+
+/** Queued push ops (exported so the escrow pull-merge can skip dirty rows). */
+export async function readOutboxOps(kv: KV): Promise<OutboxOp[]> {
+  return readOutbox(kv);
 }
 
 async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {

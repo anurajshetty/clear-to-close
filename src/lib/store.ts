@@ -36,6 +36,16 @@ export interface Store {
    * completed profile (non-empty name) counts. Never throws.
    */
   pullProfileFromCloud(): Promise<RealtorProfile | null>;
+  /**
+   * Pull the realtor's cloud escrows (with steps) into the local store
+   * (e.g. login on a new device/browser whose local KV was never seeded).
+   * Rows with queued local edits keep the local copy so the pull cannot
+   * clobber unsynced changes; a failed pull keeps the local list untouched.
+   * Returns the merged local list. Never throws.
+   */
+  pullEscrowsFromCloud(): Promise<Escrow[]>;
+  /** Insert or replace a whole escrow by id (used by the cloud pull-merge). */
+  replaceEscrow(e: Escrow): Promise<void>;
   /** Cloud-linked realtor profile for a client view, or null (local path). */
   getLinkedProfile(escrowId: string): Promise<RealtorProfile | null>;
   /**
@@ -259,6 +269,20 @@ export function createStore(kv: KV): Store {
       // Local-only build: no cloud to pull from.
       await ensureLoaded();
       return data.profile;
+    },
+
+    async pullEscrowsFromCloud(): Promise<Escrow[]> {
+      // Local-only build: no cloud to pull from.
+      await ensureLoaded();
+      return data.escrows.map((e) => ({ ...e }));
+    },
+
+    async replaceEscrow(e: Escrow): Promise<void> {
+      await ensureLoaded();
+      const i = data.escrows.findIndex((x) => x.id === e.id);
+      if (i >= 0) data.escrows[i] = { ...e };
+      else data.escrows.push({ ...e });
+      await persist();
     },
 
     async getLinkedProfile(): Promise<RealtorProfile | null> {

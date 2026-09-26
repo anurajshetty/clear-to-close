@@ -85,6 +85,27 @@ SESSION_JSON = {
 }
 
 
+ESCROW_ROWS = [
+    {"id": "esc-buy", "user_id": UID, "address": "26207 Benito Ct",
+     "city": "Santa Clarita, CA 91355", "side": "buy",
+     "buyer_name": "Anuraj", "seller_name": None,
+     "open_date": "2026-08-01", "close_date": "2026-10-15",
+     "status": "open", "created_at": "2026-08-01T00:00:00Z"},
+    {"id": "esc-sell", "user_id": UID, "address": "26203 Mc bean",
+     "city": "santa clarita, CA 91355", "side": "sell",
+     "buyer_name": None, "seller_name": "Anuraj",
+     "open_date": "2026-09-01", "close_date": "2026-11-20",
+     "status": "open", "created_at": "2026-09-01T00:00:00Z"},
+]
+STEP_ROWS = [
+    {"id": "s0", "escrow_id": "esc-buy", "role": "buyer", "title": "Offer accepted",
+     "subtitle": "", "done": True, "custom": False, "position": 0,
+     "completed_at": "2026-08-05T00:00:00Z"},
+    {"id": "s1", "escrow_id": "esc-buy", "role": "buyer", "title": "Appraisal",
+     "subtitle": "", "done": False, "custom": False, "position": 1, "completed_at": None},
+]
+
+
 def make_stubs(pg, profile_rows):
     def fulfill_token(route):
         if route.request.method == "OPTIONS":
@@ -106,6 +127,33 @@ def make_stubs(pg, profile_rows):
 
     pg.route("**/auth/v1/token*", fulfill_token)
     pg.route("**/rest/v1/realtor_profiles*", fulfill_profiles)
+
+
+def make_escrow_stubs(pg, escrow_rows=ESCROW_ROWS, step_rows=STEP_ROWS):
+    """Stub the escrow/step pull (case D). Accepts background push upserts."""
+
+    def fulfill_escrows(route):
+        if route.request.method == "OPTIONS":
+            route.fulfill(status=200, headers=CORS)
+            return
+        if route.request.method == "GET":
+            route.fulfill(status=200, headers={**CORS, "Content-Type": "application/json"},
+                          json=escrow_rows)
+        else:
+            route.fulfill(status=200, headers={**CORS, "Content-Type": "application/json"}, json={})
+
+    def fulfill_steps(route):
+        if route.request.method == "OPTIONS":
+            route.fulfill(status=200, headers=CORS)
+            return
+        if route.request.method == "GET":
+            route.fulfill(status=200, headers={**CORS, "Content-Type": "application/json"},
+                          json=step_rows)
+        else:
+            route.fulfill(status=200, headers={**CORS, "Content-Type": "application/json"}, json={})
+
+    pg.route("**/rest/v1/escrows*", fulfill_escrows)
+    pg.route("**/rest/v1/steps*", fulfill_steps)
 
 
 def run_case(pg, errors, name, profile_rows, expect):
@@ -141,8 +189,31 @@ def main():
 
         # Case A: existing account, completed cloud profile, empty local store.
         make_stubs(pg, [PROFILE_ROW])
+        make_escrow_stubs(pg, [], [])  # no cloud escrows in this routing case
         if not run_case(pg, errors, "A-existing-profile", [PROFILE_ROW], "Escrows"):
             failures.append("A")
+
+        # Case D: existing account whose escrows live only in the cloud —
+        # the deal list hydrates them on login (the realtoranu@gmail.com bug).
+        # (Re-registering: the last matching route wins.)
+        make_escrow_stubs(pg)
+        pg.evaluate("localStorage.clear(); localStorage.setItem('ctc:role', 'realtor');")
+        pg.goto(LOGIN)
+        pg.wait_for_timeout(2500)
+        inputs = pg.locator("input")
+        inputs.nth(0).fill("rita@example.com")
+        inputs.nth(1).fill("longenoughpassword")
+        pg.get_by_role("button", name="Log in").click()
+        try:
+            pg.get_by_text("26207 Benito Ct", exact=True).wait_for(timeout=15000)
+            pg.get_by_text("26203 Mc bean", exact=True).wait_for(timeout=15000)
+            print("PASS D-escrow-hydration: cloud escrows appear on the deal list")
+        except Exception:
+            print("FAIL D-escrow-hydration: cloud escrows missing from the deal list")
+            failures.append("D")
+        pg.screenshot(path=f"{OUT}/D-escrow-hydration.png")
+        # Cases B/C: brand-new account — cloud has no escrows.
+        make_escrow_stubs(pg, [], [])
 
         # Case B: brand-new account, no cloud profile -> profile creation.
         pg.unroute("**/rest/v1/realtor_profiles*")

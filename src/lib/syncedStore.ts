@@ -32,12 +32,14 @@ import {
   ensureCloudUser,
   fetchCloudView,
   pingCloud,
+  pullEscrowsNow,
   pullInvitesNow,
   pullProfileNow,
   pushEscrowNow,
   pushInviteNow,
   pushProfileNow,
   pushRevokeNow,
+  readOutboxOps,
   redeemViaCloud,
   regenerateInviteNow,
   type Cloud,
@@ -163,6 +165,15 @@ export function createSyncedStore(
       } catch {
         // Outbox drain is best-effort; ops stay queued for next time.
       }
+      // Deal-list hydration: a realtor logging in on a device/browser whose
+      // local KV was never seeded must see the escrows that already exist
+      // under their account. Runs after the outbox drain and before the
+      // background push-reconcile, so the push converges on merged state.
+      try {
+        await pullEscrowsFromCloud();
+      } catch {
+        // Pull failure keeps the local list as-is.
+      }
       // Lightweight reconcile: upserts are idempotent, so pushing everything
       // converges any state that missed the outbox (e.g. a launch where the
       // cloud config was broken and fixed later). Best-effort, background.
@@ -183,6 +194,41 @@ export function createSyncedStore(
       })();
     }
     return result;
+  }
+
+  /**
+   * Cloud escrow hydration. Pulls the signed-in realtor's escrows (with
+   * steps) and merges them into the local store:
+   *   - rows missing locally are inserted;
+   *   - rows present locally are replaced by the cloud copy UNLESS this
+   *     device has queued (unsynced) edits for the row — the local copy
+   *     wins then, so a pull can never clobber offline changes;
+   *   - local-only rows are never deleted (a partial cloud read must not
+   *     wipe the deal list);
+   *   - a failed pull returns the local list untouched.
+   * Never throws.
+   */
+  async function pullEscrowsFromCloud(): Promise<Escrow[]> {
+    try {
+      const existing = await local.listEscrows();
+      if (!cloudConfigured()) return existing;
+      const c = client();
+      if (!c) return existing;
+      const cloud = await pullEscrowsNow(c);
+      if (cloud === null) return existing;
+      const ops = await readOutboxOps(kv);
+      for (const e of cloud) {
+        const dirty = ops.some((o) => o.op === 'pushEscrow' && o.escrowId === e.id);
+        if (!dirty) await local.replaceEscrow(e);
+      }
+      return local.listEscrows();
+    } catch {
+      try {
+        return await local.listEscrows();
+      } catch {
+        return [];
+      }
+    }
   }
 
   // Re-resolve the session user if the ping hasn't run yet but a push is
@@ -232,6 +278,8 @@ export function createSyncedStore(
       }
     },
 
+    pullEscrowsFromCloud,
+
     async getLinkedProfile(escrowId: string): Promise<RealtorProfile | null> {
       if (profileCache.has(escrowId)) return profileCache.get(escrowId) ?? null;
       const cached = await readJson<{ profile: RealtorProfile | null }>(kv, K_CLOUD_VIEW_PREFIX + escrowId);
@@ -260,6 +308,7 @@ export function createSyncedStore(
 
     listEscrows: () => local.listEscrows(),
     getEscrow: (id: string) => local.getEscrow(id),
+    replaceEscrow: (e: Escrow) => local.replaceEscrow(e),
 
     createEscrow: async (input): Promise<Escrow> => {
       const e = await local.createEscrow(input);
