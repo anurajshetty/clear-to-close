@@ -52,11 +52,44 @@ export function SecondaryButton({
   );
 }
 
+/** Text-only link used for secondary navigation (e.g. "Skip for now"). */
+export function TextLink({ title, onPress }: { title: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.textLinkWrap, pressed && { opacity: 0.7 }]}
+    >
+      <Text style={styles.textLink}>{title}</Text>
+    </Pressable>
+  );
+}
+
+/** Back chevron row ("‹ Label") used by onboarding screens. */
+export function BackChevron({ label, onPress }: { label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Back to ${label}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.backChevron, pressed && { opacity: 0.7 }]}
+    >
+      <Text style={styles.backChevronGlyph}>‹</Text>
+      <Text style={styles.backChevronLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export function Field({
   label, value, onChangeText, placeholder, multiline,
+  secureTextEntry, keyboardType, autoCapitalize, autoCorrect,
 }: {
   label: string; value: string; onChangeText: (t: string) => void;
   placeholder?: string; multiline?: boolean;
+  secureTextEntry?: boolean;
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  autoCorrect?: boolean;
 }) {
   return (
     <View style={styles.fieldWrap}>
@@ -67,6 +100,10 @@ export function Field({
         placeholder={placeholder}
         placeholderTextColor={colors.muted}
         multiline={!!multiline}
+        secureTextEntry={!!secureTextEntry}
+        keyboardType={keyboardType ?? 'default'}
+        autoCapitalize={autoCapitalize ?? 'sentences'}
+        autoCorrect={autoCorrect ?? true}
         style={[styles.fieldInput, multiline && styles.fieldInputMultiline]}
       />
     </View>
@@ -147,4 +184,9 @@ const styles = StyleSheet.create({
   gripDot: {
     width: 4, height: 4, borderRadius: 2, backgroundColor: colors.gripDot, marginBottom: 3,
   },
+  textLinkWrap: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 8 },
+  textLink: { fontSize: 15, fontWeight: '700', color: colors.accent },
+  backChevron: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12 },
+  backChevronGlyph: { fontSize: 26, fontWeight: '400', color: colors.accent, marginTop: -3 },
+  backChevronLabel: { fontSize: 15, fontWeight: '600', color: colors.accent, marginLeft: 2 },
 });

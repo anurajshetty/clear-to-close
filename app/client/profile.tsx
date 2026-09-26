@@ -1,5 +1,6 @@
 // Clear to Close — client-facing realtor profile (read-only).
-// Faithful to APPROVED mockup 01 · device 15. License line intentionally omitted (HELD).
+// Faithful to APPROVED mockup 01 · device 15: the license line renders only
+// when the realtor entered one — an empty field means no line at all.
 import React, { useCallback, useState } from 'react';
 import {
   Image,
@@ -10,7 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
 import type { RealtorProfile } from '../../src/lib/types';
 import { Kicker, PrimaryButton } from '../../src/components/ui';
@@ -28,21 +29,35 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 export default function ClientRealtorProfile() {
   const router = useRouter();
+  // The escrow this profile was opened from (buyer/seller home passes it).
+  // A client device has no local realtor profile of its own — the linked
+  // profile from the invite is the source of truth there.
+  const params = useLocalSearchParams<{ escrowId?: string }>();
+  const rawEscrowId = params.escrowId;
+  const escrowId =
+    typeof rawEscrowId === 'string' ? rawEscrowId : Array.isArray(rawEscrowId) ? rawEscrowId[0] : null;
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
+  const [failed, setFailed] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       let active = true;
+      setFailed(false);
       store
-        .getProfile()
+        .getClientProfile(escrowId)
         .then((p) => {
-          if (active) setProfile(p);
+          if (active) {
+            setProfile(p);
+            setFailed(!p);
+          }
         })
-        .catch(() => {});
+        .catch(() => {
+          if (active) setFailed(true);
+        });
       return () => {
         active = false;
       };
-    }, []),
+    }, [escrowId]),
   );
 
   const hasPhone = !!profile && profile.phone.trim().length > 0;
@@ -59,7 +74,13 @@ export default function ClientRealtorProfile() {
       </Pressable>
 
       {!profile ? (
-        <Text style={styles.loading}>Loading…</Text>
+        failed ? (
+          <Text style={styles.loading}>
+            Couldn&apos;t load your realtor&apos;s profile — check your connection and try again.
+          </Text>
+        ) : (
+          <Text style={styles.loading}>Loading…</Text>
+        )
       ) : (
         <>
           <View style={styles.hero}>
@@ -71,6 +92,11 @@ export default function ClientRealtorProfile() {
               </View>
             )}
             <Text style={styles.name}>{profile.name}</Text>
+            {profile.dreLicense.trim().length > 0 && (
+              <Text style={styles.dre}>
+                DRE / license number: {profile.dreLicense.trim()}
+              </Text>
+            )}
           </View>
 
           {profile.about.trim().length > 0 && (
@@ -169,6 +195,12 @@ const styles = StyleSheet.create({
     color: colors.ink,
     textAlign: 'center',
     marginTop: 14,
+  },
+  dre: {
+    fontSize: 13.5,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: 4,
   },
   block: {
     marginTop: 24,

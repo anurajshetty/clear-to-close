@@ -30,6 +30,13 @@ export interface Store {
   getProfile(): Promise<RealtorProfile | null>;
   /** Cloud-linked realtor profile for a client view, or null (local path). */
   getLinkedProfile(escrowId: string): Promise<RealtorProfile | null>;
+  /**
+   * The realtor profile a client device should display for an escrow:
+   * the linked realtor profile when this device came through an invite
+   * (a client device has no local profile of its own), falling back to
+   * the device's own local profile (the realtor's own device).
+   */
+  getClientProfile(escrowId: string | null): Promise<RealtorProfile | null>;
   saveProfile(p: RealtorProfile): Promise<void>;
   listEscrows(): Promise<Escrow[]>;
   getEscrow(id: string): Promise<Escrow | null>;
@@ -47,7 +54,32 @@ export interface Store {
   /** Merge server-side invite states (redeemed/revoked) into local copies. */
   mergeInviteStates(rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[]): Promise<void>;
   listInvites(escrowId: string): Promise<Invite[]>;
-  redeemInvite(code: string, name: string): Promise<RedeemResult>;
+  redeemInvite(code: string, name: string, deviceId?: string): Promise<RedeemResult>;
+  /**
+   * Regenerate an invite code (share-sheet "Regenerate code").
+   * Atomically: old invite revoked + old device link killed + fresh
+   * globally-unique single-use code issued for the same escrow/role/party.
+   * Returns the replaced code, the new invite, and the killed device link
+   * (for cloud convergence), if one existed.
+   */
+  regenerateInvite(
+    inviteId: string,
+    codeOverride?: string,
+    newId?: string,
+  ): Promise<{
+    oldCode: string;
+    invite: Invite;
+    revokedLink: { id: string; revokedAt: string } | null;
+  }>;
+  /** The live (unrevoked) client link bound to an invite, or null. */
+  getLinkForInvite(inviteId: string): Promise<ClientLink | null>;
+  /**
+   * Validate a stored device client link before rendering the escrow.
+   * False when the link — or its invite — was revoked/regenerated away.
+   * Fail-open: a link this store has never seen resolves valid, so an
+   * offline client keeps rendering its cached view instead of a dead end.
+   */
+  validateClientLink(linkId: string): Promise<{ valid: boolean }>;
   getBuyerView(escrowId: string): Promise<ClientView>;
   getSellerView(escrowId: string): Promise<ClientView>;
 }
@@ -132,9 +164,20 @@ export function createStore(kv: KV): Store {
       kv.getItem(K_LINKS),
     ]);
     data.profile = p ? (JSON.parse(p) as RealtorProfile) : null;
+    if (data.profile) {
+      // Backfill for links saved before the DRE/license field existed.
+      if (typeof (data.profile as { dreLicense?: unknown }).dreLicense !== 'string') {
+        data.profile.dreLicense = '';
+      }
+    }
     data.escrows = e ? (JSON.parse(e) as Escrow[]) : [];
     data.invites = i ? (JSON.parse(i) as Invite[]) : [];
-    data.links = l ? (JSON.parse(l) as ClientLink[]) : [];
+    // Backfill for links saved before 0002 device linking.
+    data.links = (l ? (JSON.parse(l) as ClientLink[]) : []).map((link) => ({
+      ...link,
+      deviceId: link.deviceId ?? null,
+      revokedAt: link.revokedAt ?? null,
+    }));
     data.loaded = true;
   }
 
@@ -201,6 +244,18 @@ export function createStore(kv: KV): Store {
     async getLinkedProfile(): Promise<RealtorProfile | null> {
       // Local store has no cloud links; the synced wrapper overrides this.
       return null;
+    },
+
+    async getClientProfile(escrowId: string | null): Promise<RealtorProfile | null> {
+      // Linked-first: a client device reached this screen through an invite
+      // and has no local realtor profile of its own. Falls back to the
+      // device's own profile on the realtor's device.
+      if (escrowId) {
+        const linked = await store.getLinkedProfile(escrowId);
+        if (linked) return linked;
+      }
+      await ensureLoaded();
+      return data.profile;
     },
 
     async saveProfile(p: RealtorProfile): Promise<void> {
@@ -403,7 +458,7 @@ export function createStore(kv: KV): Store {
       return data.invites.filter((i) => i.escrowId === escrowId).map((i) => ({ ...i }));
     },
 
-    async redeemInvite(code: string, name: string): Promise<RedeemResult> {
+    async redeemInvite(code: string, name: string, deviceId?: string): Promise<RedeemResult> {
       await ensureLoaded();
       // From here to the mutation there is no await: the check-then-set is a
       // single synchronous critical section, so concurrent Promise.all
@@ -424,11 +479,82 @@ export function createStore(kv: KV): Store {
         role: inv.role,
         partyName: inv.partyName,
         createdAt: new Date().toISOString(),
+        // 0002 device linking: a successful redeem binds one device id.
+        deviceId: deviceId ?? null,
+        revokedAt: null,
       };
       data.links.push(link);
       await persist();
       // Role comes from the invite, never from caller input.
       return { ok: true, escrowId: inv.escrowId, role: inv.role, partyName: inv.partyName, linkId: link.id };
+    },
+
+    async regenerateInvite(
+      inviteId: string,
+      codeOverride?: string,
+      newId?: string,
+    ): Promise<{
+      oldCode: string;
+      invite: Invite;
+      revokedLink: { id: string; revokedAt: string } | null;
+    }> {
+      await ensureLoaded();
+      const inv = data.invites.find((i) => i.id === inviteId);
+      if (!inv) throw new Error(`regenerateInvite: invite not found: ${inviteId}`);
+      if (inv.revokedAt) throw new Error('regenerateInvite: invite already revoked');
+      const oldCode = inv.code;
+      // Fresh, globally unique single-use code for the same escrow/role/party.
+      const taken = new Set(data.invites.map((i) => i.code));
+      let code = (codeOverride ?? '').trim().toUpperCase();
+      if (code) {
+        if (taken.has(code)) throw new Error('regenerateInvite: code collision');
+      } else {
+        do {
+          code = randomCode();
+        } while (taken.has(code));
+      }
+      const now = new Date().toISOString();
+      // Atomic within the in-memory critical section: kill the old code and
+      // its device link at the same moment the replacement is issued.
+      inv.revokedAt = now;
+      const link = data.links.find((l) => l.inviteId === inviteId && !l.revokedAt);
+      let revokedLink: { id: string; revokedAt: string } | null = null;
+      if (link) {
+        link.revokedAt = now;
+        revokedLink = { id: link.id, revokedAt: now };
+      }
+      const next: Invite = {
+        // The cloud mirror passes the RPC's new_invite_id so local and
+        // cloud rows share one id; the local-only path mints its own.
+        id: newId ?? uid(),
+        code,
+        escrowId: inv.escrowId,
+        role: inv.role,
+        partyName: inv.partyName,
+        createdAt: now,
+        revokedAt: null,
+        redeemedAt: null,
+      };
+      data.invites.push(next);
+      await persist();
+      return { oldCode, invite: { ...next }, revokedLink };
+    },
+
+    async getLinkForInvite(inviteId: string): Promise<ClientLink | null> {
+      await ensureLoaded();
+      return data.links.find((l) => l.inviteId === inviteId && !l.revokedAt) ?? null;
+    },
+
+    async validateClientLink(linkId: string): Promise<{ valid: boolean }> {
+      await ensureLoaded();
+      const link = data.links.find((l) => l.id === linkId);
+      // Fail-open: this store has never seen the link (e.g. the redeem went
+      // through the cloud on a client device) — it cannot be proven dead.
+      if (!link) return { valid: true };
+      if (link.revokedAt) return { valid: false };
+      const inv = data.invites.find((i) => i.id === link.inviteId);
+      if (!inv || inv.revokedAt) return { valid: false };
+      return { valid: true };
     },
 
     async getBuyerView(escrowId: string): Promise<ClientView> {

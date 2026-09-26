@@ -15,6 +15,8 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/store.ts" \
   "$ROOT/src/lib/store-instance.ts" \
   "$ROOT/src/lib/supabase.ts" \
+  "$ROOT/src/lib/auth.ts" \
+  "$ROOT/src/lib/bootRoute.ts" \
   "$ROOT/src/lib/recency.ts" \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/clientView.ts" \
@@ -29,11 +31,17 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/persistence.test.ts" \
   "$ROOT/tests/dates.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
+  "$ROOT/tests/auth.test.ts" \
+  "$ROOT/tests/syncedstore.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
   --moduleResolution bundler \
   --skipLibCheck
+
+# NODE_PATH lets the compiled tests resolve @supabase/supabase-js for the
+# platform-storage tests (they run from /tmp, outside the repo tree).
+export NODE_PATH="$ROOT/node_modules"
 
 node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
@@ -44,3 +52,5 @@ node "$OUT/tests/persistence.test.js"
 # Pinned TZ so the DST-crossing day-count regression is deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
 node "$OUT/tests/cloudsync.test.js"
+node "$OUT/tests/auth.test.js"
+node "$OUT/tests/syncedstore.test.js"

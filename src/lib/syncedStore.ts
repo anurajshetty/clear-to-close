@@ -5,12 +5,15 @@
 // failures land in the persisted outbox and are retried on init.
 //
 // Reads prefer the cloud only when it is proven healthy:
-//   - redeemInvite: redeem_invite RPC when the boot ping succeeded,
-//     otherwise the local v1 path.
+//   - redeemInvite: redeem_invite RPC when Supabase is configured (public
+//     gate — no realtor session needed), otherwise the local v1 path.
 //   - getBuyerView/getSellerView: get_client_view RPC when this device holds
-//     a cloud link for the escrow, with a cached-view and local fallback.
-// When the ping fails (offline / anonymous auth disabled / RLS blocking) the
-// app behaves exactly as the local-only v1 — sync stays dormant.
+//     a cloud link for the escrow (public gate — works on client devices
+//     with no session), with a cached-view and local fallback.
+//   - validateClientLink: get_client_view authority under the public gate.
+// Realtor-owned pushes still require the email/password session (cloudOk()).
+// When the ping fails (offline / no realtor session / RLS blocking) the app
+// behaves exactly as the local-only v1 — sync stays dormant.
 
 import { createStore, type KV, type Store } from './store';
 import type {
@@ -28,13 +31,15 @@ import {
   enqueueOutbox,
   ensureCloudUser,
   fetchCloudView,
-  mapRedeemRpc,
   pingCloud,
   pullInvitesNow,
   pushEscrowNow,
   pushInviteNow,
   pushProfileNow,
   pushRevokeNow,
+  redeemViaCloud,
+  regenerateInviteNow,
+  type Cloud,
   type PingResult,
 } from './cloudSync';
 
@@ -67,7 +72,15 @@ function timeoutMs(ms: number): Promise<never> {
   return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
 }
 
-export function createSyncedStore(kv: KV): { store: Store; initCloudSync: () => Promise<PingResult> } {
+export function createSyncedStore(
+  kv: KV,
+  deps?: {
+    /** Override the Supabase client factory (unit tests inject a mock). */
+    cloudClient?: () => Cloud | null;
+    /** Override the redeem RPC timeout (unit tests use a short timeout). */
+    redeemTimeoutMs?: number;
+  },
+): { store: Store; initCloudSync: () => Promise<PingResult> } {
   const local = createStore(kv);
 
   let ping: PingResult | null = null;
@@ -75,7 +88,14 @@ export function createSyncedStore(kv: KV): { store: Store; initCloudSync: () => 
   const profileCache = new Map<string, RealtorProfile | null>();
 
   const cloudOk = (): boolean => ping?.ok === true && !!userId;
-  const client = () => cloudClient();
+  const client = () => deps?.cloudClient?.() ?? cloudClient();
+  const redeemTimeoutMs = deps?.redeemTimeoutMs ?? 8000;
+
+  // Public client RPCs (redeem_invite, get_client_view) need no realtor
+  // session — the configured anon client is enough. This gate is independent
+  // of cloudOk() (realtor sync health), so a client device with no session
+  // can still redeem an invite and validate its device link.
+  const publicOk = (): boolean => cloudConfigured() && !!client();
 
   /** Fire-and-forget cloud push; failures (or a not-yet-healthy cloud) go
    *  to the outbox for retry, so the system self-heals when connectivity or
@@ -184,6 +204,19 @@ export function createSyncedStore(kv: KV): { store: Store; initCloudSync: () => 
       return p;
     },
 
+    /**
+     * Client-facing realtor profile: the linked profile when this device
+     * came through an invite (a client device has no local profile of its
+     * own), falling back to the device's own local profile.
+     */
+    async getClientProfile(escrowId: string | null): Promise<RealtorProfile | null> {
+      if (escrowId) {
+        const linked = await store.getLinkedProfile(escrowId);
+        if (linked) return linked;
+      }
+      return local.getProfile();
+    },
+
     saveProfile: async (p: RealtorProfile): Promise<void> => {
       await local.saveProfile(p);
       bgPush((c, uid) => pushProfileNow(c, uid, p), { op: 'pushProfile' });
@@ -271,30 +304,106 @@ export function createSyncedStore(kv: KV): { store: Store; initCloudSync: () => 
       return local.listInvites(escrowId);
     },
 
-    redeemInvite: async (code: string, name: string): Promise<RedeemResult> => {
-      if (cloudOk()) {
+    redeemInvite: async (code: string, name: string, deviceId?: string): Promise<RedeemResult> => {
+      if (publicOk()) {
         const c = client();
         if (c) {
           try {
             // Attach a no-op catch so a late RPC rejection after our timeout
             // never becomes an unhandled rejection.
-            const rpcP = c
-              .rpc('redeem_invite', { p_code: code.trim().toUpperCase(), p_name: name })
-              .then((res: { data: unknown }) => mapRedeemRpc(res.data));
+            const rpcP = redeemViaCloud(c, code.trim().toUpperCase(), name, deviceId ?? null).then(
+              (res) => res,
+            );
             rpcP.catch(() => {});
-            const res = (await Promise.race([rpcP, timeoutMs(8000)])) as RedeemResult & {
-              linkId?: string;
-            };
+            const res = (await Promise.race([rpcP, timeoutMs(redeemTimeoutMs)])) as
+              | (RedeemResult & { linkId?: string })
+              | undefined;
+            // Timeout or RPC failure: the code may be perfectly good — report
+            // a retryable network error, never 'invalid'.
+            if (!res) return { ok: false, error: 'network' };
             if (res.ok && res.linkId) {
               await saveCloudLink(res.escrowId, { linkId: res.linkId, role: res.role });
             }
             return res;
           } catch {
-            return { ok: false, error: 'invalid' };
+            return { ok: false, error: 'network' };
           }
         }
       }
-      return local.redeemInvite(code, name);
+      return local.redeemInvite(code, name, deviceId);
+    },
+
+    /**
+     * Regenerate an invite code ("Regenerate code" in the share sheet).
+     * Cloud path: the regenerate_invite RPC does it atomically; the result
+     * is mirrored locally. Local/dormant path: local regenerate + outbox
+     * convergence (pushRevoke old invite, pushInvite new invite,
+     * revokeClientLink old device link).
+     */
+    regenerateInvite: async (
+      inviteId: string,
+      codeOverride?: string,
+    ): Promise<{
+      oldCode: string;
+      invite: Invite;
+      revokedLink: { id: string; revokedAt: string } | null;
+    }> => {
+      if (cloudOk() && !codeOverride) {
+        const c = client();
+        const uid = userId;
+        if (c && uid) {
+          try {
+            const { newCode, newInviteId } = await regenerateInviteNow(c, inviteId);
+            // Mirror locally with the RPC's invite id so local and cloud
+            // rows share one id (no local/cloud id divergence).
+            return await local.regenerateInvite(inviteId, newCode, newInviteId);
+          } catch {
+            // Fall through to the local + outbox path below.
+          }
+        }
+      }
+      const res = await local.regenerateInvite(inviteId, codeOverride);
+      if (cloudConfigured()) {
+        // Converge the cloud: revoke the old invite, push the new one, and
+        // kill the old device link (drain retries each until it lands).
+        await enqueueOutbox(kv, { op: 'pushRevoke', inviteId, attempts: 0 });
+        await enqueueOutbox(kv, { op: 'pushInvite', inviteId: res.invite.id, attempts: 0 });
+        if (res.revokedLink) {
+          await enqueueOutbox(kv, {
+            op: 'revokeClientLink',
+            linkId: res.revokedLink.id,
+            revokedAt: res.revokedLink.revokedAt,
+            attempts: 0,
+          });
+        }
+      }
+      return res;
+    },
+
+    getLinkForInvite: (inviteId: string) => local.getLinkForInvite(inviteId),
+
+    /**
+     * Validate a stored device client link before rendering the escrow.
+     * Uses the PUBLIC cloud gate (no realtor session needed): get_client_view
+     * is the authority — a revoked/superseded link returns valid:false and
+     * the client lands on the dead-link screen. Non-revocation failures
+     * (network/timeout) fail open so an offline client keeps rendering its
+     * cached view.
+     */
+    validateClientLink: async (linkId: string): Promise<{ valid: boolean }> => {
+      if (publicOk()) {
+        const c = client();
+        if (c) {
+          try {
+            const res = await Promise.race([fetchCloudView(c, linkId), timeoutMs(8000)]);
+            if (res.ok) return { valid: true };
+            return /revoked/i.test(res.error ?? '') ? { valid: false } : { valid: true };
+          } catch {
+            return { valid: true };
+          }
+        }
+      }
+      return local.validateClientLink(linkId);
     },
 
     getBuyerView: (escrowId: string) => viewForRole(escrowId, 'buyer'),
@@ -303,7 +412,9 @@ export function createSyncedStore(kv: KV): { store: Store; initCloudSync: () => 
 
   async function viewForRole(escrowId: string, role: ClientRole): Promise<ClientView> {
     const link = await cloudLinkFor(escrowId);
-    if (link && link.role === role && cloudOk()) {
+    // Public gate: a client device has no realtor session, but the cloud
+    // view is still fetchable with the anon client.
+    if (link && link.role === role && publicOk()) {
       const c = client();
       if (c) {
         try {

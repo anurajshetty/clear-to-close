@@ -48,6 +48,8 @@ export interface RealtorProfile {
   dealsClosed: string;
   areasServed: string;
   phone: string;
+  /** Optional DRE / license number — shown on the client profile only if entered. */
+  dreLicense: string;
 }
 
 export interface Invite {
@@ -63,7 +65,7 @@ export interface Invite {
 
 export type RedeemResult =
   | { ok: true; escrowId: string; role: ClientRole; partyName: string; linkId: string }
-  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' };
+  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'device_has_link' };
 
 export interface ClientLink {
   id: string;
@@ -72,6 +74,19 @@ export interface ClientLink {
   role: ClientRole;
   partyName: string;
   createdAt: string;
+  /** Device this link is bound to (0002 device linking). Null until redeemed. */
+  deviceId: string | null;
+  /** Set when the invite is regenerated or revoked — the link is dead. */
+  revokedAt: string | null;
+}
+
+/** The client link as persisted on this device (the access key to the escrow). */
+export interface DeviceClientLink {
+  linkId: string;
+  escrowId: string;
+  role: ClientRole;
+  partyName: string;
+  deviceId: string;
 }
 
 export interface ClientView {

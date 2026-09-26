@@ -1,12 +1,16 @@
 // Clear to Close — per-escrow invite management.
-// Faithful to APPROVED mockup 01 · Escrow tracker v1, device ⑨.
+// Faithful to APPROVED mockup 03 · onboarding/auth, device ⑳ (Regenerate code).
+// Each client row shows the party name, link status (Linked to device /
+// Invited), the code pill + Copy, and a "Regenerate code" action with a
+// confirmation step. Regenerating atomically kills the old code and its
+// device link and issues a fresh single-use code for the same escrow/role/party.
 import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
 import { partyLine } from '../index';
-import type { ClientRole, Escrow, Invite } from '../../src/lib/types';
+import type { ClientLink, ClientRole, Escrow, Invite } from '../../src/lib/types';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { InviteSheet } from '../../src/components/InviteSheet';
@@ -46,10 +50,11 @@ function headerProgress(escrow: Escrow): { done: number; total: number } {
   return { done: countDone(steps), total: steps.length };
 }
 
-// Latest invite per side that can still be redeemed.
-function latestActive(invites: Invite[], role: ClientRole): Invite | null {
+// Latest non-revoked invite per side — redeemed ones stay visible so their
+// code can be regenerated for the reinstall / new-device case.
+function latestVisible(invites: Invite[], role: ClientRole): Invite | null {
   const mine = invites
-    .filter((i) => i.role === role && !i.redeemedAt && !i.revokedAt)
+    .filter((i) => i.role === role && !i.revokedAt)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return mine[0] ?? null;
 }
@@ -62,9 +67,16 @@ export default function ShareEscrow() {
 
   const [escrow, setEscrow] = useState<Escrow | null>(null);
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [links, setLinks] = useState<Record<string, ClientLink | null>>({});
   const [loaded, setLoaded] = useState(false);
   const [sheetSide, setSheetSide] = useState<ClientRole | null>(null);
-  const [revokeId, setRevokeId] = useState<string | null>(null);
+  const [regenConfirmId, setRegenConfirmId] = useState<string | null>(null);
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [lastRegen, setLastRegen] = useState<{
+    inviteId: string;
+    partyName: string;
+    oldCode: string;
+  } | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -77,7 +89,19 @@ export default function ShareEscrow() {
   const refreshInvites = useCallback(async () => {
     if (!escrowId) return;
     try {
-      setInvites(await store.listInvites(escrowId));
+      const list = await store.listInvites(escrowId);
+      setInvites(list);
+      const byId: Record<string, ClientLink | null> = {};
+      await Promise.all(
+        list.map(async (inv) => {
+          try {
+            byId[inv.id] = await store.getLinkForInvite(inv.id);
+          } catch {
+            byId[inv.id] = null;
+          }
+        }),
+      );
+      setLinks(byId);
     } catch (err) {
       console.warn('listInvites failed', err);
     }
@@ -110,16 +134,25 @@ export default function ShareEscrow() {
     showToast('Copied.');
   };
 
-  const doRevoke = async () => {
-    if (!revokeId) return;
+  const doRegenerate = async () => {
+    if (!regenConfirmId || regenBusy) return;
+    const inv = invites.find((i) => i.id === regenConfirmId);
+    if (!inv) {
+      setRegenConfirmId(null);
+      return;
+    }
+    setRegenBusy(true);
     try {
-      await store.revokeInvite(revokeId);
-      showToast('Invite removed.');
+      const res = await store.regenerateInvite(inv.id);
+      setLastRegen({ inviteId: res.invite.id, partyName: inv.partyName, oldCode: res.oldCode });
+      showToast('New code created.');
       await refreshInvites();
     } catch (err) {
-      console.warn('revokeInvite failed', err);
+      console.warn('regenerateInvite failed', err);
+      showToast('Could not create a new code — try again.');
     } finally {
-      setRevokeId(null);
+      setRegenBusy(false);
+      setRegenConfirmId(null);
     }
   };
 
@@ -144,6 +177,8 @@ export default function ShareEscrow() {
 
   const sides = sidesFor(escrow.side);
   const progress = headerProgress(escrow);
+  const regenInvite = regenConfirmId ? invites.find((i) => i.id === regenConfirmId) ?? null : null;
+  const regenSide = regenInvite ? sides.find((s) => s.role === regenInvite.role) ?? null : null;
 
   return (
     <View style={styles.screen}>
@@ -177,70 +212,99 @@ export default function ShareEscrow() {
           </View>
 
           {sides.map((s) => {
-            const active = latestActive(invites, s.role);
-            return (
-              <View key={s.role} style={styles.sideBlock}>
-                {active ? (
-                  <View style={styles.invRow}>
-                    <View style={styles.invCol}>
-                      <Text style={styles.invLabel}>{s.label} invite</Text>
-                      <Text style={styles.invName}>{`${active.partyName} · Invited`}</Text>
-                      <Text style={styles.invCode}>{active.code}</Text>
-                    </View>
-                    <View style={styles.invActions}>
-                      <Pressable
-                        onPress={() => copyCode(active.code)}
-                        hitSlop={8}
-                        style={styles.copyBtn}
-                      >
-                        <Text style={styles.copyText}>Copy</Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => setRevokeId(active.id)}
-                        hitSlop={8}
-                        style={styles.xBtn}
-                      >
-                        <Text style={styles.xText}>×</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : (
+            const inv = latestVisible(invites, s.role);
+            if (!inv) {
+              return (
+                <View key={s.role} style={styles.sideBlock}>
                   <SecondaryButton
                     title={`Invite the ${s.noun}`}
                     onPress={() => setSheetSide(s.role)}
                   />
-                )}
+                </View>
+              );
+            }
+            const linked = !!links[inv.id];
+            return (
+              <View key={s.role} style={styles.sideBlock}>
+                <View style={styles.invRow}>
+                  <View style={styles.invCol}>
+                    <Text style={styles.invName}>{inv.partyName}</Text>
+                    <Text style={linked ? styles.linkedStatus : styles.invitedStatus}>
+                      {linked ? 'Linked to device' : 'Invited'}
+                    </Text>
+                  </View>
+                  <Text style={styles.codePill}>{inv.code}</Text>
+                  <Pressable
+                    onPress={() => copyCode(inv.code)}
+                    hitSlop={8}
+                    style={styles.copyBtn}
+                  >
+                    <Text style={styles.copyText}>Copy</Text>
+                  </Pressable>
+                </View>
+                <View style={styles.regenActions}>
+                  <Pressable
+                    onPress={() => {
+                      setLastRegen(null);
+                      setRegenConfirmId(inv.id);
+                    }}
+                    hitSlop={8}
+                    style={styles.regenBtn}
+                  >
+                    <Text style={styles.regenText}>Regenerate code</Text>
+                  </Pressable>
+                </View>
+                {lastRegen && lastRegen.inviteId === inv.id ? (
+                  <View style={styles.regenNote}>
+                    <Text style={styles.regenNoteText}>
+                      <Text style={styles.regenNoteBold}>Regenerated</Text>
+                      {' — the previous code '}
+                      <Text style={styles.strike}>{lastRegen.oldCode}</Text>
+                      {' no longer works, and the old device link is revoked.'}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
             );
           })}
 
-          {revokeId && (
-            <View style={styles.revokeBox}>
-              <Text style={styles.revokeTitle}>Remove invite?</Text>
-              <Text style={styles.revokeText}>
-                The invite and its code stop working. You can send them a fresh one
-                anytime.
+          {regenInvite && (
+            <View style={styles.confirmBox}>
+              <Text style={styles.confirmTitle}>New code for {regenInvite.partyName}?</Text>
+              <Text style={styles.confirmText}>
+                {`A fresh single-use code is created for this ${regenSide?.noun ?? 'client'} — same escrow, same party. `}
+                <Text style={styles.confirmBold}>The old code and its device link stop working.</Text>
               </Text>
-              <View style={styles.revokeBtns}>
-                <View style={styles.revokePrimary}>
-                  <Pressable onPress={doRevoke} style={styles.removeBtn}>
-                    <Text style={styles.removeText}>Remove</Text>
+              <View style={styles.confirmBtns}>
+                <View style={styles.confirmPrimary}>
+                  <Pressable
+                    onPress={doRegenerate}
+                    disabled={regenBusy}
+                    style={[styles.createBtn, regenBusy && styles.createBtnBusy]}
+                  >
+                    <Text style={styles.createText}>
+                      {regenBusy ? 'Creating…' : 'Create new code'}
+                    </Text>
                   </Pressable>
                 </View>
                 <Pressable
-                  onPress={() => setRevokeId(null)}
+                  onPress={() => setRegenConfirmId(null)}
                   hitSlop={8}
                   style={styles.keepBtn}
+                  disabled={regenBusy}
                 >
-                  <Text style={styles.keepText}>Keep</Text>
+                  <Text style={styles.keepText}>Keep old</Text>
                 </Pressable>
               </View>
             </View>
           )}
 
           <Text style={styles.hint}>
-            Buyer and seller each get their own code for this escrow — one invite per
-            side.
+            {'Buyer and seller each get their '}
+            <Text style={styles.hintBold}>own code</Text>
+            {' for this escrow — one invite per side. '}
+            <Text style={styles.hintBold}>Regenerate</Text>
+            {' covers a reinstall or a new device: the old code was already consumed.'}
           </Text>
         </Card>
       </ScrollView>
@@ -340,7 +404,6 @@ const styles = StyleSheet.create({
   invRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingVertical: 6,
     borderTopWidth: 1,
     borderTopColor: colors.line,
@@ -348,50 +411,83 @@ const styles = StyleSheet.create({
   invCol: {
     flex: 1,
   },
-  invLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.body,
-  },
   invName: {
-    fontSize: 13,
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  linkedStatus: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.sage,
+    marginTop: 3,
+  },
+  invitedStatus: {
+    fontSize: 14,
+    fontWeight: '600',
     color: colors.muted,
     marginTop: 3,
   },
-  invCode: {
-    fontSize: 18,
+  codePill: {
+    fontSize: 17,
     fontWeight: '800',
     letterSpacing: 3,
     color: colors.ink,
-    marginTop: 4,
-  },
-  invActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+    backgroundColor: '#F1ECE1',
+    borderRadius: 12,
+    paddingVertical: 9,
+    paddingHorizontal: 16,
   },
   copyBtn: {
     minHeight: 44,
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingLeft: 14,
+    paddingRight: 4,
   },
   copyText: {
     color: colors.accent,
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '700',
   },
-  xBtn: {
+  regenActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  regenBtn: {
     minHeight: 44,
-    minWidth: 44,
-    alignItems: 'center',
     justifyContent: 'center',
+    paddingLeft: 12,
   },
-  xText: {
+  regenText: {
+    color: colors.accent,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  regenNote: {
+    backgroundColor: '#FBFAF7',
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 10,
+  },
+  regenNoteText: {
+    fontSize: 13,
+    lineHeight: 19.5,
+    color: colors.body,
+  },
+  regenNoteBold: {
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  strike: {
+    textDecorationLine: 'line-through',
+    textDecorationColor: colors.red,
     color: colors.muted,
-    fontSize: 22,
-    fontWeight: '400',
+    fontWeight: '700',
   },
-  revokeBox: {
+  confirmBox: {
     backgroundColor: colors.paper,
     borderWidth: 1,
     borderColor: colors.line,
@@ -399,34 +495,41 @@ const styles = StyleSheet.create({
     padding: 16,
     marginTop: 4,
   },
-  revokeTitle: {
+  confirmTitle: {
     fontSize: 17,
     fontWeight: '700',
     color: colors.ink,
   },
-  revokeText: {
+  confirmText: {
     fontSize: 14,
-    lineHeight: 20,
+    lineHeight: 21,
     color: colors.body,
     marginTop: 6,
   },
-  revokeBtns: {
+  confirmBold: {
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  confirmBtns: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     marginTop: 14,
   },
-  revokePrimary: {
+  confirmPrimary: {
     flex: 1,
   },
-  removeBtn: {
+  createBtn: {
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 52,
-    backgroundColor: colors.red,
+    backgroundColor: colors.accent,
     borderRadius: radius.button,
   },
-  removeText: {
+  createBtnBusy: {
+    opacity: 0.6,
+  },
+  createText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
@@ -442,10 +545,14 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   hint: {
-    fontSize: 13,
-    lineHeight: 19,
+    fontSize: 13.5,
+    lineHeight: 20,
     color: colors.muted,
     marginTop: 12,
+  },
+  hintBold: {
+    fontWeight: '800',
+    color: colors.accent,
   },
   center: {
     flex: 1,

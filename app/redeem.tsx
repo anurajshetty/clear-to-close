@@ -1,342 +1,171 @@
-// Clear to Close — client join screen (name + invite code redeem).
-// Faithful to APPROVED mockup 01 · Escrow tracker v1, device ⑩.
-import React, { useRef, useState } from 'react';
+// Clear to Close — client redeem (approved onboarding/auth ⑲).
+// Name + six-character code, both verified. A successful redeem binds this
+// device's id to the client link; reopening goes straight to the escrow.
+// Every failure gets its specific error + next step, never a dead end.
+import React, { useState } from 'react';
 import {
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import type { RedeemResult } from '../src/lib/types';
-import { Field, Kicker, PrimaryButton } from '../src/components/ui';
-import { colors, radius } from '../src/theme';
+import { BackChevron, Field, Kicker, PrimaryButton, TextLink } from '../src/components/ui';
+import { colors } from '../src/theme';
 
-type Who = 'realtor' | 'client';
-type RedeemError = 'invalid' | 'name_mismatch' | 'revoked' | 'already_used';
+type RedeemError = Exclude<RedeemResult, { ok: true }>['error'];
 
-function errorCopy(err: RedeemError): { main: string; sub?: string } {
-  switch (err) {
-    case 'revoked':
-      return {
-        main: 'This invite was revoked — ask your realtor for a fresh one.',
-      };
-    case 'already_used':
-      return {
-        main: 'This code was already used — ask your realtor for a fresh one.',
-      };
-    default:
-      return {
-        main: "That code didn't work — check it and try again.",
-        sub: 'Check the name and code — or ask your realtor for a fresh one.',
-      };
-  }
-}
+const ERROR_COPY: Record<RedeemError, string> = {
+  invalid: "This code doesn't look right — check it and try again.",
+  already_used: 'This code was already used — ask your realtor for a new code.',
+  revoked: 'This code is no longer active — ask your realtor for the new code.',
+  name_mismatch: "That name doesn't match this invite — check the spelling and try again.",
+  network: 'Something went wrong on our end — check your connection and try again.',
+  device_has_link:
+    'This device is already linked to another escrow — ask your realtor to release it, then try again.',
+};
 
 export default function Redeem() {
   const router = useRouter();
-  const [who, setWho] = useState<Who>('client');
-  const [name, setName] = useState('');
+  // The dead-link recovery flow (㉓) re-opens redeem with the name pre-filled.
+  const params = useLocalSearchParams<{ name?: string }>();
+  const prefill = Array.isArray(params.name) ? params.name[0] : params.name;
+  const [name, setName] = useState(prefill ?? '');
   const [code, setCode] = useState('');
   const [error, setError] = useState<RedeemError | null>(null);
-  const [verifying, setVerifying] = useState(false);
-  const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [linked, setLinked] = useState<{ escrowId: string; role: 'buyer' | 'seller' } | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const showToast = (msg: string) => {
-    setToastMsg(msg);
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToastMsg(null), 2600);
-  };
+  const canSubmit = name.trim().length > 0 && code.trim().length > 0 && !busy;
 
-  const ready = name.trim().length > 0 && code.length === 6;
-
-  const verify = async () => {
-    if (verifying || !ready) return;
-    setVerifying(true);
+  const onRedeem = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
     setError(null);
     try {
-      const res: RedeemResult = await store.redeemInvite(code, name.trim());
-      if (res.ok) {
-        showToast("You're connected.");
-        const target =
-          res.role === 'buyer'
-            ? `/client/buyer/${res.escrowId}`
-            : `/client/seller/${res.escrowId}`;
-        setTimeout(() => {
-          router.replace(target);
-        }, 900);
-      } else {
+      const deviceId = await auth.getDeviceId();
+      const res = await store.redeemInvite(code, name, deviceId);
+      if (!res.ok) {
         setError(res.error);
+        return;
       }
-    } catch (err) {
-      console.warn('redeemInvite failed', err);
-      setError('invalid');
+      // Bind this device: persist the client link (the access key), remember
+      // the client role, and go straight to the escrow.
+      await auth.setClientLink({
+        linkId: res.linkId,
+        escrowId: res.escrowId,
+        role: res.role,
+        partyName: res.partyName,
+        deviceId,
+      });
+      await auth.setRole('client');
+      setLinked({ escrowId: res.escrowId, role: res.role });
     } finally {
-      setVerifying(false);
+      setBusy(false);
     }
   };
 
-  const errCopy = error ? errorCopy(error) : null;
+  const onStartOver = async () => {
+    await auth.clearClientLink();
+    await auth.clearRole();
+    router.replace('/role');
+  };
+
+  if (linked) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Kicker>Client access</Kicker>
+          <Text style={styles.h1}>You&apos;re linked up</Text>
+          <Text style={styles.sub}>This device is now linked to your escrow</Text>
+          <View style={styles.cta}>
+            <PrimaryButton
+              title="View my escrow"
+              onPress={() => router.replace(`/client/${linked.role}/${linked.escrowId}`)}
+            />
+          </View>
+          <TextLink title="Not your escrow? Start over" onPress={onStartOver} />
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <View style={styles.screen}>
-      <ScrollView
-        style={styles.list}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.head}>
-          <Kicker>Clear to Close</Kicker>
-          <Text style={styles.h2}>Join your escrow</Text>
-          <Text style={styles.sub}>
-            Your realtor invited you to follow along. No account, no password — just
-            the name and code from your invite.
-          </Text>
+    <SafeAreaView style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <BackChevron label="Role" onPress={() => router.push('/role')} />
+        <Kicker>Client access</Kicker>
+        <Text style={styles.h1}>Join your escrow</Text>
+        <Text style={styles.sub}>
+          Enter the name and invite code your realtor shared with you.
+        </Text>
+
+        <View style={styles.form}>
+          <Field
+            label="Your name"
+            value={name}
+            onChangeText={(t) => { setName(t); setError(null); }}
+            placeholder="e.g. Jordan Lee"
+            autoCapitalize="words"
+          />
+          <Field
+            label="Invite code"
+            value={code}
+            onChangeText={(t) => { setCode(t); setError(null); }}
+            placeholder="6-character code"
+            autoCapitalize="characters"
+            autoCorrect={false}
+          />
+          {error ? <Text style={styles.inlineError}>{ERROR_COPY[error]}</Text> : null}
         </View>
 
-        <Text style={styles.fieldLabel}>Who’s joining?</Text>
-        <View style={styles.roleRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: who === 'realtor' }}
-            onPress={() => setWho('realtor')}
-            style={[
-              styles.pick,
-              who === 'realtor' && styles.pickSelected,
-            ]}
-          >
-            <Text
-              style={[
-                styles.pickTitle,
-                who === 'realtor' && styles.pickTitleSelected,
-              ]}
-            >
-              I’m a realtor
-            </Text>
-            <Text style={styles.pickSub}>My escrows</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: who === 'client' }}
-            onPress={() => setWho('client')}
-            style={[styles.pick, who === 'client' && styles.pickSelected]}
-          >
-            <Text
-              style={[
-                styles.pickTitle,
-                who === 'client' && styles.pickTitleSelected,
-              ]}
-            >
-              I’m a client
-            </Text>
-            <Text style={styles.pickSub}>Join with a code</Text>
-          </Pressable>
+        <View style={styles.cta}>
+          <PrimaryButton
+            title={busy ? 'Checking…' : 'Continue'}
+            onPress={onRedeem}
+            disabled={!canSubmit}
+          />
         </View>
 
-        {who === 'realtor' ? (
-          <View>
-            <Text style={styles.realtorNote}>
-              The realtor app opens your escrow list. If you’re here with an
-              invite code, choose “I’m a client”.
-            </Text>
-            <PrimaryButton title="Open my escrows" onPress={() => router.replace('/')} />
-          </View>
-        ) : (
-          <View>
-            <Field
-              label="Your name"
-              value={name}
-              onChangeText={(v) => {
-                setName(v);
-                setError(null);
-              }}
-              placeholder="e.g. Priya Nair"
-            />
-            <Text style={styles.hint}>
-              Use the <Text style={styles.hintBold}>same name</Text> your realtor
-              entered when creating this invite — it has to match exactly.
-            </Text>
-
-            <Text style={styles.fieldLabel}>Invite code</Text>
-            <TextInput
-              value={code}
-              onChangeText={(v) => {
-                setCode(
-                  v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6),
-                );
-                setError(null);
-              }}
-              placeholder="••••••"
-              placeholderTextColor={colors.muted}
-              autoCapitalize="characters"
-              autoCorrect={false}
-              maxLength={6}
-              style={[styles.codeInput, error && styles.codeInputError]}
-            />
-
-            {errCopy && (
-              <View style={styles.errWrap}>
-                <Text style={styles.errMain}>{errCopy.main}</Text>
-                {errCopy.sub && (
-                  <Text style={styles.errSub}>{errCopy.sub}</Text>
-                )}
-              </View>
-            )}
-
-            <View style={styles.verifyWrap}>
-              <PrimaryButton
-                title={verifying ? 'Checking…' : 'Verify'}
-                onPress={verify}
-                disabled={!ready || verifying}
-              />
-            </View>
-          </View>
-        )}
+        <Pressable
+          accessibilityRole="button"
+          onPress={onStartOver}
+          style={styles.startOver}
+        >
+          <Text style={styles.startOverText}>Not your escrow? </Text>
+          <Text style={styles.link}>Start over</Text>
+        </Pressable>
       </ScrollView>
-
-      {toastMsg && (
-        <View style={styles.toast} pointerEvents="none">
-          <Text style={styles.toastText}>{toastMsg}</Text>
-        </View>
-      )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.paper,
-  },
-  list: {
-    flex: 1,
-  },
-  content: {
-    padding: 18,
-    paddingTop: 20,
-    paddingBottom: 40,
-  },
-  head: {
-    marginBottom: 20,
-  },
-  h2: {
-    fontSize: 26,
-    fontWeight: '700',
+  screen: { flex: 1, backgroundColor: colors.paper },
+  content: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 40 },
+  h1: {
+    fontSize: 28,
+    fontWeight: '800',
     color: colors.ink,
-    letterSpacing: -0.26,
-    marginTop: 8,
-  },
-  sub: {
-    fontSize: 14.5,
-    lineHeight: 22.5,
-    color: colors.body,
+    letterSpacing: -0.28,
     marginTop: 6,
   },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.body,
-    marginTop: 20,
-    marginBottom: 8,
-  },
-  roleRow: {
+  sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
+  form: { marginTop: 8 },
+  inlineError: { fontSize: 13, fontWeight: '600', color: colors.red, marginTop: 8 },
+  cta: { marginTop: 24 },
+  startOver: {
     flexDirection: 'row',
-    gap: 10,
-  },
-  pick: {
-    flex: 1,
-    borderWidth: 1.5,
-    borderColor: colors.line,
-    borderRadius: 14,
-    backgroundColor: colors.card,
-    paddingVertical: 14,
-    paddingHorizontal: 12,
-    alignItems: 'center',
-  },
-  pickSelected: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
-  },
-  pickTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.body,
-  },
-  pickTitleSelected: {
-    color: colors.ink,
-  },
-  pickSub: {
-    fontSize: 12.5,
-    color: colors.muted,
-    marginTop: 4,
-  },
-  realtorNote: {
-    fontSize: 14,
-    lineHeight: 21,
-    color: colors.body,
-    marginBottom: 16,
-  },
-  hint: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.muted,
-    marginTop: 8,
-  },
-  hintBold: {
-    fontWeight: '700',
-    color: colors.body,
-  },
-  codeInput: {
-    borderWidth: 1.5,
-    borderColor: colors.line,
-    borderRadius: radius.input,
-    paddingVertical: 13,
-    paddingHorizontal: 14,
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 4,
-    color: colors.ink,
-    backgroundColor: colors.inputBg,
-  },
-  codeInputError: {
-    borderColor: colors.red,
-  },
-  errWrap: {
-    marginTop: 10,
-  },
-  errMain: {
-    fontSize: 13.5,
-    lineHeight: 20,
-    color: colors.red,
-  },
-  errSub: {
-    fontSize: 12.5,
-    lineHeight: 19,
-    color: colors.muted,
-    marginTop: 2,
-  },
-  verifyWrap: {
-    marginTop: 16,
-  },
-  toast: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    bottom: 40,
-    backgroundColor: colors.ink,
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 20,
+    paddingVertical: 8,
   },
-  toastText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+  startOverText: { fontSize: 15, color: colors.body },
+  link: { fontSize: 15, fontWeight: '700', color: colors.accent },
 });

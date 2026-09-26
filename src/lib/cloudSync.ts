@@ -1,23 +1,26 @@
 // Clear to Close — cloud sync layer (Supabase).
 //
 // Local AsyncStorage stays the offline source of truth for the UI. When the
-// Supabase env vars are present AND the boot ping succeeds, realtor mutations
-// are pushed to the cloud (fire-and-forget, with a persisted outbox for
-// retries) and linked client views are read through the get_client_view RPC.
-// When the ping fails (offline, anonymous auth disabled, RLS blocking), the
-// app keeps working exactly as the local-only v1 — sync stays dormant.
+// Supabase env vars are present AND the boot ping succeeds under a realtor
+// session, realtor mutations are pushed to the cloud (fire-and-forget, with a
+// persisted outbox for retries) and linked client views are read through the
+// get_client_view RPC. When the ping fails (offline, no realtor session, RLS
+// blocking), the app keeps working exactly as the local-only v1 — sync stays
+// dormant.
 //
-// Identity: the realtor authenticates with Supabase anonymous sign-in, which
-// yields a stable per-device auth.uid() that the RLS owner policies expect.
-// Client (buyer/seller) access needs no session: redeem_invite and
-// get_client_view are SECURITY DEFINER RPCs granted to anon.
+// Identity: the realtor signs in with email/password (onboarding); sync
+// activates under that identity from the start. Every row is stamped with
+// the live session's auth.uid(). Anonymous auth is DISABLED and never
+// called. Client (buyer/seller) access needs no session: redeem_invite,
+// regenerate_invite, and get_client_view are SECURITY DEFINER RPCs granted
+// to anon.
 //
 // The supabase client is typed as `any` (see src/lib/supabase.ts): it is
 // require()d lazily so this module imports cleanly in Node test runs, and
 // unit tests inject a mock client.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Cloud = any;
+export type Cloud = any;
 
 import type {
   ClientRole,
@@ -29,7 +32,8 @@ import type {
   StepT,
 } from './types';
 import type { KV } from './store';
-import { getSupabase, isSupabaseConfigured } from './supabase';
+import { isSupabaseConfigured } from './supabase';
+import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
 
 const K_OUTBOX = 'ctc:outbox';
@@ -55,9 +59,11 @@ export interface CloudViewResult {
 }
 
 interface OutboxOp {
-  op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke';
+  op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke' | 'revokeClientLink';
   escrowId?: string;
   inviteId?: string;
+  linkId?: string;
+  revokedAt?: string;
   attempts: number;
 }
 
@@ -105,6 +111,7 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
     deals_closed: p?.dealsClosed ?? null,
     areas_served: p?.areasServed ?? null,
     phone: p?.phone ?? null,
+    dre_license: p?.dreLicense ?? null,
   };
 }
 
@@ -158,7 +165,7 @@ export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } 
     } as RpcRedeemOk;
   }
   const err = (d?.error as string) ?? 'invalid';
-  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used'] as const;
+  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network', 'device_has_link'] as const;
   return { ok: false, error: valid.includes(err as (typeof valid)[number]) ? (err as (typeof valid)[number]) : 'invalid' };
 }
 
@@ -195,6 +202,7 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
         dealsClosed: String(p.deals_closed ?? ''),
         areasServed: String(p.areas_served ?? ''),
         phone: String(p.phone ?? ''),
+        dreLicense: String(p.dre_license ?? ''),
       }
     : null;
   const closeDate = String(e.close_date);
@@ -214,8 +222,6 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
 
 // ------------------------------------------------------------------ session --
 
-let cachedUserId: string | undefined;
-
 function pingError(e: unknown): string {
   if (!e) return 'unknown error';
   if (typeof e === 'string') return e;
@@ -223,21 +229,17 @@ function pingError(e: unknown): string {
   return m ? m.slice(0, 160) : JSON.stringify(e).slice(0, 160);
 }
 
-/** Resolve the realtor's cloud identity (anonymous sign-in), or null. */
+/**
+ * Resolve the cloud identity: the persisted session's auth.uid(), or null.
+ * Sync runs ONLY under the realtor's email/password session — anonymous
+ * auth is disabled and is never called. Never throws.
+ */
 export async function ensureCloudUser(client: Cloud): Promise<string | null> {
-  if (cachedUserId) return cachedUserId;
+  if (!client) return null;
   try {
     const { data: sessData } = await client.auth.getSession();
     const existing = sessData?.session?.user?.id as string | undefined;
-    if (existing) {
-      cachedUserId = existing;
-      return existing;
-    }
-    const { data, error } = await client.auth.signInAnonymously();
-    if (error) return null;
-    const id = data?.user?.id as string | undefined;
-    if (id) cachedUserId = id;
-    return id ?? null;
+    return existing ?? null;
   } catch {
     return null;
   }
@@ -253,7 +255,7 @@ export async function pingCloud(client: Cloud): Promise<PingResult> {
   }
   const userId = await ensureCloudUser(client);
   if (!userId) {
-    return { ran: true, ok: false, error: 'anonymous sign-in failed (is the anonymous provider enabled?)' };
+    return { ran: true, ok: false, error: 'no realtor session — sign in to enable sync' };
   }
   try {
     // Read: own profile rows (RLS owner policy).
@@ -351,10 +353,61 @@ export async function redeemViaCloud(
   client: Cloud,
   code: string,
   name: string,
+  deviceId: string | null,
 ): Promise<RedeemResult & { linkId?: string }> {
-  const { data, error } = await client.rpc('redeem_invite', { p_code: code, p_name: name });
-  if (error) return { ok: false, error: 'invalid' };
-  return mapRedeemRpc(data);
+  try {
+    const { data, error } = await client.rpc('redeem_invite', {
+      p_code: code,
+      p_name: name,
+      p_device_id: deviceId,
+    });
+    // A transport/RPC-level error (network down, timeout, missing function)
+    // is NOT a bad code — surface it as retryable 'network' so the client
+    // never sees "invalid code" for a server problem. Bad codes arrive as
+    // data {ok:false}, mapped below. One exception: the 0002 one-live-link-
+    // per-device index (23505) means this device already holds a different
+    // escrow's link — a permanent, connection-independent state, so it gets
+    // its own non-retryable error instead of the misleading 'network'.
+    if (error) return { ok: false, error: isUniqueViolation(error) ? 'device_has_link' : 'network' };
+    return mapRedeemRpc(data);
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+}
+
+/**
+ * Atomically regenerate an invite code (share-sheet "Regenerate code").
+ * The RPC kills the old code + old device link and issues the replacement
+ * in one transaction. Throws on failure.
+ */
+export async function regenerateInviteNow(
+  client: Cloud,
+  inviteId: string,
+): Promise<{ newCode: string; oldCode: string; newInviteId: string }> {
+  const { data, error } = await client.rpc('regenerate_invite', { p_invite_id: inviteId });
+  if (error) throw error;
+  const d = data as Record<string, unknown> | null;
+  if (!d || d.ok !== true) {
+    throw new Error(String((d as Record<string, unknown> | null)?.error ?? 'regenerate failed'));
+  }
+  return {
+    newCode: String(d.new_code),
+    oldCode: String(d.old_code),
+    newInviteId: String(d.new_invite_id),
+  };
+}
+
+/** Push a client-link revocation (part of regenerate convergence). */
+export async function pushLinkRevokeNow(
+  client: Cloud,
+  linkId: string,
+  revokedAt: string,
+): Promise<void> {
+  const { error } = await client
+    .from('client_links')
+    .update({ revoked_at: revokedAt })
+    .eq('id', linkId);
+  if (error) throw error;
 }
 
 export async function fetchCloudView(client: Cloud, linkId: string): Promise<CloudViewResult> {
@@ -389,8 +442,9 @@ async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
 
 export async function enqueueOutbox(kv: KV, op: OutboxOp): Promise<void> {
   const ops = await readOutbox(kv);
-  // Coalesce: one pending op per (op, escrowId, inviteId).
-  const key = (o: OutboxOp) => `${o.op}:${o.escrowId ?? ''}:${o.inviteId ?? ''}`;
+  // Coalesce: one pending op per (op, escrowId, inviteId, linkId).
+  const key = (o: OutboxOp) =>
+    `${o.op}:${o.escrowId ?? ''}:${o.inviteId ?? ''}:${o.linkId ?? ''}`;
   const next = ops.filter((o) => key(o) !== key(op));
   next.push({ ...op, attempts: 0 });
   await writeOutbox(kv, next);
@@ -434,6 +488,8 @@ export async function drainOutbox(
       } else if (op.op === 'pushRevoke' && op.inviteId && load.getInvite) {
         const inv = await load.getInvite(op.inviteId);
         if (inv?.revokedAt) await pushRevokeNow(client, inv.id, inv.revokedAt);
+      } else if (op.op === 'revokeClientLink' && op.linkId && op.revokedAt) {
+        await pushLinkRevokeNow(client, op.linkId, op.revokedAt);
       }
       drained++;
     } catch {
@@ -447,9 +503,9 @@ export async function drainOutbox(
 
 // ------------------------------------------------------------------ client --
 
-/** Resolve the lazily-created supabase client (null when not configured). */
+/** Resolve the lazily-created platform-aware supabase client (null when not configured). */
 export function cloudClient(): Cloud | null {
-  return getSupabase();
+  return getAuthClient();
 }
 
 export function cloudConfigured(): boolean {

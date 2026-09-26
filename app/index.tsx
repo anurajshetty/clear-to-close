@@ -1,12 +1,15 @@
 import React, { useCallback, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
-import type { ClientRole, Escrow, StepT } from '../src/lib/types';
+import { shouldShowProfileNudge } from '../src/lib/bootRoute';
+import type { ClientRole, Escrow, RealtorProfile, StepT } from '../src/lib/types';
 import { DealCard } from '../src/components/DealCard';
 import { daysToClose } from '../src/lib/dates';
 import { formatShortDate } from '../src/components/TimeTrackerCard';
 import { Kicker, PrimaryButton } from '../src/components/ui';
+import { initialsOf } from '../src/components/RealtorCard';
 import NewEscrowSheet from '../src/components/NewEscrowSheet';
 import { colors } from '../src/theme';
 
@@ -99,6 +102,8 @@ function chipBits(e: Escrow): ChipBits {
 export default function DealList() {
   const router = useRouter();
   const [escrows, setEscrows] = useState<Escrow[]>([]);
+  const [profile, setProfile] = useState<RealtorProfile | null>(null);
+  const [profileIncomplete, setProfileIncomplete] = useState(false);
   const [sheetVisible, setSheetVisible] = useState(false);
 
   const load = useCallback(async () => {
@@ -106,6 +111,19 @@ export default function DealList() {
       setEscrows(await store.listEscrows());
     } catch (err) {
       console.warn('listEscrows failed', err);
+    }
+    try {
+      const [p, skipped] = await Promise.all([
+        store.getProfile(),
+        auth.getProfileSkipped(),
+      ]);
+      setProfile(p);
+      // "Complete your profile" shows only when profile creation was
+      // explicitly skipped during sign-up (approved mockup 24) — never
+      // merely because no local profile row exists yet.
+      setProfileIncomplete(shouldShowProfileNudge({ skipped }));
+    } catch {
+      // Profile is decorative here; the list still renders.
     }
   }, []);
 
@@ -151,21 +169,41 @@ export default function DealList() {
           <Text style={styles.h2}>Escrows</Text>
         </View>
         <Pressable
-          onPress={() => router.push('/profile-setup')}
+          onPress={() => router.push('/profile-update')}
           hitSlop={8}
-          style={styles.profileBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Your profile"
+          style={styles.avatarBtn}
         >
-          <Text style={styles.profileText}>Profile</Text>
+          {profile?.photoUri ? (
+            <Image source={{ uri: profile.photoUri }} style={styles.avatar} />
+          ) : (
+            <View style={styles.avatar}>
+              <Text style={styles.avatarInitials}>{initialsOf(profile?.name ?? '')}</Text>
+            </View>
+          )}
         </Pressable>
       </View>
       <Text style={styles.count}>{`${open.length} open · ${closed.length} closed`}</Text>
 
       {escrows.length === 0 ? (
         <View style={styles.empty}>
+          <Text style={styles.emptyKicker}>Get started</Text>
+          <Text style={styles.emptyTitle}>No escrows yet</Text>
           <Text style={styles.emptyText}>
-            No escrows yet — open your first one to start tracking.
+            Open your first escrow to start tracking it — your buyer or seller
+            can follow along from their phone.
           </Text>
           <PrimaryButton title="+ New escrow" onPress={() => setSheetVisible(true)} />
+          {profileIncomplete ? (
+            <Pressable
+              onPress={() => router.push('/profile-update')}
+              hitSlop={8}
+              style={styles.completeProfileWrap}
+            >
+              <Text style={styles.completeProfile}>Complete your profile →</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : (
         <>
@@ -190,14 +228,6 @@ export default function DealList() {
           router.push(`/escrow/${id}`);
         }}
       />
-
-      <Pressable
-        onPress={() => router.push('/redeem')}
-        hitSlop={8}
-        style={styles.redeemLinkWrap}
-      >
-        <Text style={styles.redeemLink}>Have an invite code? Join your escrow →</Text>
-      </Pressable>
     </ScrollView>
   );
 }
@@ -224,15 +254,22 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginTop: 2,
   },
-  profileBtn: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingLeft: 12,
+  avatarBtn: {
+    width: 48,
+    height: 48,
   },
-  profileText: {
-    color: colors.accent,
-    fontSize: 15,
-    fontWeight: '600',
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitials: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '800',
   },
   count: {
     fontSize: 13,
@@ -255,27 +292,43 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   empty: {
-    marginTop: 64,
+    marginTop: 56,
     alignItems: 'stretch',
     paddingHorizontal: 8,
+  },
+  emptyKicker: {
+    fontSize: 12,
+    letterSpacing: 1.7,
+    textTransform: 'uppercase',
+    color: colors.accent,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.ink,
+    textAlign: 'center',
+    marginTop: 6,
   },
   emptyText: {
     fontSize: 14.5,
     lineHeight: 21,
-    color: colors.muted,
+    color: colors.body,
     textAlign: 'center',
+    marginTop: 10,
     marginBottom: 20,
   },
-  redeemLinkWrap: {
-    marginTop: 28,
+  completeProfileWrap: {
+    marginTop: 18,
     alignSelf: 'center',
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
-  redeemLink: {
-    fontSize: 14,
+  completeProfile: {
+    fontSize: 15,
     color: colors.accent,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });

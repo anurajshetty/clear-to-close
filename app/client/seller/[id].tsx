@@ -7,7 +7,8 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../../src/lib/store-instance';
 import type { ClientView, RealtorProfile } from '../../../src/lib/types';
-import { Card, Kicker } from '../../../src/components/ui';
+import { Card, Kicker, SecondaryButton } from '../../../src/components/ui';
+import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import { ProgressRing } from '../../../src/components/ProgressRing';
 import { RealtorCard } from '../../../src/components/RealtorCard';
 import {
@@ -24,6 +25,9 @@ export default function SellerView() {
   const id = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : '';
   const [view, setView] = useState<ClientView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
+  // The device link is revalidated on every focus, BEFORE the escrow
+  // renders — a revoked/superseded link routes to /link-dead.
+  const { gateState, retry } = useClientLinkGate(id, 'seller');
 
   useFocusEffect(
     useCallback(() => {
@@ -60,7 +64,16 @@ export default function SellerView() {
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      {!view ? (
+      {gateState === 'checking' ? (
+        <Text style={styles.loading}>Loading…</Text>
+      ) : gateState === 'error' ? (
+        <View style={styles.gateError}>
+          <Text style={styles.gateErrorText}>
+            Couldn&apos;t verify your invite link — check your connection and try again.
+          </Text>
+          <SecondaryButton title="Try again" onPress={retry} />
+        </View>
+      ) : !view ? (
         <Text style={styles.loading}>Loading…</Text>
       ) : (
         <>
@@ -93,7 +106,7 @@ export default function SellerView() {
             <RealtorCard
               name={profile.name}
               photoUri={profile.photoUri}
-              onPress={() => router.push('/client/profile')}
+              onPress={() => router.push({ pathname: '/client/profile', params: { escrowId: id } })}
             />
           )}
 
@@ -138,6 +151,18 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: 'center',
     marginTop: 40,
+  },
+  gateError: {
+    marginTop: 48,
+    alignItems: 'stretch',
+    paddingHorizontal: 8,
+  },
+  gateErrorText: {
+    fontSize: 14.5,
+    lineHeight: 21,
+    color: colors.body,
+    textAlign: 'center',
+    marginBottom: 18,
   },
   hero: {
     marginTop: 14,

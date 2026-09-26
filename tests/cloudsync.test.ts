@@ -3,7 +3,9 @@
 //  - row mappers (snake_case, position/completed_at, no created_at overwrite)
 //  - redeem_invite / get_client_view RPC payload mapping
 //  - invite-code regenerate-on-collision (DB 23505 -> new code -> retry)
-//  - boot ping: auth + read/write round-trip, graceful failure paths
+//  - boot ping: realtor session + read/write round-trip, graceful failure paths
+//  - anonymous auth is DISABLED: signInAnonymously is never called, by
+//    ensureCloudUser or anything else (the mock throws if it is invoked)
 //  - outbox: failed pushes queue and later drain
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
@@ -17,6 +19,8 @@ import {
   pingCloud,
   pushEscrowNow,
   pushInviteNow,
+  redeemViaCloud,
+  regenerateInviteNow,
   toEscrowRow,
   toProfileRow,
   toStepRows,
@@ -50,7 +54,11 @@ function makeClient(script: Record<string, { data?: unknown; error?: unknown }[]
     calls,
     auth: {
       getSession: async () => next('auth.getSession'),
-      signInAnonymously: async () => next('auth.signInAnonymously'),
+      // Anonymous auth stays disabled: any call is a test failure.
+      signInAnonymously: async () => {
+        calls.push('auth.signInAnonymously');
+        throw new Error('signInAnonymously must never be called');
+      },
     },
     from: (table: string) => builder(`from:${table}`),
     rpc: async (name: string) => next(`rpc:${name}`),
@@ -97,8 +105,10 @@ async function main(): Promise<void> {
   const prow = toProfileRow(UID, {
     name: 'Rita', photoUri: 'file://x.jpg', about: 'Hi',
     yearsExperience: '5', dealsClosed: '20', areasServed: 'SCV', phone: '555',
+    dreLicense: '01998877',
   });
   assert(prow.user_id === UID && prow.photo_url === 'file://x.jpg', 'profile row maps photoUri -> photo_url');
+  assert(prow.dre_license === '01998877', 'profile row maps dreLicense -> dre_license');
   assert(toProfileRow(UID, null).name === null, 'null profile maps to nulls');
 
   // --- RPC mapping --------------------------------------------------------
@@ -108,6 +118,53 @@ async function main(): Promise<void> {
   assert(rerr.ok === false && rerr.error === 'already_used', 'redeem already_used maps');
   const rbogus = mapRedeemRpc({ ok: false, error: 'zzz' });
   assert(rbogus.ok === false && rbogus.error === 'invalid', 'unknown redeem error -> invalid');
+  const rnet = mapRedeemRpc({ ok: false, error: 'network' });
+  assert(rnet.ok === false && rnet.error === 'network', 'redeem network error passes through');
+
+  // Transport failures during cloud redeem surface as retryable 'network',
+  // never 'invalid' (a missing migration or a dropped connection is not a
+  // bad code). Bad codes still arrive as data {ok:false}.
+  const rpcGone = { rpc: async () => ({ data: null, error: { message: 'PGRST202: function not found' } }) };
+  const viaGone = await redeemViaCloud(rpcGone as never, 'ABCDEF', 'Priya Nair', 'dev-1');
+  assert(viaGone.ok === false && viaGone.error === 'network', 'RPC error (e.g. missing migration) -> network');
+  const rpcThrow = { rpc: async () => { throw new TypeError('fetch failed'); } };
+  const viaThrow = await redeemViaCloud(rpcThrow as never, 'ABCDEF', 'Priya Nair', 'dev-1');
+  assert(viaThrow.ok === false && viaThrow.error === 'network', 'RPC throw (network down) -> network');
+  const rpcInvalid = { rpc: async () => ({ data: { ok: false, error: 'invalid' }, error: null }) };
+  const viaInvalid = await redeemViaCloud(rpcInvalid as never, 'ZZZZZZ', 'Nobody', 'dev-1');
+  assert(viaInvalid.ok === false && viaInvalid.error === 'invalid', 'bad code via data -> invalid');
+  // The 0002 one-live-link-per-device index: a second live link on the same
+  // device_id raises 23505 — permanent and connection-independent, so it
+  // surfaces as 'device_has_link', never the misleading retryable 'network'.
+  const rpcDup = { rpc: async () => ({ data: null, error: { code: '23505', message: 'duplicate key' } }) };
+  const viaDup = await redeemViaCloud(rpcDup as never, 'ABCDEF', 'Priya Nair', 'dev-1');
+  assert(viaDup.ok === false && viaDup.error === 'device_has_link', 'unique violation (second live link) -> device_has_link');
+
+  // regenerate_invite RPC mapping: success returns the new/old codes and the
+  // server-issued invite id; a data-level failure throws (the synced store
+  // falls back to the local + outbox path).
+  const rpcRegen = {
+    rpc: async () => ({ data: { ok: true, new_code: 'QQQQQQ', old_code: 'ABCDEF', new_invite_id: 'inv-new' }, error: null }),
+  };
+  const regen = await regenerateInviteNow(rpcRegen as never, 'inv-old');
+  assert(regen.newCode === 'QQQQQQ' && regen.oldCode === 'ABCDEF' && regen.newInviteId === 'inv-new',
+    'regenerate_invite ok -> new/old code + server invite id');
+  const rpcRegenFail = { rpc: async () => ({ data: { ok: false, error: 'forbidden' }, error: null }) };
+  let regenThrew = false;
+  try {
+    await regenerateInviteNow(rpcRegenFail as never, 'inv-old');
+  } catch {
+    regenThrew = true;
+  }
+  assert(regenThrew, 'regenerate_invite data failure -> throws');
+  const rpcRegenErr = { rpc: async () => ({ data: null, error: { message: 'boom' } }) };
+  let regenErrThrew = false;
+  try {
+    await regenerateInviteNow(rpcRegenErr as never, 'inv-old');
+  } catch {
+    regenErrThrew = true;
+  }
+  assert(regenErrThrew, 'regenerate_invite rpc error -> throws');
 
   const cv = mapClientViewRpc({
     ok: true,
@@ -181,12 +238,12 @@ async function main(): Promise<void> {
   process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
   process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'fake-key';
 
-  const cAuthFail = makeClient({
+  const cNoSession = makeClient({
     'auth.getSession': [{ data: { session: null } }],
-    'auth.signInAnonymously': [{ data: { user: null, session: null }, error: { message: 'anonymous_provider_disabled' } }],
   });
-  const p1 = await pingCloud(cAuthFail);
-  assert(p1.ran && !p1.ok && (p1.error ?? '').length > 0, 'ping reports anonymous sign-in failure cleanly');
+  const p1 = await pingCloud(cNoSession);
+  assert(p1.ran && !p1.ok && (p1.error ?? '').includes('no realtor session'), 'ping without a session -> not ok, prompts sign-in');
+  assert(!cNoSession.calls.includes('auth.signInAnonymously'), 'ping never signs in anonymously');
 
   const cReadFail = makeClient({
     'auth.getSession': [{ data: { session: { user: { id: UID } } } }],
@@ -203,19 +260,25 @@ async function main(): Promise<void> {
   assert(p3.ran && !p3.ok && (p3.error ?? '').includes('write probe'), 'ping reports RLS write failure');
 
   const cOk = makeClient({
-    'auth.getSession': [{ data: { session: null } }],
-    'auth.signInAnonymously': [{ data: { user: { id: UID }, session: { access_token: 't' } } }],
+    'auth.getSession': [{ data: { session: { user: { id: UID } } } }],
     'from:realtor_profiles': [{ data: [] }, { data: null }, { data: [{ user_id: UID }] }],
   });
   const p4 = await pingCloud(cOk);
-  assert(p4.ran && p4.ok && p4.userId === UID, 'ping happy path: auth + read + write round-trip');
+  assert(p4.ran && p4.ok && p4.userId === UID, 'ping happy path: session + read + write round-trip');
+  assert(!cOk.calls.includes('auth.signInAnonymously'), 'ping happy path never signs in anonymously');
 
-  // ensureCloudUser caches the session user.
+  // ensureCloudUser resolves the persisted session's user, or null.
   const cCache = makeClient({
     'auth.getSession': [{ data: { session: { user: { id: UID } } } }],
   });
   const u1 = await ensureCloudUser(cCache);
   assert(u1 === UID, 'ensureCloudUser resolves existing session');
+  const cNone = makeClient({
+    'auth.getSession': [{ data: { session: null } }],
+  });
+  const u2 = await ensureCloudUser(cNone);
+  assert(u2 === null, 'ensureCloudUser returns null without a session — no anonymous fallback');
+  assert(!cNone.calls.includes('auth.signInAnonymously'), 'ensureCloudUser never signs in anonymously');
 
   // --- outbox ----------------------------------------------------------------
   const kv = memoryKV();
