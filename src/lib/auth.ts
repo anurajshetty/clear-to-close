@@ -51,6 +51,7 @@ export function isNetworkError(err: unknown): boolean {
 export type SignUpErrorCode =
   | 'duplicate_email'
   | 'weak_password'
+  | 'rate_limited'
   | 'network'
   | 'unconfigured'
   | 'email_confirmation_required'
@@ -59,8 +60,15 @@ export type SignUpErrorCode =
 /** Map a Supabase signUp failure onto the app's sign-up error codes. */
 export function mapSignUpError(err: unknown): SignUpErrorCode {
   if (isNetworkError(err)) return 'network';
-  const msg = String((err as { message?: string } | null)?.message ?? '');
+  const e = (err ?? {}) as { message?: string; status?: number; code?: string };
+  const msg = String(e.message ?? '');
   if (/already registered|already exists|duplicate/i.test(msg)) return 'duplicate_email';
+  // HTTP 429 from GoTrue ("over_email_send_rate_limit"): the project's email
+  // quota is exhausted. The account was NOT created — retryable after a wait.
+  // HTTP 429 from GoTrue ("over_email_send_rate_limit"): the project's email
+  // quota is exhausted. The account was NOT created — retryable after a wait.
+  if (e.status === 429 || e.code === 'over_email_send_rate_limit' || /rate.?limit/i.test(msg))
+    return 'rate_limited';
   if (/password/i.test(msg)) return 'weak_password';
   return 'unknown';
 }
@@ -89,7 +97,7 @@ export interface AuthClientLike {
       email: string;
       password: string;
       options?: { data?: Record<string, string> };
-    }): Promise<{ data: { user?: { id?: string } | null; session?: unknown } ; error?: { message?: string } | null }>;
+    }): Promise<{ data: { user?: { id?: string } | null; session?: unknown } ; error?: { message?: string; status?: number; code?: string } | null }>;
     signInWithPassword(args: {
       email: string;
       password: string;

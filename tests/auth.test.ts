@@ -37,7 +37,7 @@ type SignUpFn = (args: {
   options?: { data?: Record<string, string> };
 }) => Promise<{
   data: { user?: { id?: string } | null; session?: unknown };
-  error?: { message?: string } | null;
+  error?: { message?: string; status?: number; code?: string } | null;
 }>;
 
 type SignInFn = (args: {
@@ -112,6 +112,40 @@ async function main(): Promise<void> {
     );
     const r = await svc.signUp('Rita', 'rita@x.com', 'password');
     assert(!r.ok && r.code === 'weak_password', 'malformed password message -> weak_password');
+  }
+  {
+    // Live bug (Sept 25, 2026): GoTrue's email rate limit (HTTP 429,
+    // error_code over_email_send_rate_limit) was mapped to 'unknown' and the
+    // UI showed a generic "Something went wrong". It must surface a specific,
+    // retry-safe code — the account is NOT created, so the user just waits.
+    const kv = memoryKV();
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({
+          data: {},
+          error: {
+            message: 'email rate limit exceeded',
+            status: 429,
+            code: 'over_email_send_rate_limit',
+          },
+        }),
+      }),
+      kv,
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
+    assert(!r.ok && r.code === 'rate_limited', '429 over_email_send_rate_limit -> rate_limited (not unknown)');
+    assert((await kv.getItem('ctc:role')) === null && (await svc.getHasAccount()) === false,
+      'rate-limited sign-up writes no local state (safe to retry)');
+  }
+  {
+    // Message-only variant (older API versions omit status/code fields).
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: { message: 'email rate limit exceeded' } }),
+      }),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
+    assert(!r.ok && r.code === 'rate_limited', 'bare "rate limit" message -> rate_limited');
   }
   {
     // Network failure is retry-safe: first attempt fails clean, the retry

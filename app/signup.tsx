@@ -140,6 +140,14 @@ export default function SignUp() {
             <Text style={styles.errorSub}>Please try again later.</Text>
           </View>
         ) : null}
+        {error === 'rate_limited' ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Too many sign-up attempts</Text>
+            <Text style={styles.errorSub}>
+              Please wait a few minutes and try again — no account was created.
+            </Text>
+          </View>
+        ) : null}
         {error === 'email_confirmation_required' ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Check your inbox</Text>
