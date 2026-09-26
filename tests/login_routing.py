@@ -10,8 +10,15 @@ session + stubbed realtor_profiles REST endpoint:
   case A: cloud profile exists, local store empty -> deal list ("Escrows")
   case B: no cloud profile (brand-new account)   -> "Create your profile"
   case C: "Skip for now" on profile creation     -> deal list (no trap)
+  case D: cloud escrows hydrate onto the deal list on login
+  case E: existing profiled account -> profile screen pre-populates
+          every field with the saved values (not an empty form)
 
 Also asserts zero JS console errors / page errors throughout.
+
+Note on the photo field: profile photos are device-local by design
+(accepted constraint — no cloud photo sync), so case E covers the seven
+text fields; there is no cloud photo to pre-populate on a fresh device.
 
 Usage: python3 tests/login_routing.py  (run from ~/workspace/realtor-app)
 Requires: a fresh `npm run export:web` build in dist/.
@@ -23,7 +30,7 @@ import threading
 import sys
 import json
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 ROOT = os.path.expanduser("~/workspace/realtor-app")
 DIST = os.path.join(ROOT, "dist")
@@ -42,7 +49,6 @@ PROFILE_ROW = {
     "phone": "555-0100",
     "dre_license": "DRE-123",
 }
-
 CORS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
@@ -232,6 +238,48 @@ def main():
             print("FAIL C-skip-for-now: did not land on deal list")
             failures.append("C")
         pg.screenshot(path=f"{OUT}/C-skip-for-now.png")
+
+        # Case E: existing profiled account -> tapping the avatar opens the
+        # profile with every field pre-populated (not an empty form).
+        pg.unroute("**/rest/v1/realtor_profiles*")
+        make_stubs(pg, [PROFILE_ROW])
+        make_escrow_stubs(pg, [], [])
+        pg.evaluate("localStorage.clear(); localStorage.setItem('ctc:role', 'realtor');")
+        pg.goto(LOGIN)
+        pg.wait_for_timeout(2500)
+        inputs = pg.locator("input")
+        inputs.nth(0).fill("rita@example.com")
+        inputs.nth(1).fill("longenoughpassword")
+        pg.get_by_role("button", name="Log in").click()
+        try:
+            pg.get_by_text("Escrows", exact=True).wait_for(timeout=15000)
+            pg.get_by_role("button", name="Your profile").click()
+            pg.get_by_text("Update your profile", exact=True).wait_for(timeout=15000)
+            expected = {
+                "e.g. Maya Chen": "Rita Realtor",
+                "Tell clients about yourself": "About Rita",
+                "e.g. 12": "8",
+                "e.g. 240": "42",
+                "e.g. Santa Clarita, Valencia": "Valencia",
+                "e.g. 01992736": "DRE-123",
+                "For Call / Message buttons": "555-0100",
+            }
+            missing = []
+            for placeholder, value in expected.items():
+                field = pg.locator(f"[placeholder='{placeholder}']")
+                try:
+                    expect(field).to_have_value(value, timeout=10000)
+                except Exception:
+                    missing.append(f"{placeholder!r} (expected {value!r})")
+            if missing:
+                print(f"FAIL E-profile-prefill: empty/wrong fields: {'; '.join(missing)}")
+                failures.append("E")
+            else:
+                print("PASS E-profile-prefill: all 7 fields pre-populated with saved values")
+        except Exception as ex:
+            print(f"FAIL E-profile-prefill: did not reach the profile screen ({str(ex)[:100]})")
+            failures.append("E")
+        pg.screenshot(path=f"{OUT}/E-profile-prefill.png")
 
         browser.close()
 
