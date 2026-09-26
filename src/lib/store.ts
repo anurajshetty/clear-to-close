@@ -28,6 +28,8 @@ export interface KV {
 
 export interface Store {
   getProfile(): Promise<RealtorProfile | null>;
+  /** Cloud-linked realtor profile for a client view, or null (local path). */
+  getLinkedProfile(escrowId: string): Promise<RealtorProfile | null>;
   saveProfile(p: RealtorProfile): Promise<void>;
   listEscrows(): Promise<Escrow[]>;
   getEscrow(id: string): Promise<Escrow | null>;
@@ -39,6 +41,11 @@ export interface Store {
   closeEscrow(escrowId: string): Promise<Escrow>;
   createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite>;
   revokeInvite(inviteId: string): Promise<void>;
+  /** Replace an invite's code (cloud collision regeneration). */
+  updateInviteCode(inviteId: string, code: string): Promise<Invite>;
+  getInvite(inviteId: string): Promise<Invite | null>;
+  /** Merge server-side invite states (redeemed/revoked) into local copies. */
+  mergeInviteStates(rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[]): Promise<void>;
   listInvites(escrowId: string): Promise<Invite[]>;
   redeemInvite(code: string, name: string): Promise<RedeemResult>;
   getBuyerView(escrowId: string): Promise<ClientView>;
@@ -189,6 +196,11 @@ export function createStore(kv: KV): Store {
     async getProfile(): Promise<RealtorProfile | null> {
       await ensureLoaded();
       return data.profile;
+    },
+
+    async getLinkedProfile(): Promise<RealtorProfile | null> {
+      // Local store has no cloud links; the synced wrapper overrides this.
+      return null;
     },
 
     async saveProfile(p: RealtorProfile): Promise<void> {
@@ -344,8 +356,46 @@ export function createStore(kv: KV): Store {
       const inv = data.invites.find((i) => i.id === inviteId);
       if (!inv) throw new Error(`Invite not found: ${inviteId}`);
       inv.revokedAt = new Date().toISOString();
+      const next = { ...inv };
+      data.invites[data.invites.indexOf(inv)] = next;
       await persist();
       // Existing client_links stay valid — revoke only blocks future redemption.
+    },
+
+    async updateInviteCode(inviteId: string, code: string): Promise<Invite> {
+      await ensureLoaded();
+      const inv = data.invites.find((i) => i.id === inviteId);
+      if (!inv) throw new Error(`Invite not found: ${inviteId}`);
+      const next = { ...inv, code };
+      data.invites[data.invites.indexOf(inv)] = next;
+      await persist();
+      return next;
+    },
+
+    async getInvite(inviteId: string): Promise<Invite | null> {
+      await ensureLoaded();
+      return data.invites.find((i) => i.id === inviteId) ?? null;
+    },
+
+    async mergeInviteStates(
+      rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[],
+    ): Promise<void> {
+      await ensureLoaded();
+      let changed = false;
+      for (const row of rows) {
+        const inv = data.invites.find((i) => i.id === row.id);
+        if (!inv) continue;
+        // Server is the authority on redeemed/revoked timestamps.
+        if (row.revoked_at && !inv.revokedAt) {
+          inv.revokedAt = row.revoked_at;
+          changed = true;
+        }
+        if (row.redeemed_at && !inv.redeemedAt) {
+          inv.redeemedAt = row.redeemed_at;
+          changed = true;
+        }
+      }
+      if (changed) await persist();
     },
 
     async listInvites(escrowId: string): Promise<Invite[]> {

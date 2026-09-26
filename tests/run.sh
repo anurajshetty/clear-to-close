@@ -19,6 +19,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/clientView.ts" \
   "$ROOT/src/lib/dates.ts" \
+  "$ROOT/src/lib/cloudSync.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
   "$ROOT/tests/sync.test.ts" \
@@ -27,6 +28,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/sidepicker.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
   "$ROOT/tests/dates.test.ts" \
+  "$ROOT/tests/cloudsync.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -41,3 +43,4 @@ node "$OUT/tests/sidepicker.test.js"
 node "$OUT/tests/persistence.test.js"
 # Pinned TZ so the DST-crossing day-count regression is deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
+node "$OUT/tests/cloudsync.test.js"

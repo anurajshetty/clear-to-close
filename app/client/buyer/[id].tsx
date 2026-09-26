@@ -41,6 +41,16 @@ export default function BuyerView() {
           if (active) setProfile(p);
         })
         .catch(() => {});
+      // Cloud-linked realtor profile when this view came through an invite;
+      // falls back to the local realtor profile.
+      if (id) {
+        store
+          .getLinkedProfile(id)
+          .then((linked) => {
+            if (active && linked) setProfile(linked);
+          })
+          .catch(() => {});
+      }
       return () => {
         active = false;
       };
