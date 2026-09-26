@@ -4,8 +4,8 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, radius } from '../theme';
 import { Kicker, Card, SecondaryButton } from './ui';
+import { daysToClose, timeline } from '../lib/dates';
 
-const DAY = 86400000;
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Parse 'YYYY-MM-DD' as a LOCAL date (never UTC).
@@ -35,14 +35,10 @@ export function TimeTrackerCard({
 }: {
   openDate: string; closeDate: string; onUpdateDate?: () => void;
 }) {
-  const open = parseLocal(openDate);
-  const close = parseLocal(closeDate);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  const totalDays = Math.max(1, Math.round((close.getTime() - open.getTime()) / DAY));
-  const dayNum = Math.min(Math.max(Math.round((today.getTime() - open.getTime()) / DAY) + 1, 1), totalDays);
-  const daysLeft = Math.ceil((close.getTime() - today.getTime()) / DAY);
+  // One shared convention (src/lib/dates.ts): whole calendar days, DST-safe.
+  // "day 1 of 61" always pairs with "61 days left to close".
+  const { totalDays, dayNum } = timeline(openDate, closeDate);
+  const daysLeft = daysToClose(closeDate);
 
   const state: 'normal' | 'warn' | 'over' =
     daysLeft < 0 ? 'over' : daysLeft <= 10 ? 'warn' : 'normal';

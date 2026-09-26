@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { store } from '../src/lib/store-instance';
 import type { ClientRole, Escrow, StepT } from '../src/lib/types';
 import { DealCard } from '../src/components/DealCard';
+import { daysToClose } from '../src/lib/dates';
 import { formatShortDate } from '../src/components/TimeTrackerCard';
 import { Kicker, PrimaryButton } from '../src/components/ui';
 import NewEscrowSheet from '../src/components/NewEscrowSheet';
@@ -64,19 +65,13 @@ function cardBits(e: Escrow): CardBits {
   };
 }
 
-function parseISODate(v: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
 function daysUntil(closeDate: string): number {
-  const close = parseISODate(closeDate);
-  if (!close) return 0;
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  return Math.round((close.getTime() - now.getTime()) / 86400000);
+  // Same convention as every other surface: whole calendar days, DST-safe.
+  try {
+    return daysToClose(closeDate);
+  } catch {
+    return 0;
+  }
 }
 
 interface ChipBits {

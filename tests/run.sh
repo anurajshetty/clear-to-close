@@ -15,10 +15,18 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/store.ts" \
   "$ROOT/src/lib/store-instance.ts" \
   "$ROOT/src/lib/supabase.ts" \
+  "$ROOT/src/lib/recency.ts" \
+  "$ROOT/src/lib/sidePicker.ts" \
+  "$ROOT/src/lib/clientView.ts" \
+  "$ROOT/src/lib/dates.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
   "$ROOT/tests/sync.test.ts" \
   "$ROOT/tests/uniqueness.test.ts" \
+  "$ROOT/tests/recency.test.ts" \
+  "$ROOT/tests/sidepicker.test.ts" \
+  "$ROOT/tests/persistence.test.ts" \
+  "$ROOT/tests/dates.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -28,3 +36,8 @@ npx tsc --ignoreConfig \
 node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
+node "$OUT/tests/recency.test.js"
+node "$OUT/tests/sidepicker.test.js"
+node "$OUT/tests/persistence.test.js"
+# Pinned TZ so the DST-crossing day-count regression is deterministic.
+TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"

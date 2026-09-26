@@ -7,6 +7,7 @@
 // one winner.
 
 import { BUY_STEPS, SELL_STEPS, type StepTemplate } from './steps';
+import { daysToClose as dayCount } from './dates';
 import type {
   ClientLink,
   ClientRole,
@@ -170,11 +171,7 @@ export function createStore(kv: KV): Store {
     const steps = sortedByOrder(roleSteps(e, role));
     const done = steps.filter((s) => s.done).length;
     const upNext = steps.find((s) => !s.done) ?? null;
-    const now = new Date();
-    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const daysToClose = Math.ceil(
-      (parseLocalMidnight(e.closeDate).getTime() - todayMidnight.getTime()) / 86400000,
-    );
+    const daysToClose = dayCount(e.closeDate);
     return {
       escrowId: e.id,
       role,
@@ -252,8 +249,9 @@ export function createStore(kv: KV): Store {
       if (!step) throw new Error(`Step not found: ${stepId}`);
       step.done = !step.done;
       step.completedAt = step.done ? new Date().toISOString() : null;
+      const next = replaceEscrow(e);
       await persist();
-      return replaceEscrow(e);
+      return next;
     },
 
     async addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow> {
@@ -270,8 +268,9 @@ export function createStore(kv: KV): Store {
         order: maxOrder + 1,
         completedAt: null,
       });
+      const next = replaceEscrow(e);
       await persist();
-      return replaceEscrow(e);
+      return next;
     },
 
     async reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow> {
@@ -285,8 +284,9 @@ export function createStore(kv: KV): Store {
       const byId = new Map(steps.map((s) => [s.id, s]));
       const next = orderedIds.map((id, index) => ({ ...byId.get(id)!, order: index }));
       if (role === 'buyer') e.buyerSteps = next; else e.sellerSteps = next;
+      const replaced = replaceEscrow(e);
       await persist();
-      return replaceEscrow(e);
+      return replaced;
     },
 
     async updateTargetDate(escrowId: string, closeDate: string): Promise<Escrow> {
@@ -294,16 +294,18 @@ export function createStore(kv: KV): Store {
       assertDate(closeDate, 'closeDate');
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
       e.closeDate = closeDate;
+      const next = replaceEscrow(e);
       await persist();
-      return replaceEscrow(e);
+      return next;
     },
 
     async closeEscrow(escrowId: string): Promise<Escrow> {
       await ensureLoaded();
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
       e.status = 'closed';
+      const next = replaceEscrow(e);
       await persist();
-      return replaceEscrow(e);
+      return next;
     },
 
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {

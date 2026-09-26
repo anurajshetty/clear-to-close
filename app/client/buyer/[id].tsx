@@ -1,5 +1,6 @@
 // Clear to Close — buyer home view (read-only).
-// Faithful to APPROVED mockup 01 · device 4.
+// Faithful to APPROVED mockup 01 · device 4 (+ device 11 live-update details).
+// The checklist mirrors the realtor stepper via the shared ClientStepList.
 import React, { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
@@ -8,6 +9,10 @@ import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { Card, Kicker } from '../../../src/components/ui';
 import { ProgressRing } from '../../../src/components/ProgressRing';
 import { RealtorCard } from '../../../src/components/RealtorCard';
+import {
+  ClientStepList,
+  RecentUpdatePill,
+} from '../../../src/components/ClientStepList';
 import { colors } from '../../../src/theme';
 
 const UP_NEXT_DEFAULT_SUB = 'Your realtor is working on this step of your purchase.';
@@ -70,6 +75,7 @@ export default function BuyerView() {
                 </Text>
               </View>
             </View>
+            <RecentUpdatePill steps={view.steps} />
           </Card>
 
           {profile && (
@@ -95,28 +101,7 @@ export default function BuyerView() {
             )}
           </Card>
 
-          <Text style={styles.section}>Completed</Text>
-          {view.steps.filter((s) => s.done).length > 0 ? (
-            <Card style={styles.list}>
-              {view.steps
-                .filter((s) => s.done)
-                .map((s) => (
-                  <View key={s.id} style={styles.row}>
-                    <View style={styles.check}>
-                      <Text style={styles.checkMark}>✓</Text>
-                    </View>
-                    <Text style={styles.rowTitle}>{s.title}</Text>
-                    {s.custom && (
-                      <View style={styles.ctag}>
-                        <Text style={styles.ctagText}>Custom</Text>
-                      </View>
-                    )}
-                  </View>
-                ))}
-            </Card>
-          ) : (
-            <Text style={styles.empty}>Nothing completed yet.</Text>
-          )}
+          <ClientStepList steps={view.steps} />
 
           <Text style={styles.note}>
             Updated by your realtor.{'\n'}This view is read-only.
@@ -223,53 +208,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: colors.ink,
-  },
-  list: {
-    paddingVertical: 6,
-    paddingHorizontal: 16,
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  check: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 'none' as never,
-  },
-  checkMark: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.accent,
-  },
-  rowTitle: {
-    flex: 1,
-    fontSize: 14.5,
-    color: colors.body,
-    marginLeft: 10,
-  },
-  ctag: {
-    backgroundColor: '#F3E8D2',
-    borderRadius: 5,
-    paddingVertical: 2,
-    paddingHorizontal: 7,
-    marginLeft: 8,
-  },
-  ctagText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: '#7A5A1E',
-  },
-  empty: {
-    fontSize: 14,
-    color: colors.muted,
   },
   note: {
     fontSize: 12.5,
