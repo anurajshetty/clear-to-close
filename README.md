@@ -67,7 +67,11 @@ central user; the buyers and sellers they represent are the other parties.
 - **Realtor profile** — photo, about/bio, experience, areas served, optional
   DRE/license number (shown on the client-facing profile only if entered),
   and an optional **phone number** (syncs to the cloud profile). Editable
-  anytime via the avatar in the deal-list header.
+  anytime via the avatar in the deal-list header. A quiet **Change password**
+  row below Save opens a bottom sheet (current / new / confirm, masked with
+  show/hide toggles; 8+ characters, same rule as sign-up): the current
+  password is verified server-side, and success shows a "Password updated."
+  toast.
 - **Share / invites** — per-escrow, per-party single-use invite codes
   (6 characters, globally unique). Each code is bound to
   (escrow, role, party name); name and code must both match at redeem time.

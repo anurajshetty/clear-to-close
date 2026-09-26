@@ -105,8 +105,11 @@ export interface AuthClientLike {
     ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
     signOut(): Promise<{ error?: { message?: string } | null }>;
     getSession(): Promise<{
-      data: { session?: { user?: { id?: string } } | null };
+      data: { session?: { user?: { id?: string; email?: string } } | null };
     }>;
+    updateUser(args: {
+      password: string;
+    }): Promise<{ data?: unknown; error?: { message?: string } | null }>;
     onAuthStateChange(
       cb: (event: string, session: { user?: { id?: string } } | null) => void,
     ): { data: { subscription: { unsubscribe(): void } } };
@@ -130,6 +133,45 @@ export type SignInResult =
   | { ok: false; code: SignInErrorCode };
 
 export type ResetResult = { ok: true } | { ok: false; code: 'network' | 'unconfigured' };
+
+export type ChangePasswordErrorCode =
+  | 'wrong_current'
+  | 'weak_password'
+  | 'network'
+  | 'unconfigured'
+  | 'unknown';
+
+export type ChangePasswordResult =
+  | { ok: true }
+  | { ok: false; code: ChangePasswordErrorCode };
+
+export interface PasswordChangeValidation {
+  allFilled: boolean;
+  newLongEnough: boolean;
+  confirmMatches: boolean;
+  canSubmit: boolean;
+}
+
+/**
+ * Client-side validation for the change-password sheet (approved spec §2.8).
+ * The 8+ rule and confirm-match are client-side; the current password is
+ * validated by the server (changePassword re-authenticates).
+ */
+export function validatePasswordChange(
+  current: string,
+  next: string,
+  confirm: string,
+): PasswordChangeValidation {
+  const allFilled = current.length > 0 && next.length > 0 && confirm.length > 0;
+  const newLongEnough = next.length >= 8;
+  const confirmMatches = confirm === next;
+  return {
+    allFilled,
+    newLongEnough,
+    confirmMatches,
+    canSubmit: allFilled && newLongEnough && confirmMatches,
+  };
+}
 
 // ------------------------------------------------------------------ service --
 
@@ -380,6 +422,52 @@ export function createAuthService(deps: AuthServiceDeps) {
         return { ok: true };
       } catch (e) {
         return isNetworkError(e) ? { ok: false, code: 'network' } : { ok: true };
+      }
+    },
+
+    /**
+     * Change the realtor's password (approved spec §2.8). Never throws.
+     *
+     * GoTrue has no verify-password endpoint, so the current password is
+     * validated server-side by re-authenticating with it first: a rejected
+     * re-auth maps to 'wrong_current'. Only then is the new password set via
+     * the authenticated updateUser flow.
+     */
+    async changePassword(
+      currentPassword: string,
+      newPassword: string,
+    ): Promise<ChangePasswordResult> {
+      const client = deps.getClient();
+      if (!client) return { ok: false, code: 'unconfigured' };
+      try {
+        let email: string | null = null;
+        try {
+          const { data } = await client.auth.getSession();
+          email = data?.session?.user?.email ?? null;
+        } catch {
+          // fall through to the unknown error below
+        }
+        if (!email) return { ok: false, code: 'unknown' };
+        const { error: signInError } = await client.auth.signInWithPassword({
+          email,
+          password: currentPassword,
+        });
+        if (signInError) {
+          if (isNetworkError(signInError)) return { ok: false, code: 'network' };
+          return { ok: false, code: 'wrong_current' };
+        }
+        const { error: updateError } = await client.auth.updateUser({
+          password: newPassword,
+        });
+        if (updateError) {
+          if (isNetworkError(updateError)) return { ok: false, code: 'network' };
+          if (/password/i.test(String(updateError.message ?? '')))
+            return { ok: false, code: 'weak_password' };
+          return { ok: false, code: 'unknown' };
+        }
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, code: isNetworkError(e) ? 'network' : 'unknown' };
       }
     },
 

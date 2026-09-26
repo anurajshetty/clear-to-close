@@ -2,7 +2,7 @@
 // Opens from the deal-list header avatar. Same shared ProfileForm, Save
 // returns to the deal list. Log out is native-only (㉑): web shows no
 // logout affordance. Logout clears the session fully → role picker.
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   Pressable,
   SafeAreaView,
@@ -15,6 +15,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { auth, setExpectSignOut } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import { BackChevron, Kicker, PrimaryButton } from '../src/components/ui';
+import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { colors } from '../src/theme';
 
@@ -24,6 +25,15 @@ export default function ProfileUpdate() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
+  }, []);
 
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
@@ -118,6 +128,18 @@ export default function ProfileUpdate() {
           />
         </View>
 
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setPwOpen(true)}
+          testID="change-password-open"
+          style={({ pressed }) => [
+            styles.pwlink,
+            pressed && { backgroundColor: colors.accentSoft },
+          ]}
+        >
+          <Text style={styles.pwlinkText}>Change password</Text>
+        </Pressable>
+
         {auth.isWeb() ? null : (
           <Pressable
             accessibilityRole="button"
@@ -130,6 +152,21 @@ export default function ProfileUpdate() {
           </Pressable>
         )}
       </ScrollView>
+
+      <ChangePasswordSheet
+        visible={pwOpen}
+        onClose={() => setPwOpen(false)}
+        onSuccess={() => {
+          setPwOpen(false);
+          showToast('Password updated.');
+        }}
+      />
+
+      {toastMsg ? (
+        <View style={styles.toast} pointerEvents="none">
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -146,6 +183,34 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
   cta: { marginTop: 24 },
+  // Quiet "Change password" row below Save (approved spec §2.8, Sept 26).
+  pwlink: {
+    marginTop: 6,
+    minHeight: 52,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  pwlinkText: { fontSize: 15, fontWeight: '700', color: colors.accent },
+  toast: {
+    position: 'absolute',
+    left: 24,
+    right: 24,
+    bottom: 28,
+    backgroundColor: colors.ink,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 14.5,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   logoutRow: {
     marginTop: 28,
     paddingVertical: 14,

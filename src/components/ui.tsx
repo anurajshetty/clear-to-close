@@ -1,8 +1,8 @@
 // Clear to Close — shared UI primitives (Kicker, Card, buttons, Field, Sheet, Grip)
 // Faithful to APPROVED mockup 01 · Escrow tracker v1. react-native + react-native-web compatible.
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useEffect, useRef } from 'react';
 import {
-  Modal, Pressable, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
+  Animated, Modal, PanResponder, Pressable, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
 } from 'react-native';
 import { colors, radius } from '../theme';
 
@@ -124,15 +124,67 @@ export function Field({
 }
 
 export function Sheet({
-  visible, onClose, children,
-}: { visible: boolean; onClose: () => void; children: ReactNode }) {
+  visible, onClose, children, dragToDismiss,
+}: {
+  visible: boolean; onClose: () => void; children: ReactNode;
+  /**
+   * Drag the grabber/header down to dismiss (change-password sheet, Sept 26).
+   * Off by default — every other sheet keeps its exact current behavior.
+   */
+  dragToDismiss?: boolean;
+}) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // A dragged-then-closed sheet must reopen at rest position.
+  useEffect(() => {
+    if (!visible) translateY.setValue(0);
+  }, [visible, translateY]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_e, g) =>
+        g.dy > 10 && Math.abs(g.dy) > Math.abs(g.dx) * 1.5,
+      onPanResponderMove: (_e, g) => {
+        if (g.dy > 0) translateY.setValue(g.dy);
+      },
+      onPanResponderRelease: (_e, g) => {
+        if (g.dy > 110 || g.vy > 1.1) {
+          translateY.setValue(0);
+          onCloseRef.current();
+        } else {
+          Animated.spring(translateY, {
+            toValue: 0, useNativeDriver: true, speed: 24, bounciness: 0,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(translateY, {
+          toValue: 0, useNativeDriver: true, speed: 24, bounciness: 0,
+        }).start();
+      },
+    }),
+  ).current;
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <Pressable style={styles.sheetOverlay} onPress={onClose} accessibilityRole="button" accessibilityLabel="Dismiss sheet" />
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
+      <Animated.View style={[styles.sheet, dragToDismiss && { transform: [{ translateY }] }]}>
+        {dragToDismiss ? (
+          <View
+            style={styles.grabberZone}
+            {...panResponder.panHandlers}
+            testID="sheet-grabber-zone"
+          >
+            <View style={styles.grabber} />
+          </View>
+        ) : (
+          <View style={styles.grabber} />
+        )}
         {children}
-      </View>
+      </Animated.View>
     </Modal>
   );
 }
@@ -200,6 +252,10 @@ const styles = StyleSheet.create({
   grabber: {
     width: 40, height: 5, borderRadius: 99, backgroundColor: colors.line,
     alignSelf: 'center', marginBottom: 16,
+  },
+  // Taller drag target around the grabber for drag-to-dismiss sheets.
+  grabberZone: {
+    alignItems: 'center', paddingVertical: 10, marginTop: -10, marginBottom: 6,
   },
   grip: {
     flexDirection: 'row', flexWrap: 'wrap', width: 10, height: 18,

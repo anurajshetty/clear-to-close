@@ -21,6 +21,7 @@ import {
   createAuthService,
   setExpectSignOut,
   takeExpectSignOut,
+  validatePasswordChange,
   type AuthClientLike,
 } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref, shouldShowProfileNudge } from '../src/lib/bootRoute';
@@ -52,7 +53,8 @@ function mockClient(o: {
   signUp?: SignUpFn;
   signIn?: SignInFn;
   reset?: (email: string) => Promise<{ error?: { message?: string } | null }>;
-  session?: { user?: { id?: string } } | null;
+  session?: { user?: { id?: string; email?: string } } | null;
+  updateUser?: (password: string) => Promise<{ error?: { message?: string } | null }>;
   signOutThrows?: boolean;
   onSignOut?: () => void;
 }): AuthClientLike {
@@ -67,6 +69,8 @@ function mockClient(o: {
         return { error: null };
       },
       getSession: async () => ({ data: { session: o.session ?? null } }),
+      updateUser: async (args: { password: string }) =>
+        o.updateUser ? o.updateUser(args.password) : { error: { message: 'not scripted' } },
       onAuthStateChange: (_cb: (event: string, session: { user?: { id?: string } } | null) => void) => ({
         data: { subscription: { unsubscribe() {} } },
       }),
@@ -81,6 +85,98 @@ function serviceFor(client: AuthClientLike | null, kv?: KV, platform: 'web' | 'n
 const UID = '11111111-1111-4111-8111-111111111111';
 
 async function main(): Promise<void> {
+  // --------------------------------------- change password (Sept 26) --------
+  {
+    // Client-side validation: all three filled + 8+ + confirm matches.
+    assert(validatePasswordChange('a', 'longenough', 'longenough').canSubmit, 'changepw validation: valid triple can submit');
+    assert(!validatePasswordChange('', 'longenough', 'longenough').canSubmit, 'changepw validation: empty current blocks');
+    assert(!validatePasswordChange('a', 'short', 'short').canSubmit, 'changepw validation: short new blocks');
+    assert(!validatePasswordChange('a', 'longenough', 'different!').canSubmit, 'changepw validation: mismatch blocks');
+    const v = validatePasswordChange('a', 'short', 'short');
+    assert(!v.newLongEnough && v.confirmMatches, 'changepw validation: flags short vs mismatch separately');
+
+    // Success: re-auth with the current password, then updateUser with the new.
+    {
+      let updated: string | null = null;
+      const svc = serviceFor(
+        mockClient({
+          session: { user: { id: UID, email: 'rita@example.com' } },
+          signIn: async (args) => {
+            assert(args.email === 'rita@example.com', 'changepw: re-auth uses the session email');
+            assert(args.password === 'old-secret', 'changepw: re-auth sends the current password');
+            return { data: { user: { id: UID } }, error: null };
+          },
+          updateUser: async (pw) => {
+            updated = pw;
+            return { error: null };
+          },
+        }),
+      );
+      const res = await svc.changePassword('old-secret', 'brand-new-password');
+      assert(res.ok, 'changepw: success returns ok');
+      assert(updated === 'brand-new-password', 'changepw: updateUser receives the new password');
+    }
+
+    // Wrong current password: re-auth rejects -> wrong_current, updateUser never called.
+    {
+      let updated = false;
+      const svc = serviceFor(
+        mockClient({
+          session: { user: { id: UID, email: 'rita@example.com' } },
+          signIn: async () => ({ data: {}, error: { message: 'Invalid login credentials' } }),
+          updateUser: async () => {
+            updated = true;
+            return { error: null };
+          },
+        }),
+      );
+      const res = await svc.changePassword('wrong-secret', 'brand-new-password');
+      assert(!res.ok && (res as { code: string }).code === 'wrong_current', 'changepw: wrong current -> wrong_current');
+      assert(!updated, 'changepw: updateUser not called when re-auth fails');
+    }
+
+    // Network failure on re-auth -> network (retryable, never wrong_current).
+    {
+      const svc = serviceFor(
+        mockClient({
+          session: { user: { id: UID, email: 'rita@example.com' } },
+          signIn: async () => {
+            throw new TypeError('fetch failed');
+          },
+        }),
+      );
+      const res = await svc.changePassword('old-secret', 'brand-new-password');
+      assert(!res.ok && (res as { code: string }).code === 'network', 'changepw: network on re-auth -> network');
+    }
+
+    // Weak new password rejected by the server -> weak_password.
+    {
+      const svc = serviceFor(
+        mockClient({
+          session: { user: { id: UID, email: 'rita@example.com' } },
+          signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+          updateUser: async () => ({ error: { message: 'Password should be at least 8 characters' } }),
+        }),
+      );
+      const res = await svc.changePassword('old-secret', 'brand-new-password');
+      assert(!res.ok && (res as { code: string }).code === 'weak_password', 'changepw: server weak-password -> weak_password');
+    }
+
+    // No session email (signed out mid-flow) -> unknown, never throws.
+    {
+      const svc = serviceFor(mockClient({ session: null }));
+      const res = await svc.changePassword('old-secret', 'brand-new-password');
+      assert(!res.ok, 'changepw: no session never throws');
+    }
+
+    // Unconfigured (no client) -> unconfigured.
+    {
+      const svc = serviceFor(null);
+      const res = await svc.changePassword('old-secret', 'brand-new-password');
+      assert(!res.ok && (res as { code: string }).code === 'unconfigured', 'changepw: unconfigured -> unconfigured');
+    }
+  }
+
   // ------------------------------------------------- sign-up edge cases ---
   {
     const kv = memoryKV();
