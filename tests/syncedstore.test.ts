@@ -139,6 +139,84 @@ async function main(): Promise<void> {
     assert((await store.getClientProfile(null)) === null, 'getClientProfile null escrow, no local -> null');
   }
 
+  // --------------------------------- invite flow: cap / revoke / regenerate --
+  // (approved invite-client flow, Sept 2026). The cloud client is null so the
+  // wrapper exercises the local path; the outbox assertions pin the queued
+  // convergence ops.
+  async function inviteEscrow(store: { createEscrow: (i: never) => Promise<{ id: string }> }) {
+    return store.createEscrow({
+      address: '123 Main St',
+      city: 'Santa Clarita',
+      side: 'buy',
+      buyerName: 'Alice Buyer',
+      sellerName: 'Bob Seller',
+      openDate: '2026-09-01',
+      closeDate: '2026-10-15',
+    } as never);
+  }
+  {
+    // Cap enforced through the synced wrapper: the 3rd create throws and
+    // queues no pushInvite op.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    const escrow = await inviteEscrow(store);
+    await store.createInvite(escrow.id, 'buyer', 'Buyer One');
+    await store.createInvite(escrow.id, 'buyer', 'Buyer Two');
+    let threw = false;
+    try {
+      await store.createInvite(escrow.id, 'buyer', 'Buyer Three');
+    } catch {
+      threw = true;
+    }
+    assert(threw, 'synced createInvite enforces the two-per-side cap');
+    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string }[];
+    const pushInvites = outbox.filter((o) => o.op === 'pushInvite');
+    assert(pushInvites.length === 2, `cap breach queues no pushInvite op (got ${pushInvites.length})`);
+  }
+  {
+    // Revoke through the wrapper: the local client link dies AND a
+    // pushRevoke op is queued for cloud convergence.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    const escrow = await inviteEscrow(store);
+    const inv = await store.createInvite(escrow.id, 'buyer', 'Buyer One');
+    const r = await store.redeemInvite(inv.code, 'Buyer One', 'dev-1');
+    if (!r.ok) throw new Error('fixture redeem failed');
+    await store.revokeInvite(inv.id);
+    const v = await store.validateClientLink(r.linkId);
+    assert(v.valid === false, 'synced revokeInvite kills the local client link');
+    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string; inviteId?: string }[];
+    assert(
+      outbox.some((o) => o.op === 'pushRevoke' && o.inviteId === inv.id),
+      'synced revokeInvite queues a pushRevoke op',
+    );
+  }
+  {
+    // Regenerate through the wrapper (cloud dormant -> local path): fresh
+    // code for the same party, old code dead, old device link dead, and the
+    // convergence ops (pushRevoke old / pushInvite new / revokeClientLink)
+    // are queued.
+    const kv = memoryKV();
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    const escrow = await inviteEscrow(store);
+    const inv = await store.createInvite(escrow.id, 'buyer', 'Buyer One');
+    const r = await store.redeemInvite(inv.code, 'Buyer One', 'dev-1');
+    if (!r.ok) throw new Error('fixture redeem failed');
+    const regen = await store.regenerateInvite(inv.id);
+    assert(regen.invite.code !== inv.code, 'synced regenerateInvite issues a fresh code');
+    assert(regen.invite.partyName === 'Buyer One', 'synced regenerateInvite keeps the party');
+    const oldRedeem = await store.redeemInvite(inv.code, 'Buyer One');
+    assert(!oldRedeem.ok && oldRedeem.error === 'revoked', 'old code dead after synced regenerate');
+    const v = await store.validateClientLink(r.linkId);
+    assert(v.valid === false, 'old device link dead after synced regenerate');
+    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string }[];
+    const ops = outbox.map((o) => o.op);
+    assert(
+      ops.includes('pushRevoke') && ops.includes('pushInvite') && ops.includes('revokeClientLink'),
+      `regen queues pushRevoke + pushInvite + revokeClientLink (got ${ops.join(',')})`,
+    );
+  }
+
   summary('syncedstore');
 }
 

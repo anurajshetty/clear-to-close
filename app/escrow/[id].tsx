@@ -13,10 +13,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { store } from '../../src/lib/store-instance';
-import type { ClientRole, Escrow, StepT } from '../../src/lib/types';
+import type { ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { EditableChecklist } from '../../src/components/Checklist';
+import { InviteSheet } from '../../src/components/InviteSheet';
+import { ClientList } from '../../src/components/ClientList';
 import { Field, Kicker, PrimaryButton, SecondaryButton } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
@@ -51,6 +53,20 @@ export default function TransactionDetail() {
   const [dateError, setDateError] = useState<string | undefined>(undefined);
   // Both-side tab state (mockup 01 · device 12).
   const [tab, setTab] = useState<ClientRole>('buyer');
+  // Invite-client flow (approved Sept 2026): per-side invites live at the end
+  // of the checklist page/tab.
+  const [invites, setInvites] = useState<Invite[]>([]);
+  const [sheetSide, setSheetSide] = useState<ClientRole | null>(null);
+  const [clientSide, setClientSide] = useState<ClientRole | null>(null);
+
+  const refreshInvites = useCallback(async () => {
+    if (!escrowId) return;
+    try {
+      setInvites(await store.listInvites(escrowId));
+    } catch (err) {
+      console.warn('listInvites failed', err);
+    }
+  }, [escrowId]);
 
   const both = escrow?.side === 'both';
   const role: ClientRole = both ? tab : escrow?.side === 'sell' ? 'seller' : 'buyer';
@@ -59,6 +75,7 @@ export default function TransactionDetail() {
     if (!escrowId) return;
     try {
       setEscrow(await store.getEscrow(escrowId));
+      await refreshInvites();
     } catch (err) {
       console.warn('getEscrow failed', err);
     } finally {
@@ -208,6 +225,21 @@ export default function TransactionDetail() {
     );
   };
 
+  // "Invite client" → "View clients" at the end of the checklist (approved
+  // invite-client flow, Sept 2026). Present on buy, sell, and each dual-
+  // agency tab; flips to "View clients" once an active invite exists.
+  const renderInviteButton = (r: ClientRole) => {
+    const count = invites.filter((i) => i.role === r && !i.revokedAt).length;
+    return (
+      <View style={styles.inviteBtnWrap}>
+        <SecondaryButton
+          title={count > 0 ? 'View clients' : 'Invite client'}
+          onPress={() => (count > 0 ? setClientSide(r) : setSheetSide(r))}
+        />
+      </View>
+    );
+  };
+
   // "+ Add a custom step" dashed button + inline form (mockup 01 · .addstep).
   // Rendered per list (single-side) or per tab (both-side).
   const renderAddStep = (r: ClientRole) =>
@@ -282,6 +314,7 @@ export default function TransactionDetail() {
               <Text style={styles.footnote}>
                 {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
               </Text>
+              {renderInviteButton(r)}
             </View>
           }
         />
@@ -396,8 +429,31 @@ export default function TransactionDetail() {
               <Text style={styles.footnote}>
                 {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
               </Text>
+              {renderInviteButton(role)}
             </View>
           }
+        />
+      )}
+      {sheetSide && (
+        <InviteSheet
+          visible
+          side={sheetSide}
+          address={escrow.address}
+          escrowId={escrow.id}
+          onClose={() => setSheetSide(null)}
+          onCreated={refreshInvites}
+        />
+      )}
+      {clientSide && (
+        <ClientList
+          visible
+          side={clientSide}
+          address={escrow.address}
+          escrowId={escrow.id}
+          onClose={() => {
+            setClientSide(null);
+            refreshInvites();
+          }}
         />
       )}
     </GestureHandlerRootView>
@@ -532,6 +588,9 @@ const styles = StyleSheet.create({
     color: colors.muted,
     textAlign: 'center',
     marginTop: 18,
+  },
+  inviteBtnWrap: {
+    marginTop: 14,
   },
   error: {
     fontSize: 13,

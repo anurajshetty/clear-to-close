@@ -35,9 +35,16 @@ central user; the buyers and sellers they represent are the other parties.
 - **Share / invites** — per-escrow, per-party single-use invite codes
   (6 characters, globally unique). Each code is bound to
   (escrow, role, party name); name and code must both match at redeem time.
-  Codes are revocable, and **Regenerate code** issues a fresh code while
-  atomically killing the old code *and* its device link — the old device
-  lands on a clear "this code no longer works" state.
+  Up to **two clients per escrow side** (buyer and seller caps are
+  independent), enforced in the app and by a database trigger — revoking
+  frees a slot. On the transaction detail, **Invite client** sits at the end
+  of the checklist (per side / per dual-agency tab) and becomes **View
+  clients** once an invite exists: name + Invited (amber) / Accepted (teal)
+  status, code + Copy on invited rows, per-client Regenerate and Revoke.
+  **Regenerate** issues a fresh code while atomically killing the old code
+  *and* its device link — the old device lands on a clear "this code no
+  longer works" state. **Revoke** kills the invite *and* its linked client
+  access; the revoked row disappears from the list.
 - **Onboarding / auth** — first launch shows a role picker
   ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
   with email + password in two steps: account creation, then profile creation
@@ -103,6 +110,10 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   realtor-only (authenticated role)
 - `supabase/migrations/0004_revoke_regen_anon.sql` — explicit
   `regenerate_invite` revoke from `anon` (belt-and-braces alongside 0003)
+- `supabase/migrations/0005_two_per_side_cap_and_revoke_kills_access.sql` —
+  database trigger enforcing the two-active-clients-per-side cap on `invites`
+  inserts; `get_client_view` rejects revoked links/invites so a revoked
+  client loses access (not just future redemption)
 
 ## Scripts
 

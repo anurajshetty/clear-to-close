@@ -88,7 +88,10 @@ export function createSyncedStore(
   const profileCache = new Map<string, RealtorProfile | null>();
 
   const cloudOk = (): boolean => ping?.ok === true && !!userId;
-  const client = () => deps?.cloudClient?.() ?? cloudClient();
+  // An explicit override returning null means "no client" (used by tests to
+  // force the local path); only fall back to the real factory when no
+  // override was provided at all.
+  const client = () => (deps?.cloudClient ? deps.cloudClient() : cloudClient());
   const redeemTimeoutMs = deps?.redeemTimeoutMs ?? 8000;
 
   // Public client RPCs (redeem_invite, get_client_view) need no realtor

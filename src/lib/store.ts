@@ -94,6 +94,12 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
 const MAX_CODE_ATTEMPTS = 100;
 
+/**
+ * Two active clients per escrow+role max (invite-client flow, Sept 2026).
+ * Counts non-revoked invites; revoking frees a slot.
+ */
+export const MAX_CLIENTS_PER_SIDE = 2;
+
 function uid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.floor(Math.random() * 16);
@@ -378,6 +384,13 @@ export function createStore(kv: KV): Store {
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {
       await ensureLoaded();
       findEscrowOrThrow(escrowId);
+      // Two-per-side cap: revoking frees a slot, so only live invites count.
+      const activeForSide = data.invites.filter(
+        (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
+      ).length;
+      if (activeForSide >= MAX_CLIENTS_PER_SIDE) {
+        throw new Error('createInvite: two clients per side max — revoke one to invite someone new');
+      }
       const existing = new Set(data.invites.map((i) => i.code));
       let code = '';
       let attempts = 0;
@@ -410,11 +423,19 @@ export function createStore(kv: KV): Store {
       await ensureLoaded();
       const inv = data.invites.find((i) => i.id === inviteId);
       if (!inv) throw new Error(`Invite not found: ${inviteId}`);
-      inv.revokedAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      inv.revokedAt = now;
       const next = { ...inv };
       data.invites[data.invites.indexOf(inv)] = next;
+      // The client link dies with the invite: a revoked client can never get
+      // back in on the old link (their access is killed, not just future
+      // redemption). validateClientLink reads link.revokedAt.
+      for (const link of data.links) {
+        if (link.inviteId === inviteId && !link.revokedAt) {
+          link.revokedAt = now;
+        }
+      }
       await persist();
-      // Existing client_links stay valid — revoke only blocks future redemption.
     },
 
     async updateInviteCode(inviteId: string, code: string): Promise<Invite> {
