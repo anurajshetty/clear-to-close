@@ -35,6 +35,8 @@ type StepRowProps = StepRowBase &
         interactive?: true;
         onToggle: () => void;
         dragHandle?: ReactNode;
+        /** True while this row is the active drag row (library `isActive`). */
+        active?: boolean;
       }
     | {
         interactive: false;
@@ -106,7 +108,15 @@ export function StepRow(props: StepRowProps) {
       accessibilityLabel={`Step: ${title}${done ? ' — completed. Tap to undo.' : ' — tap to check off.'}`}
       accessibilityState={{ checked: done }}
       onPress={props.onToggle}
-      style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
+      // Active drag row: lifted card — solid background so it occludes the
+      // rows it passes over (mid-drag text collision, Sept 2026), slight
+      // scale + shadow + zIndex so it reads as floating above the list.
+      // Resting rows are untouched (no card background per the mockup).
+      style={({ pressed }) => [
+        styles.row,
+        pressed && { opacity: 0.7 },
+        props.active && styles.rowActive,
+      ]}
     >
       {node}
       <View style={styles.gripZone}>{props.dragHandle ?? <Grip />}</View>
@@ -150,6 +160,21 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   body: { flex: 1, paddingTop: 1 },
+  // Active drag row (see the Pressable above): a lifted card. The solid
+  // background is what keeps the dragged title from painting over in-flow
+  // rows mid-drag; scale + shadow sell the lift. Web: RNW maps the shadow
+  // props to box-shadow; the library's cell wrapper already sets zIndex 999.
+  rowActive: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    transform: [{ scale: 1.03 }],
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+    zIndex: 10,
+  },
   // Read-only rows have no grip: keep the same 14px icon-to-text gap.
   bodyNoGrip: { marginLeft: 14 },
   title: { fontSize: 15.5, fontWeight: '600', color: colors.ink },

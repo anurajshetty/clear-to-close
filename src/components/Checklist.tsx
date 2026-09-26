@@ -102,10 +102,22 @@ export function EditableChecklist({
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
 
+  // Drag-reorder safety (Sept 2026 — live bug, root-caused with real gestures):
+  // the grip used to call drag() on onPressIn — i.e. on touchstart/mousedown,
+  // BEFORE any movement or hold. That instantly set the library's active cell,
+  // which arms its autoscroll reaction; with a stale cell measurement (right
+  // after a data change, e.g. a freshly added custom row) or a row sitting at
+  // a viewport edge, the autoscroll edge math fired with zero user intent and
+  // flung the list to the top — the press never became a drag and the user
+  // lost their row. The fix (the library's documented pattern): arm the drag
+  // on LONG-PRESS only, so a drag — and its autoscroll — can never start from
+  // a bare press. A quick tap on the grip is now inert; press-and-hold, then
+  // drag. The 500ms hold also lets cell measurements settle after data
+  // changes before the drag-start snapshot is taken.
   const renderGrip = useCallback(
     (title: string, drag: () => void) => (
       <Pressable
-        onPressIn={drag}
+        onLongPress={drag}
         hitSlop={6}
         accessibilityRole="button"
         accessibilityLabel={`Drag to reorder ${title}`}
@@ -130,7 +142,7 @@ export function EditableChecklist({
       onContainerLayout={allowTouchScroll}
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={ListHeaderComponent}
-      renderItem={({ item, getIndex, drag }) => (
+      renderItem={({ item, getIndex, drag, isActive }) => (
         <ChecklistRow index={getIndex() ?? 0} count={steps.length}>
           <StepRow
             title={item.title}
@@ -139,6 +151,7 @@ export function EditableChecklist({
             custom={item.custom}
             sideTag={sideTag}
             upNext={item.id === upNextId}
+            active={isActive}
             onToggle={() => onToggle(item.id)}
             dragHandle={renderGrip(item.title, drag)}
           />
