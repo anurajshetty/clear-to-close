@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Clear to Close data-layer tests: typecheck + compile the lib + tests, then
+# run each compiled test with node. Keeps strictly to src/lib + tests (sibling
+# workstreams' files may not have landed yet).
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="/tmp/ctc-tests"
+rm -rf "$OUT"
+
+npx tsc --ignoreConfig \
+  "$ROOT/src/lib/types.ts" \
+  "$ROOT/src/lib/steps.ts" \
+  "$ROOT/src/lib/kv.ts" \
+  "$ROOT/src/lib/store.ts" \
+  "$ROOT/src/lib/store-instance.ts" \
+  "$ROOT/src/lib/supabase.ts" \
+  "$ROOT/tests/assert.ts" \
+  "$ROOT/tests/invite.test.ts" \
+  "$ROOT/tests/sync.test.ts" \
+  "$ROOT/tests/uniqueness.test.ts" \
+  --outDir "$OUT" \
+  --module commonjs \
+  --target es2020 \
+  --moduleResolution bundler \
+  --skipLibCheck
+
+node "$OUT/tests/invite.test.js"
+node "$OUT/tests/sync.test.js"
+node "$OUT/tests/uniqueness.test.js"
