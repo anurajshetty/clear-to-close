@@ -53,12 +53,15 @@ export default function Login() {
         // Sync retries on boot.
       }
       // Mid-onboarding resume: a step-1-only account (no profile, never
-      // skipped) lands on profile creation, not the deal list.
+      // skipped) lands on profile creation, not the deal list. The profile
+      // is pulled from the cloud when the local store is missing it (login
+      // on a new device), so an existing account never lands on profile
+      // creation by mistake.
       const sessionUserId = await auth.getSessionUserId();
       let href = '/';
       try {
         const [profile, skipped] = await Promise.all([
-          store.getProfile(),
+          store.pullProfileFromCloud(),
           auth.getProfileSkipped(),
         ]);
         href = resolvePostAuthHref({ sessionUserId, profile, skipped });

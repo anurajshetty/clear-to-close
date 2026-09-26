@@ -28,6 +28,14 @@ export interface KV {
 
 export interface Store {
   getProfile(): Promise<RealtorProfile | null>;
+  /**
+   * Pull the realtor's profile from the cloud into the local store when the
+   * local copy is missing (e.g. login on a new device/browser whose local
+   * KV was never seeded). Returns the local profile when present, otherwise
+   * the pulled cloud profile — null when none exists anywhere. Only a
+   * completed profile (non-empty name) counts. Never throws.
+   */
+  pullProfileFromCloud(): Promise<RealtorProfile | null>;
   /** Cloud-linked realtor profile for a client view, or null (local path). */
   getLinkedProfile(escrowId: string): Promise<RealtorProfile | null>;
   /**
@@ -243,6 +251,12 @@ export function createStore(kv: KV): Store {
 
   const store: Store = {
     async getProfile(): Promise<RealtorProfile | null> {
+      await ensureLoaded();
+      return data.profile;
+    },
+
+    async pullProfileFromCloud(): Promise<RealtorProfile | null> {
+      // Local-only build: no cloud to pull from.
       await ensureLoaded();
       return data.profile;
     },

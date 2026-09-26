@@ -115,6 +115,45 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
   };
 }
 
+/** Map a realtor_profiles row back onto a RealtorProfile. */
+export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '');
+  return {
+    name: s(row.name),
+    photoUri: typeof row.photo_url === 'string' ? (row.photo_url as string) : null,
+    about: s(row.about),
+    yearsExperience: s(row.years_experience),
+    dealsClosed: s(row.deals_closed),
+    areasServed: s(row.areas_served),
+    phone: s(row.phone),
+    dreLicense: s(row.dre_license),
+  };
+}
+
+/**
+ * Pull the realtor's own profile row from Supabase. Returns null when there
+ * is no row (brand-new account), when the row is empty (never completed —
+ * e.g. the ping probe's write round-trip), or on any failure. Never throws.
+ */
+export async function pullProfileNow(
+  client: Cloud,
+  userId: string,
+): Promise<RealtorProfile | null> {
+  try {
+    if (!client) return null;
+    const { data, error } = await client
+      .from('realtor_profiles')
+      .select('name, photo_url, about, years_experience, deals_closed, areas_served, phone, dre_license')
+      .eq('user_id', userId)
+      .limit(1);
+    if (error || !data || data.length === 0) return null;
+    const p = fromProfileRow(data[0] as Record<string, unknown>);
+    return p.name.trim().length > 0 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toInviteRow(invite: Invite): Record<string, unknown> {
   return {
     id: invite.id,

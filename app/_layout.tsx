@@ -42,10 +42,12 @@ export default function RootLayout() {
         let href = resolveBootHref({ role, sessionUserId, clientLink, hasAccount, isWeb });
         if (href === '/' && sessionUserId) {
           // Mid-onboarding resume: an account with no profile (and no skip)
-          // resumes at profile creation (step 2), not the deal list.
+          // resumes at profile creation (step 2), not the deal list. The
+          // profile is pulled from the cloud when the local store is missing
+          // it, so an existing account never lands on profile creation.
           try {
             const [profile, skipped] = await Promise.all([
-              store.getProfile(),
+              store.pullProfileFromCloud(),
               auth.getProfileSkipped(),
             ]);
             href = resolvePostAuthHref({ sessionUserId, profile, skipped });

@@ -33,6 +33,7 @@ import {
   fetchCloudView,
   pingCloud,
   pullInvitesNow,
+  pullProfileNow,
   pushEscrowNow,
   pushInviteNow,
   pushProfileNow,
@@ -198,6 +199,38 @@ export function createSyncedStore(
 
   const store: Store = {
     getProfile: () => local.getProfile(),
+
+    /**
+     * Post-login profile reconcile. The routing decision in login.tsx and the
+     * boot router must not trust the local KV alone: a realtor logging in on
+     * a device/browser whose local store was never seeded (new device,
+     * cleared storage) would otherwise land on profile creation even though
+     * their profile exists in the cloud. When the local copy is missing we
+     * pull the cloud row once, persist it locally, and return it.
+     */
+    pullProfileFromCloud: async (): Promise<RealtorProfile | null> => {
+      try {
+        const existing = await local.getProfile();
+        if (existing && existing.name.trim().length > 0) return existing;
+        if (!cloudConfigured()) return existing;
+        const c = client();
+        if (!c) return existing;
+        const uid = await ensureCloudUser(c);
+        if (!uid) return existing;
+        const pulled = await pullProfileNow(c, uid);
+        if (pulled) {
+          await local.saveProfile(pulled);
+          return pulled;
+        }
+        return existing;
+      } catch {
+        try {
+          return await local.getProfile();
+        } catch {
+          return null;
+        }
+      }
+    },
 
     async getLinkedProfile(escrowId: string): Promise<RealtorProfile | null> {
       if (profileCache.has(escrowId)) return profileCache.get(escrowId) ?? null;
