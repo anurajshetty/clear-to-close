@@ -9,7 +9,7 @@ import { DealCard } from '../src/components/DealCard';
 import { daysToClose } from '../src/lib/dates';
 import { formatShortDate } from '../src/components/TimeTrackerCard';
 import { Kicker, PrimaryButton } from '../src/components/ui';
-import { initialsOf } from '../src/components/RealtorCard';
+import { initialsOf } from '../src/components/ui';
 import NewEscrowSheet from '../src/components/NewEscrowSheet';
 import { colors } from '../src/theme';
 

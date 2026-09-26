@@ -1,23 +1,21 @@
 // Clear to Close — seller home view (read-only).
-// Faithful to APPROVED mockup 01 · device 14 (+ device 11 live-update details).
-// Same structure as the buyer view; the checklist mirrors the realtor stepper
-// via the shared ClientStepList.
+// Faithful to APPROVED mockup 01 · device 14 (+ device 11 live-update details):
+// bold "Hi {name}" greeting, "Your purchase" kicker + non-bold address, the
+// realtor's photo circle above the progress ring (tap -> full profile), and
+// the single ordered checklist in the realtor's order — checked steps stay in
+// place, UP NEXT on the first remaining step, no tap targets, no drag grips,
+// no Custom tag. The standalone realtor card is removed (Sept 25).
 import React, { useCallback, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../../src/lib/store-instance';
-import type { ClientView, RealtorProfile } from '../../../src/lib/types';
-import { Card, Kicker, SecondaryButton } from '../../../src/components/ui';
+import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
+import type { ClientView, RealtorProfile } from '../../../src/lib/types';
+import { Card, Kicker, SecondaryButton, initialsOf } from '../../../src/components/ui';
 import { ProgressRing } from '../../../src/components/ProgressRing';
-import { RealtorCard } from '../../../src/components/RealtorCard';
-import {
-  ClientStepList,
-  RecentUpdatePill,
-} from '../../../src/components/ClientStepList';
+import { ReadOnlyChecklist, RecentUpdatePill } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
-
-const UP_NEXT_DEFAULT_SUB = 'Your realtor is working on this step of your sale.';
 
 export default function SellerView() {
   const router = useRouter();
@@ -25,6 +23,7 @@ export default function SellerView() {
   const id = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : '';
   const [view, setView] = useState<ClientView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
+  const [partyName, setPartyName] = useState('');
   // The device link is revalidated on every focus, BEFORE the escrow
   // renders — a revoked/superseded link routes to /link-dead.
   const { gateState, retry } = useClientLinkGate(id, 'seller');
@@ -56,11 +55,21 @@ export default function SellerView() {
           })
           .catch(() => {});
       }
+      // The greeting uses the name from this device's link (what the buyer
+      // entered at redeem).
+      auth
+        .getClientLink()
+        .then((link) => {
+          if (active && link && link.escrowId === id) setPartyName(link.partyName);
+        })
+        .catch(() => {});
       return () => {
         active = false;
       };
     }, [id]),
   );
+
+  const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -78,9 +87,11 @@ export default function SellerView() {
       ) : (
         <>
           <Card style={styles.hero}>
+            <Text style={styles.greeting}>{greeting}</Text>
             <Kicker>Your sale</Kicker>
-            <Text style={styles.address}>{view.address}</Text>
-            <Text style={styles.city}>{view.city}</Text>
+            <Text style={styles.byaddr}>
+              {view.address} · {view.city}
+            </Text>
             <View style={styles.daysRow}>
               {view.daysToClose < 0 ? (
                 <Text style={styles.pastTarget}>
@@ -92,7 +103,27 @@ export default function SellerView() {
                   <Text style={styles.daysLabel}>days to close</Text>
                 </View>
               )}
-              <View style={styles.ring}>
+              <View style={styles.ringWrap}>
+                <Pressable
+                  onPress={() =>
+                    router.push({ pathname: '/client/profile', params: { escrowId: id } })
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={`View your realtor ${profile?.name ?? ''}'s full profile`}
+                  style={styles.rav}
+                >
+                  <View style={styles.rphotoHalo}>
+                    {profile?.photoUri ? (
+                      <Image source={{ uri: profile.photoUri }} style={styles.rphoto} />
+                    ) : (
+                      <View style={styles.rphoto}>
+                        <Text style={styles.rphotoInitials}>
+                          {initialsOf(profile?.name ?? '')}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </Pressable>
                 <ProgressRing done={view.done} total={view.total} size={72} />
                 <Text style={styles.ringCap}>
                   {view.done} of {view.total} steps
@@ -102,30 +133,7 @@ export default function SellerView() {
             <RecentUpdatePill steps={view.steps} />
           </Card>
 
-          {profile && (
-            <RealtorCard
-              name={profile.name}
-              photoUri={profile.photoUri}
-              onPress={() => router.push({ pathname: '/client/profile', params: { escrowId: id } })}
-            />
-          )}
-
-          <Text style={styles.section}>Up next</Text>
-          <Card style={styles.upNext}>
-            {view.upNext ? (
-              <>
-                <Kicker>Your realtor is on it</Kicker>
-                <Text style={styles.upNextTitle}>{view.upNext.title}</Text>
-                <Text style={styles.upNextSub}>
-                  {view.upNext.subtitle || UP_NEXT_DEFAULT_SUB}
-                </Text>
-              </>
-            ) : (
-              <Text style={styles.allDone}>All steps complete — ready to close!</Text>
-            )}
-          </Card>
-
-          <ClientStepList steps={view.steps} />
+          <ReadOnlyChecklist steps={view.steps} />
 
           <Text style={styles.note}>
             Updated by your realtor.{'\n'}This view is read-only.
@@ -142,8 +150,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 18,
+    paddingTop: 10,
     paddingBottom: 40,
   },
   loading: {
@@ -169,23 +177,25 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
     paddingHorizontal: 16,
   },
-  address: {
-    fontSize: 21,
+  greeting: {
+    fontSize: 24,
     fontWeight: '800',
     color: colors.ink,
-    marginTop: 8,
+    letterSpacing: -0.24,
+    marginBottom: 6,
   },
-  city: {
-    fontSize: 14,
-    color: colors.muted,
-    marginTop: 4,
+  byaddr: {
+    fontSize: 14.5,
+    fontWeight: '400',
+    color: colors.body,
+    lineHeight: 21,
+    marginBottom: 14,
   },
   daysRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    marginTop: 16,
   },
   big: {
     fontSize: 44,
@@ -195,9 +205,10 @@ const styles = StyleSheet.create({
     lineHeight: 44,
   },
   daysLabel: {
-    fontSize: 13,
-    color: colors.muted,
-    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.body,
+    marginTop: 4,
   },
   pastTarget: {
     fontSize: 18,
@@ -205,45 +216,43 @@ const styles = StyleSheet.create({
     color: colors.red,
     flexShrink: 1,
   },
-  ring: {
+  ringWrap: {
     alignItems: 'center',
+  },
+  // Realtor photo entry point: circle above the ring (mockup 01 · .rav).
+  rav: {
+    minWidth: 48,
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  rphotoHalo: {
+    // Soft accent halo outside the white ring (mockup 01 · .rav .rphoto).
+    backgroundColor: colors.accentSoft,
+    borderRadius: 29,
+    padding: 2,
+  },
+  rphoto: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+  },
+  rphotoInitials: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 17,
   },
   ringCap: {
     fontSize: 11.5,
     fontWeight: '700',
     color: colors.body,
     marginTop: 4,
-  },
-  section: {
-    fontSize: 12,
-    letterSpacing: 1.44,
-    textTransform: 'uppercase',
-    color: colors.muted,
-    fontWeight: '700',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  upNext: {
-    borderTopWidth: 4,
-    borderTopColor: colors.accent,
-    paddingTop: 14,
-  },
-  upNextTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: colors.ink,
-    marginTop: 6,
-  },
-  upNextSub: {
-    fontSize: 14.5,
-    color: colors.body,
-    lineHeight: 21.75,
-    marginTop: 6,
-  },
-  allDone: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.ink,
   },
   note: {
     fontSize: 12.5,

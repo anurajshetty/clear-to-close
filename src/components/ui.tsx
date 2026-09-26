@@ -135,6 +135,17 @@ export function Grip() {
   );
 }
 
+// "Maya Chen" -> "MC" — used for the realtor photo-circle fallbacks.
+export function initialsOf(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+}
+
 const styles = StyleSheet.create({
   kicker: {
     fontSize: 12, letterSpacing: 1.7, textTransform: 'uppercase',

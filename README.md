@@ -23,9 +23,12 @@ central user; the buyers and sellers they represent are the other parties.
   - **Checklist stepper** — default steps per side (13 buyer steps, 12 seller
     steps, mirroring the approved design), plus realtor-added **custom steps**
     placeable anywhere via drag reorder. Only the realtor checks steps off,
-    in any order. Progress ring recalculates against the new total.
+    in any order. One single list everywhere — no completed/remaining
+    grouping; checked steps stay in place and the UP NEXT tag marks the first
+    remaining step. Progress ring recalculates against the new total.
   - Dual-agency escrows get independent **Buyer | Seller** tabs — the two
-    checklists are fully separate.
+    checklists are fully separate, each with its own ring, reorder, and
+    custom steps; rows carry Buyer/Seller tags.
 - **Realtor profile** — photo, about/bio, experience, areas served, optional
   DRE/license number (shown on the client-facing profile only if entered).
   Editable anytime via the avatar in the deal-list header.
@@ -48,12 +51,20 @@ central user; the buyers and sellers they represent are the other parties.
 - No account — redeem with **name + invite code**. Redemption binds access to
   the device; reopening the app goes straight back into the escrow.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
-  circles, connecting timeline, subtitles, UP NEXT tag) but with no tap
-  targets. Completed steps sit on top (most-recently-completed first),
-  remaining steps below in checklist order.
+  circles, short connector segments, subtitles, UP NEXT tag) but with no tap
+  targets, no drag grips, and no "Custom" tag. One single list in the
+  realtor's order — checked steps stay in place. "Just now" recency markers
+  expire 4 hours after checkoff.
+- **Client home top card** — bold "Hi {name}" headline, "Your purchase" /
+  "Your sale" plus the address in non-bold below. The realtor's photo sits as
+  a circle above the progress ring; tapping it opens the realtor profile.
+- **Realtor profile (client view)** — prominent "Back to my escrow" button
+  returns to the client's home screen. No Call / Message actions.
 - **Live updates** — every realtor checkoff updates the client home and
-  progress bar. "Just now" recency markers expire 4 hours after checkoff.
-  Custom steps render like any other step (no "Custom" tag on client views).
+  progress bar. The "Just now" tag on the step and the "your realtor checked
+  off X just now" notice expire 4 hours after checkoff (the step itself stays
+  in place). Custom steps render like any other step (no "Custom" tag on
+  client views).
 - Buyer access can never expose seller data and vice versa.
 
 **Sync** — Supabase-backed cloud sync activates under the realtor's
@@ -90,6 +101,8 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   atomic `regenerate_invite`, link-validating `get_client_view`, DRE/license
 - `supabase/migrations/0003_revoke_regen_public.sql` — `regenerate_invite` is
   realtor-only (authenticated role)
+- `supabase/migrations/0004_revoke_regen_anon.sql` — explicit
+  `regenerate_invite` revoke from `anon` (belt-and-braces alongside 0003)
 
 ## Scripts
 

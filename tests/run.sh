@@ -27,6 +27,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/sync.test.ts" \
   "$ROOT/tests/uniqueness.test.ts" \
   "$ROOT/tests/recency.test.ts" \
+  "$ROOT/tests/checklist.test.ts" \
   "$ROOT/tests/sidepicker.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
   "$ROOT/tests/dates.test.ts" \
@@ -47,6 +48,7 @@ node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
 node "$OUT/tests/recency.test.js"
+node "$OUT/tests/checklist.test.js"
 node "$OUT/tests/sidepicker.test.js"
 node "$OUT/tests/persistence.test.js"
 # Pinned TZ so the DST-crossing day-count regression is deterministic.

@@ -1,14 +1,23 @@
+// Clear to Close — realtor transaction detail.
+// Faithful to APPROVED mockup 01 · devices 2/3 (single-side) and 12 (both-side):
+// one single checklist in the realtor's order — no Completed/Remaining
+// grouping, no continuous full-height spine (only short connectors between
+// consecutive circles). Editable: tap check/uncheck in place, drag grips on
+// all rows, "+ Add a custom step", Custom tag on custom steps, UP NEXT on the
+// first remaining step, ring recounts against the current total.
+// Both-side escrows (dual agency): shared time-tracker card on top, then a
+// Buyer | Seller tab switcher — each tab fully independent (own checklist,
+// ring, add-step; rows carry a Buyer/Seller tag). No shared-step syncing.
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import DraggableFlatList from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { store } from '../../src/lib/store-instance';
 import type { ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
-import { StepRow } from '../../src/components/StepRow';
-import { Field, Grip, PrimaryButton, SecondaryButton } from '../../src/components/ui';
+import { EditableChecklist } from '../../src/components/Checklist';
+import { Field, Kicker, PrimaryButton, SecondaryButton } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
 
@@ -22,6 +31,10 @@ function isRealDate(v: string): boolean {
   return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
 
+function sortedSteps(raw: StepT[]): StepT[] {
+  return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
 export default function TransactionDetail() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id: string }>();
@@ -30,16 +43,17 @@ export default function TransactionDetail() {
 
   const [escrow, setEscrow] = useState<Escrow | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<ClientRole | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const [dateFormOpen, setDateFormOpen] = useState(false);
   const [newCloseDate, setNewCloseDate] = useState('');
   const [dateError, setDateError] = useState<string | undefined>(undefined);
+  // Both-side tab state (mockup 01 · device 12).
+  const [tab, setTab] = useState<ClientRole>('buyer');
 
-  // INTERIM (both-side tab UI is held pending designer review):
-  // a both-side escrow renders the BUYER checklist only. The two lists stay independent.
-  const role: ClientRole = escrow?.side === 'sell' ? 'seller' : 'buyer';
+  const both = escrow?.side === 'both';
+  const role: ClientRole = both ? tab : escrow?.side === 'sell' ? 'seller' : 'buyer';
 
   const refresh = useCallback(async () => {
     if (!escrowId) return;
@@ -58,23 +72,32 @@ export default function TransactionDetail() {
     }, [refresh]),
   );
 
-  const toggle = async (stepId: string) => {
+  const toggle = async (r: ClientRole, stepId: string) => {
     if (!escrow) return;
     try {
-      setEscrow(await store.toggleStep(escrow.id, role, stepId));
+      setEscrow(await store.toggleStep(escrow.id, r, stepId));
     } catch (err) {
       console.warn('toggleStep failed', err);
     }
   };
 
-  const addCustom = async () => {
+  const reorder = async (r: ClientRole, orderedIds: string[]) => {
+    if (!escrow) return;
+    try {
+      setEscrow(await store.reorderSteps(escrow.id, r, orderedIds));
+    } catch (err) {
+      console.warn('reorderSteps failed', err);
+    }
+  };
+
+  const addCustom = async (r: ClientRole) => {
     const title = newTitle.trim();
     if (!escrow || !title || saving) return;
     setSaving(true);
     try {
-      setEscrow(await store.addCustomStep(escrow.id, role, title));
+      setEscrow(await store.addCustomStep(escrow.id, r, title));
       setNewTitle('');
-      setAdding(false);
+      setAdding(null);
     } catch (err) {
       console.warn('addCustomStep failed', err);
     } finally {
@@ -130,15 +153,155 @@ export default function TransactionDetail() {
     );
   }
 
-  const raw = role === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps;
-  const steps: StepT[] = [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-  const done = steps.filter((s) => s.done).length;
-  const allDone = steps.length > 0 && done === steps.length;
+  const stepsFor = (r: ClientRole): StepT[] =>
+    sortedSteps(r === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps);
+
+  const subtitle = both ? `${escrow.city} · Dual agency` : `${escrow.city} · ${partyLine(escrow)}`;
+
+  const renderDateForm = dateFormOpen ? (
+    <View style={styles.addForm}>
+      <Field
+        label="New target close date"
+        value={newCloseDate}
+        onChangeText={(v) => {
+          setNewCloseDate(v);
+          setDateError(undefined);
+        }}
+        placeholder="YYYY-MM-DD"
+      />
+      {dateError ? <Text style={styles.error}>{dateError}</Text> : null}
+      <View style={styles.addBtns}>
+        <View style={styles.addPrimary}>
+          <PrimaryButton
+            title={saving ? 'Saving…' : 'Save'}
+            onPress={saveTargetDate}
+            disabled={saving || !newCloseDate.trim()}
+          />
+        </View>
+        <Pressable
+          onPress={() => {
+            setDateFormOpen(false);
+            setNewCloseDate('');
+            setDateError(undefined);
+          }}
+          hitSlop={8}
+          style={styles.cancelBtn}
+        >
+          <Text style={styles.cancelText}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  ) : null;
+
+  const renderDoneBanner = (r: ClientRole) => {
+    const steps = stepsFor(r);
+    const done = steps.filter((s) => s.done).length;
+    if (steps.length === 0 || done !== steps.length) return null;
+    return (
+      <View style={styles.banner}>
+        <Text style={styles.bannerTitle}>{`All ${steps.length} steps complete.`}</Text>
+        <Text style={styles.bannerSub}>This escrow is ready to move to Closed.</Text>
+        <View style={styles.bannerBtn}>
+          <SecondaryButton title="Close escrow" onPress={closeEscrowNow} />
+        </View>
+      </View>
+    );
+  };
+
+  // "+ Add a custom step" dashed button + inline form (mockup 01 · .addstep).
+  // Rendered per list (single-side) or per tab (both-side).
+  const renderAddStep = (r: ClientRole) =>
+    adding === r ? (
+      <View style={styles.addForm}>
+        <Field
+          label="Custom step"
+          value={newTitle}
+          onChangeText={(t) => setNewTitle(t.slice(0, 60))}
+          placeholder="Step name"
+        />
+        <View style={styles.addBtns}>
+          <View style={styles.addPrimary}>
+            <PrimaryButton
+              title={saving ? 'Adding…' : 'Add step'}
+              onPress={() => addCustom(r)}
+              disabled={saving || !newTitle.trim()}
+            />
+          </View>
+          <Pressable
+            onPress={() => {
+              setAdding(null);
+              setNewTitle('');
+            }}
+            hitSlop={8}
+            style={styles.cancelBtn}
+          >
+            <Text style={styles.cancelText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    ) : (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Add a custom step to the ${r} checklist`}
+        onPress={() => {
+          setAdding(r);
+          setNewTitle('');
+        }}
+        style={styles.addDashed}
+      >
+        <Text style={styles.addDashedText}>
+          <Text style={styles.addPlus}>+ </Text>Add a custom step
+        </Text>
+      </Pressable>
+    );
+
+  const renderTabPanel = (r: ClientRole) => {
+    const steps = stepsFor(r);
+    const done = steps.filter((s) => s.done).length;
+    return (
+      <>
+        <View style={styles.tabHead}>
+          <View style={styles.tabRing}>
+            <ProgressRing done={done} total={steps.length} size={72} />
+            <Text style={styles.ringCap}>{`${done} of ${steps.length} steps`}</Text>
+          </View>
+          <View>
+            <Kicker>{r === 'buyer' ? 'Buyer checklist' : 'Seller checklist'}</Kicker>
+            <Text style={styles.tabCap}>Checked off independently</Text>
+          </View>
+        </View>
+        {renderDoneBanner(r)}
+        <EditableChecklist
+          steps={steps}
+          sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
+          onToggle={(id) => toggle(r, id)}
+          onReorder={(ids) => reorder(r, ids)}
+          ListFooterComponent={
+            <View>
+              {renderAddStep(r)}
+              <Text style={styles.footnote}>
+                {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
+              </Text>
+            </View>
+          }
+        />
+      </>
+    );
+  };
+
+  const singleSteps = stepsFor(role);
+  const singleDone = singleSteps.filter((s) => s.done).length;
 
   return (
     <GestureHandlerRootView style={styles.screen}>
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backBtn}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={8}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Back to escrows"
+        >
           <Text style={styles.backText}>‹ Escrows</Text>
         </Pressable>
         <View style={styles.titleRow}>
@@ -146,22 +309,22 @@ export default function TransactionDetail() {
             <Text style={styles.title} numberOfLines={2}>
               {escrow.address}
             </Text>
-            <Text style={styles.subtitle}>{`${escrow.city} · ${partyLine(escrow)}`}</Text>
+            <Text style={styles.subtitle}>{subtitle}</Text>
           </View>
-          <View style={styles.ringCol}>
-            <ProgressRing done={done} total={steps.length} size={72} />
-            <Text style={styles.ringCap}>{`${done} of ${steps.length} steps`}</Text>
-          </View>
+          {!both && (
+            <View style={styles.ringCol}>
+              <ProgressRing done={singleDone} total={singleSteps.length} size={72} />
+              <Text style={styles.ringCap}>{`${singleDone} of ${singleSteps.length} steps`}</Text>
+            </View>
+          )}
         </View>
       </View>
 
-      <DraggableFlatList
-        data={steps}
-        keyExtractor={(s) => s.id}
-        style={styles.list}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View>
+      {both ? (
+        // Dual agency (mockup 01 · device 12): the shared time-tracker card
+        // sits above the tabs; each tab is its own independent checklist.
+        <View style={styles.bothWrap}>
+          <View style={styles.bothTop}>
             <TimeTrackerCard
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
@@ -177,113 +340,66 @@ export default function TransactionDetail() {
                 onPress={() => router.push(`/share/${escrow.id}`)}
               />
             </View>
-            {dateFormOpen && (
-              <View style={styles.addForm}>
-                <Field
-                  label="New target close date"
-                  value={newCloseDate}
-                  onChangeText={(v) => {
-                    setNewCloseDate(v);
-                    setDateError(undefined);
-                  }}
-                  placeholder="YYYY-MM-DD"
-                />
-                {dateError ? <Text style={styles.error}>{dateError}</Text> : null}
-                <View style={styles.addBtns}>
-                  <View style={styles.addPrimary}>
-                    <PrimaryButton
-                      title={saving ? 'Saving…' : 'Save'}
-                      onPress={saveTargetDate}
-                      disabled={saving || !newCloseDate.trim()}
-                    />
-                  </View>
-                  <Pressable
-                    onPress={() => {
-                      setDateFormOpen(false);
-                      setNewCloseDate('');
-                      setDateError(undefined);
-                    }}
-                    hitSlop={8}
-                    style={styles.cancelBtn}
-                  >
-                    <Text style={styles.cancelText}>Cancel</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
-            {allDone && (
-              <View style={styles.banner}>
-                <Text style={styles.bannerTitle}>{`All ${steps.length} steps complete.`}</Text>
-                <Text style={styles.bannerSub}>This escrow is ready to move to Closed.</Text>
-                <View style={styles.bannerBtn}>
-                  <SecondaryButton title="Close escrow" onPress={closeEscrowNow} />
-                </View>
-              </View>
-            )}
+            {renderDateForm}
+            <View
+              style={styles.tabSwitch}
+              accessibilityRole="tablist"
+              accessibilityLabel="Transaction side"
+            >
+              {(['buyer', 'seller'] as ClientRole[]).map((r) => (
+                <Pressable
+                  key={r}
+                  onPress={() => setTab(r)}
+                  accessibilityRole="tab"
+                  accessibilityState={{ selected: tab === r }}
+                  accessibilityLabel={`${r === 'buyer' ? 'Buyer' : 'Seller'} checklist`}
+                  style={[styles.tab, tab === r && styles.tabSelected]}
+                >
+                  <Text style={[styles.tabText, tab === r && styles.tabTextSelected]}>
+                    {r === 'buyer' ? 'Buyer' : 'Seller'}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
-        }
-        renderItem={({ item, drag }) => (
-          <StepRow
-            title={item.title}
-            subtitle={item.subtitle}
-            done={item.done}
-            custom={item.custom}
-            onToggle={() => toggle(item.id)}
-            dragHandle={
-              <Pressable onPressIn={drag} hitSlop={6} style={styles.gripHit}>
-                <Grip />
-              </Pressable>
-            }
-          />
-        )}
-        onDragEnd={async ({ data }) => {
-          try {
-            setEscrow(await store.reorderSteps(escrow.id, role, data.map((s) => s.id)));
-          } catch (err) {
-            console.warn('reorderSteps failed', err);
+          <View style={styles.tabPanel}>{renderTabPanel(tab)}</View>
+        </View>
+      ) : (
+        <EditableChecklist
+          steps={singleSteps}
+          onToggle={(id) => toggle(role, id)}
+          onReorder={(ids) => reorder(role, ids)}
+          ListHeaderComponent={
+            <View>
+              <TimeTrackerCard
+                openDate={escrow.openDate}
+                closeDate={escrow.closeDate}
+                onUpdateDate={() => {
+                  setNewCloseDate('');
+                  setDateError(undefined);
+                  setDateFormOpen(true);
+                }}
+              />
+              <View style={styles.shareBtnWrap}>
+                <SecondaryButton
+                  title="Share this escrow"
+                  onPress={() => router.push(`/share/${escrow.id}`)}
+                />
+              </View>
+              {renderDateForm}
+              {renderDoneBanner(role)}
+            </View>
           }
-        }}
-        ListFooterComponent={
-          <View>
-            {adding ? (
-              <View style={styles.addForm}>
-                <Field
-                  label="Custom step"
-                  value={newTitle}
-                  onChangeText={setNewTitle}
-                  placeholder="e.g. Termite inspection report"
-                />
-                <View style={styles.addBtns}>
-                  <View style={styles.addPrimary}>
-                    <PrimaryButton
-                      title={saving ? 'Adding…' : 'Add step'}
-                      onPress={addCustom}
-                      disabled={saving || !newTitle.trim()}
-                    />
-                  </View>
-                  <Pressable
-                    onPress={() => {
-                      setAdding(false);
-                      setNewTitle('');
-                    }}
-                    hitSlop={8}
-                    style={styles.cancelBtn}
-                  >
-                    <Text style={styles.cancelText}>Cancel</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <Pressable onPress={() => setAdding(true)} style={styles.addDashed}>
-                <Text style={styles.addDashedText}>+ Add a custom step</Text>
-              </Pressable>
-            )}
-            <Text style={styles.footnote}>
-              {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder.'}
-            </Text>
-          </View>
-        }
-      />
+          ListFooterComponent={
+            <View>
+              {renderAddStep(role)}
+              <Text style={styles.footnote}>
+                {'Tap a step to check it off. Tap again to undo.\nDrag the grip to reorder steps.'}
+              </Text>
+            </View>
+          }
+        />
+      )}
     </GestureHandlerRootView>
   );
 }
@@ -343,14 +459,6 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'center',
   },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    padding: 18,
-    paddingTop: 4,
-    paddingBottom: 36,
-  },
   shareBtnWrap: {
     marginTop: 14,
   },
@@ -373,14 +481,10 @@ const styles = StyleSheet.create({
   bannerBtn: {
     marginTop: 12,
   },
-  gripHit: {
-    padding: 8,
-    justifyContent: 'center',
-  },
   addDashed: {
     borderWidth: 2,
     borderStyle: 'dashed',
-    borderColor: colors.line,
+    borderColor: colors.photoBorder,
     borderRadius: 14,
     minHeight: 52,
     alignItems: 'center',
@@ -391,6 +495,9 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontSize: 15,
     fontWeight: '700',
+  },
+  addPlus: {
+    fontSize: 20,
   },
   addForm: {
     marginTop: 12,
@@ -430,6 +537,66 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.red,
     marginTop: 6,
+  },
+  // Both-side (dual agency) layout.
+  bothWrap: {
+    flex: 1,
+  },
+  bothTop: {
+    paddingHorizontal: 18,
+    paddingTop: 4,
+  },
+  tabSwitch: {
+    flexDirection: 'row',
+    backgroundColor: colors.tabBg,
+    borderRadius: 14,
+    padding: 4,
+    marginTop: 14,
+    marginBottom: 6,
+  },
+  tab: {
+    flex: 1,
+    borderRadius: 10,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  tabSelected: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#1E190F',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  tabText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  tabTextSelected: {
+    color: colors.ink,
+  },
+  tabPanel: {
+    flex: 1,
+  },
+  tabHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    paddingHorizontal: 24,
+    paddingTop: 14,
+    paddingBottom: 2,
+  },
+  tabRing: {
+    alignItems: 'center',
+  },
+  tabCap: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.body,
+    marginTop: 3,
   },
   center: {
     flex: 1,

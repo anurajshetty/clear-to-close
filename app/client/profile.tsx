@@ -1,21 +1,16 @@
 // Clear to Close — client-facing realtor profile (read-only).
-// Faithful to APPROVED mockup 01 · device 15: the license line renders only
-// when the realtor entered one — an empty field means no line at all.
+// Faithful to APPROVED mockup 01 · device 15: a prominent "Back to my escrow"
+// button at the top (returns to the client's own home view), photo/name,
+// the license line ONLY when the realtor entered one (empty = no line at
+// all), about, stats, areas. No Call / Message actions (removed per Anuraj,
+// Sept 25). One profile per realtor, shown across all their escrows.
 import React, { useCallback, useState } from 'react';
-import {
-  Image,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
-import type { RealtorProfile } from '../../src/lib/types';
-import { Kicker, PrimaryButton } from '../../src/components/ui';
-import { initialsOf } from '../../src/components/RealtorCard';
+import { auth } from '../../src/lib/auth';
+import type { ClientRole, RealtorProfile } from '../../src/lib/types';
+import { Kicker, initialsOf } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 
 function Stat({ value, label }: { value: string; label: string }) {
@@ -38,6 +33,9 @@ export default function ClientRealtorProfile() {
     typeof rawEscrowId === 'string' ? rawEscrowId : Array.isArray(rawEscrowId) ? rawEscrowId[0] : null;
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [failed, setFailed] = useState(false);
+  const [homeRoute, setHomeRoute] = useState<{ role: ClientRole; escrowId: string } | null>(
+    null,
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -54,23 +52,41 @@ export default function ClientRealtorProfile() {
         .catch(() => {
           if (active) setFailed(true);
         });
+      // "Back to my escrow" returns to THIS client's own home view.
+      auth
+        .getClientLink()
+        .then((link) => {
+          if (active && link && (!escrowId || link.escrowId === escrowId)) {
+            setHomeRoute({ role: link.role, escrowId: link.escrowId });
+          }
+        })
+        .catch(() => {});
       return () => {
         active = false;
       };
     }, [escrowId]),
   );
 
-  const hasPhone = !!profile && profile.phone.trim().length > 0;
+  const goHome = useCallback(() => {
+    if (homeRoute) {
+      router.replace(`/client/${homeRoute.role}/${homeRoute.escrowId}` as never);
+    } else {
+      router.back();
+    }
+  }, [homeRoute, router]);
+
+  const firstName = (profile?.name ?? '').trim().split(/\s+/)[0] ?? '';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Go back"
-        onPress={() => router.back()}
-        style={styles.back}
+        accessibilityLabel="Back to your escrow home screen"
+        onPress={goHome}
+        style={({ pressed }) => [styles.backHome, pressed && { opacity: 0.85 }]}
       >
-        <Text style={styles.backText}>‹ Back</Text>
+        <Text style={styles.backHomeChev}>‹</Text>
+        <Text style={styles.backHomeText}>Back to my escrow</Text>
       </Pressable>
 
       {!profile ? (
@@ -93,9 +109,7 @@ export default function ClientRealtorProfile() {
             )}
             <Text style={styles.name}>{profile.name}</Text>
             {profile.dreLicense.trim().length > 0 && (
-              <Text style={styles.dre}>
-                DRE / license number: {profile.dreLicense.trim()}
-              </Text>
+              <Text style={styles.dre}>DRE / license number: {profile.dreLicense.trim()}</Text>
             )}
           </View>
 
@@ -118,25 +132,10 @@ export default function ClientRealtorProfile() {
             </View>
           )}
 
-          {hasPhone && (
-            <View style={styles.actions}>
-              <View style={styles.actionBtn}>
-                <PrimaryButton
-                  title="Call"
-                  onPress={() => Linking.openURL(`tel:${profile.phone.trim()}`)}
-                />
-              </View>
-              <View style={styles.actionBtn}>
-                <PrimaryButton
-                  title="Message"
-                  onPress={() => Linking.openURL(`sms:${profile.phone.trim()}`)}
-                />
-              </View>
-            </View>
-          )}
-
           <Text style={styles.note}>
-            One profile — shown across every escrow.{'\n'}Read-only for clients.
+            {firstName
+              ? `One profile — shown across all of ${firstName}'s escrows.\nRead-only for clients.`
+              : `One profile — shown across every escrow.\nRead-only for clients.`}
           </Text>
         </>
       )}
@@ -154,13 +153,26 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingBottom: 40,
   },
-  back: {
-    alignSelf: 'flex-start',
-    paddingVertical: 8,
-    paddingRight: 12,
+  // Prominent return to the client's home screen (mockup 01 · .backhome).
+  backHome: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 52,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 14,
   },
-  backText: {
-    fontSize: 15,
+  backHomeChev: {
+    fontSize: 26,
+    lineHeight: 26,
+    fontWeight: '400',
+    color: colors.accent,
+  },
+  backHomeText: {
+    fontSize: 16,
     fontWeight: '700',
     color: colors.accent,
   },
@@ -172,7 +184,7 @@ const styles = StyleSheet.create({
   },
   hero: {
     alignItems: 'center',
-    marginTop: 12,
+    marginTop: 26,
   },
   photo: {
     width: 96,
@@ -229,14 +241,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.muted,
     marginTop: 2,
-  },
-  actions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 24,
-  },
-  actionBtn: {
-    flex: 1,
   },
   note: {
     fontSize: 12.5,

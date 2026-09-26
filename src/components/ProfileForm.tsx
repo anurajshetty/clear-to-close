@@ -11,7 +11,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { Field } from './ui';
-import { initialsOf } from './RealtorCard';
+import { initialsOf } from './ui';
 import { colors } from '../theme';
 
 export interface ProfileDraft {
