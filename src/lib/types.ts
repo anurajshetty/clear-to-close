@@ -3,7 +3,7 @@
 
 export type Side = 'buy' | 'sell' | 'both';
 
-export type ClientRole = 'buyer' | 'seller';
+export type ClientRole = 'buyer' | 'seller' | 'tc';
 
 export interface StepT {
   id: string;
@@ -225,4 +225,21 @@ export interface ClientView {
    * "{Name} opened your escrow · {relative time}".
    */
   openedAt?: string;
+}
+
+/**
+ * Transaction coordinator view (Sept 2026): on a both-side escrow the TC
+ * sees BOTH checklists; on a single-side escrow the active side's. Each
+ * active side reuses ClientView; an inactive side is null (never an empty
+ * list that could be mistaken for "no steps").
+ */
+export interface TcView {
+  escrowId: string;
+  address: string;
+  city: string;
+  daysToClose: number;
+  /** Buyer side, or null when the escrow has no buyer side. */
+  buyer: ClientView | null;
+  /** Seller side, or null when the escrow has no seller side. */
+  seller: ClientView | null;
 }

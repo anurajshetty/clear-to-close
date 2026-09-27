@@ -103,7 +103,16 @@ central user; the buyers and sellers they represent are the other parties.
   copies a branded deep link
   (`https://anurajshetty.github.io/clear-to-close/invite/<CODE>`): opening
   it shows the realtor's branded welcome (name, photo, realty group, DRE)
-  before name entry, so the client knows who invited them.
+  before name entry, so the client knows who invited them. One
+  **transaction coordinator** per escrow (cap of 1, independent of the
+  buyer/seller caps): the checklist footer gains **Invite transaction
+  coordinator** / **View transaction coordinator**, managed through the same
+  invite sheet and client list with the same code/regenerate/revoke
+  lifecycle, including the branded invite link. A redeemed TC invite opens
+  the TC's read-only home at `/client/tc/<escrowId>`: on a both-side escrow
+  the TC sees **both** the buyer and seller checklists (labeled sections,
+  combined progress), on a single-side escrow the active side's — reusing
+  the same top card and read-only checklist as the client views.
 - **Onboarding / auth** — first launch shows a role picker
   ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
   with email + password in two steps: account creation, then profile creation
@@ -298,6 +307,13 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   anonymous clients), and the `upsert_review` / `delete_review` RPCs
   (client-link ownership enforced server-side). Additive-only: pre-release
   code keeps working against the migrated DB.
+- `supabase/migrations/0012_tc_invite.sql` — widens the `invites`/`client_links`
+  role checks to include `tc`; replaces the two-per-side cap trigger with one
+  enforcing 2 per buyer/seller side and 1 transaction coordinator per escrow
+  (same per-role advisory lock, regeneration revoke-first behavior unchanged);
+  re-creates `get_client_view` additively with the TC branch (role `'tc'`,
+  both `buyer_steps` and `seller_steps`) on top of the 0011 reviews contract
+  (full-row profile + `reviews` + `my_review_id`). Additive-only.
 
 ## Scripts
 

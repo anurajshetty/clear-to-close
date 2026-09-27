@@ -213,6 +213,22 @@ export default function TransactionDetail() {
     );
   };
 
+  // Transaction coordinator (Sept 2026): exactly one TC invite per escrow,
+  // managed through the same InviteSheet/ClientList as the sides. The TC is
+  // per-escrow, not per-side, so this button renders identically under the
+  // side's invite button on every tab.
+  const renderTcButton = () => {
+    const count = invites.filter((i) => i.role === 'tc' && !i.revokedAt).length;
+    return (
+      <View style={styles.inviteBtnWrap}>
+        <SecondaryButton
+          title={count > 0 ? 'View transaction coordinator' : 'Invite transaction coordinator'}
+          onPress={() => (count > 0 ? setClientSide('tc') : setSheetSide('tc'))}
+        />
+      </View>
+    );
+  };
+
   // "+ Add a custom step" dashed button + inline form (mockup 01 · .addstep).
   // Rendered per list (single-side) or per tab (both-side).
   const renderAddStep = (r: ClientRole) =>
@@ -288,6 +304,7 @@ export default function TransactionDetail() {
                 {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
               </Text>
               {renderInviteButton(r)}
+              {renderTcButton()}
             </View>
           }
         />
@@ -390,6 +407,7 @@ export default function TransactionDetail() {
                 {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
               </Text>
               {renderInviteButton(role)}
+              {renderTcButton()}
             </View>
           }
         />

@@ -264,7 +264,8 @@ export function RedeemCelebration({
           // retry once — the realtor's profile travels with the view.
           try {
             if (role === 'buyer') await store.getBuyerView(escrowId);
-            else await store.getSellerView(escrowId);
+            else if (role === 'seller') await store.getSellerView(escrowId);
+            else await store.getTcView(escrowId);
           } catch {
             // Offline or cloud unreachable: fall through to the fallback.
           }

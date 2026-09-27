@@ -34,6 +34,7 @@ import type {
   ResolveInviteError,
   Review,
   StepT,
+  TcView,
 } from './types';
 import type { KV } from './store';
 import { isSupabaseConfigured } from './supabase';
@@ -59,6 +60,8 @@ export interface PingResult {
 export interface CloudViewResult {
   ok: boolean;
   view?: ClientView;
+  /** Transaction coordinator payload: both checklists (Sept 2026). */
+  tcView?: TcView;
   profile?: RealtorProfile | null;
   error?: string;
 }
@@ -444,10 +447,6 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
     return { ok: false, error: String(d?.error ?? 'invalid') };
   }
   const e = d.escrow as Record<string, unknown>;
-  const role = ((d.buyer_steps ? 'buyer' : 'seller') as ClientRole);
-  const rawSteps = ((d.buyer_steps ?? d.seller_steps) as Record<string, unknown>[]) ?? [];
-  const steps = rawSteps.map(mapRpcStep).sort((a, b) => a.order - b.order);
-  const done = steps.filter((s) => s.done).length;
   const p = d.profile as Record<string, unknown> | null;
   const profile: RealtorProfile | null = p ? fromProfileRow(p) : null;
   // The id of this link's own review, if it has posted one (Sept 2026) —
@@ -455,7 +454,28 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
   const myReviewId =
     typeof d.my_review_id === 'string' && d.my_review_id.length > 0 ? d.my_review_id : null;
   const closeDate = String(e.close_date);
-  const view: ClientView = {
+  if (d.role === 'tc') {
+    // TC payload carries BOTH step arrays; the escrow side decides which
+    // sections are active. Never silently drop a side here.
+    const tcView = mapTcSteps(e, d, closeDate, myReviewId);
+    return { ok: true, tcView, profile };
+  }
+  const role = ((d.buyer_steps ? 'buyer' : 'seller') as ClientRole);
+  const rawSteps = ((d.buyer_steps ?? d.seller_steps) as Record<string, unknown>[]) ?? [];
+  const view = buildRpcClientView(e, role, rawSteps, closeDate, myReviewId);
+  return { ok: true, view, profile };
+}
+
+function buildRpcClientView(
+  e: Record<string, unknown>,
+  role: ClientRole,
+  rawSteps: Record<string, unknown>[],
+  closeDate: string,
+  myReviewId: string | null,
+): ClientView {
+  const steps = rawSteps.map(mapRpcStep).sort((a, b) => a.order - b.order);
+  const done = steps.filter((s) => s.done).length;
+  return {
     escrowId: String(e.id),
     role,
     address: String(e.address),
@@ -477,7 +497,29 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
     lastAction: parseRealtorAction(e.last_action),
     openedAt: typeof e.created_at === 'string' ? e.created_at : undefined,
   };
-  return { ok: true, view, profile };
+}
+
+/**
+ * Map the TC branch of the get_client_view payload onto a TcView.
+ * side 'both' activates both sections; 'buy'/'sell' activates one.
+ */
+function mapTcSteps(
+  e: Record<string, unknown>,
+  d: Record<string, unknown>,
+  closeDate: string,
+  myReviewId: string | null,
+): TcView {
+  const side = String(e.side ?? 'both');
+  const buyerRaw = (d.buyer_steps ?? []) as Record<string, unknown>[];
+  const sellerRaw = (d.seller_steps ?? []) as Record<string, unknown>[];
+  return {
+    escrowId: String(e.id),
+    address: String(e.address),
+    city: String(e.city),
+    daysToClose: daysToClose(closeDate),
+    buyer: side === 'sell' ? null : buildRpcClientView(e, 'buyer', buyerRaw, closeDate, myReviewId),
+    seller: side === 'buy' ? null : buildRpcClientView(e, 'seller', sellerRaw, closeDate, myReviewId),
+  };
 }
 
 // ------------------------------------------------- public profile + reviews --

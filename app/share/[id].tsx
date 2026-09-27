@@ -4,8 +4,12 @@
 // Invited), the code pill + Copy, and a "Regenerate code" action with a
 // confirmation step. Regenerating atomically kills the old code and its
 // device link and issues a fresh single-use code for the same escrow/role/party.
+// The transaction coordinator (Sept 2026) gets the same treatment as a third
+// party block: exactly one TC invite per escrow (cap of 1, enforced in the
+// store and by the DB trigger), otherwise identical invite/code/regenerate
+// logic.
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextStyle, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
@@ -19,8 +23,8 @@ import { colors, radius } from '../../src/theme';
 
 interface SideMeta {
   role: ClientRole;
-  label: string; // "Buyer" | "Seller"
-  noun: string; // "buyer" | "seller"
+  label: string; // "Buyer" | "Seller" | "Transaction coordinator"
+  noun: string; // "buyer" | "seller" | "transaction coordinator"
 }
 
 function sidesFor(side: Escrow['side']): SideMeta[] {
@@ -177,8 +181,76 @@ export default function ShareEscrow() {
 
   const sides = sidesFor(escrow.side);
   const progress = headerProgress(escrow);
+  // Transaction coordinator (Sept 2026): exactly one TC invite per escrow,
+  // managed with the identical invite/code/regenerate logic as the sides.
+  const tcMeta: SideMeta = {
+    role: 'tc',
+    label: 'Transaction coordinator',
+    noun: 'transaction coordinator',
+  };
   const regenInvite = regenConfirmId ? invites.find((i) => i.id === regenConfirmId) ?? null : null;
-  const regenSide = regenInvite ? sides.find((s) => s.role === regenInvite.role) ?? null : null;
+  const regenSide = regenInvite ? [...sides, tcMeta].find((s) => s.role === regenInvite.role) ?? null : null;
+
+  // One invite-management block per party (buyer/seller side or TC): invite
+  // button when empty, otherwise name + status + code pill + Copy +
+  // Regenerate. The per-role cap (2 per side, 1 TC) is enforced in the store
+  // and by the DB trigger, so no second block can ever appear.
+  const renderPartyBlock = (s: SideMeta) => {
+    const inv = latestVisible(invites, s.role);
+    if (!inv) {
+      return (
+        <View key={s.role} style={styles.sideBlock}>
+          <SecondaryButton
+            title={`Invite the ${s.noun}`}
+            onPress={() => setSheetSide(s.role)}
+          />
+        </View>
+      );
+    }
+    const linked = !!links[inv.id];
+    return (
+      <View key={s.role} style={styles.sideBlock}>
+        <View style={styles.invRow}>
+          <View style={styles.invCol}>
+            <Text style={styles.invName}>{inv.partyName}</Text>
+            <Text style={linked ? styles.linkedStatus : styles.invitedStatus}>
+              {linked ? 'Linked to device' : 'Invited'}
+            </Text>
+          </View>
+          <Text style={styles.codePill}>{inv.code}</Text>
+          <Pressable
+            onPress={() => copyCode(inv.code)}
+            hitSlop={8}
+            style={styles.copyBtn}
+          >
+            <Text style={styles.copyText}>Copy</Text>
+          </Pressable>
+        </View>
+        <View style={styles.regenActions}>
+          <Pressable
+            onPress={() => {
+              setLastRegen(null);
+              setRegenConfirmId(inv.id);
+            }}
+            hitSlop={8}
+            style={styles.regenBtn}
+          >
+            <Text style={styles.regenText}>Regenerate code</Text>
+          </Pressable>
+        </View>
+        {lastRegen && lastRegen.inviteId === inv.id ? (
+          <View style={styles.regenNote}>
+            <Text style={styles.regenNoteText}>
+              <Text style={styles.regenNoteBold}>Regenerated</Text>
+              {': the previous code '}
+              <Text style={styles.strike}>{lastRegen.oldCode}</Text>
+              {' no longer works, and the old device link is revoked.'}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    );
+  };
 
   return (
     <View style={styles.screen}>
@@ -211,62 +283,15 @@ export default function ShareEscrow() {
             <Kicker>Share this escrow</Kicker>
           </View>
 
-          {sides.map((s) => {
-            const inv = latestVisible(invites, s.role);
-            if (!inv) {
-              return (
-                <View key={s.role} style={styles.sideBlock}>
-                  <SecondaryButton
-                    title={`Invite the ${s.noun}`}
-                    onPress={() => setSheetSide(s.role)}
-                  />
-                </View>
-              );
-            }
-            const linked = !!links[inv.id];
-            return (
-              <View key={s.role} style={styles.sideBlock}>
-                <View style={styles.invRow}>
-                  <View style={styles.invCol}>
-                    <Text style={styles.invName}>{inv.partyName}</Text>
-                    <Text style={linked ? styles.linkedStatus : styles.invitedStatus}>
-                      {linked ? 'Linked to device' : 'Invited'}
-                    </Text>
-                  </View>
-                  <Text style={styles.codePill}>{inv.code}</Text>
-                  <Pressable
-                    onPress={() => copyCode(inv.code)}
-                    hitSlop={8}
-                    style={styles.copyBtn}
-                  >
-                    <Text style={styles.copyText}>Copy</Text>
-                  </Pressable>
-                </View>
-                <View style={styles.regenActions}>
-                  <Pressable
-                    onPress={() => {
-                      setLastRegen(null);
-                      setRegenConfirmId(inv.id);
-                    }}
-                    hitSlop={8}
-                    style={styles.regenBtn}
-                  >
-                    <Text style={styles.regenText}>Regenerate code</Text>
-                  </Pressable>
-                </View>
-                {lastRegen && lastRegen.inviteId === inv.id ? (
-                  <View style={styles.regenNote}>
-                    <Text style={styles.regenNoteText}>
-                      <Text style={styles.regenNoteBold}>Regenerated</Text>
-                      {': the previous code '}
-                      <Text style={styles.strike}>{lastRegen.oldCode}</Text>
-                      {' no longer works, and the old device link is revoked.'}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-            );
-          })}
+          {sides.map((s) => renderPartyBlock(s))}
+
+          <Text style={styles.tcLabel}>Transaction coordinator</Text>
+          {renderPartyBlock(tcMeta)}
+          {latestVisible(invites, 'tc') ? (
+            <Text style={styles.tcCapNote}>
+              One transaction coordinator per escrow. Revoke the invite to invite someone new.
+            </Text>
+          ) : null}
 
           {regenInvite && (
             <View style={styles.confirmBox}>
@@ -302,7 +327,7 @@ export default function ShareEscrow() {
           <Text style={styles.hint}>
             {'Buyer and seller each get their '}
             <Text style={styles.hintBold}>own code</Text>
-            {' for this escrow (one invite per side). '}
+            {' for this escrow (one invite per side). The transaction coordinator gets their own code (one per escrow). '}
             <Text style={styles.hintBold}>Regenerate</Text>
             {' covers a reinstall or a new device: the old code was already consumed.'}
           </Text>
@@ -399,6 +424,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sideBlock: {
+    marginBottom: 10,
+  },
+  tcLabel: {
+    fontSize: 12,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    color: colors.muted,
+    fontWeight: '700',
+    marginTop: 14,
+    marginBottom: 2,
+  } as TextStyle,
+  tcCapNote: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: colors.muted,
+    marginTop: 2,
     marginBottom: 10,
   },
   invRow: {

@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { store } from '../lib/store-instance';
-import { MAX_CLIENTS_PER_SIDE } from '../lib/store';
+import { MAX_CLIENTS_PER_SIDE, MAX_TC_PER_ESCROW } from '../lib/store';
 import type { ClientRole, Invite } from '../lib/types';
 import { InviteSheet } from './InviteSheet';
 import { Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
@@ -43,8 +43,13 @@ export function ClientList({
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const label = side === 'buyer' ? 'Buyer' : 'Seller';
-  const noun = side === 'buyer' ? 'buyer' : 'seller';
+  const label =
+    side === 'buyer' ? 'Buyer' : side === 'seller' ? 'Seller' : 'Transaction coordinator';
+  const noun =
+    side === 'buyer' ? 'buyer' : side === 'seller' ? 'seller' : 'transaction coordinator';
+  // Per-role cap: two per buyer/seller side, exactly one transaction
+  // coordinator per escrow.
+  const cap = side === 'tc' ? MAX_TC_PER_ESCROW : MAX_CLIENTS_PER_SIDE;
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -126,10 +131,12 @@ export function ClientList({
             showsVerticalScrollIndicator={false}
           >
             <Kicker>Clients · {address}</Kicker>
-            <Text style={styles.title}>View clients</Text>
+            <Text style={styles.title}>
+              {side === 'tc' ? 'View transaction coordinator' : 'View clients'}
+            </Text>
 
             <Text style={styles.seclab}>
-              {label} · {invites.length} of {MAX_CLIENTS_PER_SIDE}
+              {label} · {invites.length} of {cap}
             </Text>
 
             {invites.map((inv, idx) => {
@@ -207,17 +214,26 @@ export function ClientList({
               );
             })}
 
-            {invites.length < MAX_CLIENTS_PER_SIDE ? (
+            {invites.length < cap ? (
               <View style={styles.inviteAnother}>
                 <SecondaryButton
-                  title={`Invite another ${noun}`}
+                  title={side === 'tc' ? 'Invite the transaction coordinator' : `Invite another ${noun}`}
                   onPress={() => setSheetOpen(true)}
                 />
               </View>
             ) : (
               <Text style={styles.capnote}>
-                <Text style={styles.capBold}>Two invites max per side.</Text>
-                {' Revoke one to invite someone new.'}
+                {side === 'tc' ? (
+                  <>
+                    <Text style={styles.capBold}>One transaction coordinator per escrow.</Text>
+                    {' Revoke the existing invite to invite someone new.'}
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.capBold}>Two invites max per side.</Text>
+                    {' Revoke one to invite someone new.'}
+                  </>
+                )}
               </Text>
             )}
 

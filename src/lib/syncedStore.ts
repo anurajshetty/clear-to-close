@@ -25,6 +25,7 @@ import type {
   RealtorProfile,
   RedeemResult,
   ResolveInviteError,
+  TcView,
 } from './types';
 import {
   cloudClient,
@@ -544,6 +545,7 @@ export function createSyncedStore(
 
     getBuyerView: (escrowId: string) => viewForRole(escrowId, 'buyer'),
     getSellerView: (escrowId: string) => viewForRole(escrowId, 'seller'),
+    getTcView: (escrowId: string) => viewForTc(escrowId),
   };
 
   async function viewForRole(escrowId: string, role: ClientRole): Promise<ClientView> {
@@ -580,6 +582,49 @@ export function createSyncedStore(
       return cached.view;
     }
     return role === 'buyer' ? local.getBuyerView(escrowId) : local.getSellerView(escrowId);
+  }
+
+  /**
+   * Transaction coordinator view (Sept 2026). Mirrors viewForRole: the
+   * cloud TC payload (both checklists) when this device holds a live TC
+   * link, else the cached view, else the local store. Anuraj's decision:
+   * both checklists on a both-side escrow; the active side's on a
+   * single-side escrow.
+   */
+  async function viewForTc(escrowId: string): Promise<TcView> {
+    const link = await cloudLinkFor(escrowId);
+    // Public gate: a client device has no realtor session, but the cloud
+    // view is still fetchable with the anon client.
+    if (link && link.role === 'tc' && publicOk()) {
+      const c = client();
+      if (c) {
+        try {
+          // Attach a no-op catch so a late RPC rejection after our timeout
+          // never becomes an unhandled rejection.
+          const rpcP = fetchCloudView(c, link.linkId).then((res) => {
+            if (res.ok && res.tcView) return { tcView: res.tcView, profile: res.profile ?? null };
+            throw new Error('invalid tc view');
+          });
+          rpcP.catch(() => {});
+          const { tcView, profile } = await Promise.race([rpcP, timeoutMs(8000)]);
+          profileCache.set(escrowId, profile);
+          await writeJson(kv, K_CLOUD_VIEW_PREFIX + escrowId, { tcView, profile });
+          return tcView;
+        } catch {
+          // fall through to cached/local below
+        }
+      }
+    }
+    // Cached cloud view (offline) or the local v1 path.
+    const cached = await readJson<{ tcView: TcView; profile: RealtorProfile | null }>(
+      kv,
+      K_CLOUD_VIEW_PREFIX + escrowId,
+    );
+    if (cached?.tcView) {
+      profileCache.set(escrowId, cached.profile);
+      return cached.tcView;
+    }
+    return local.getTcView(escrowId);
   }
 
   return { store, initCloudSync };

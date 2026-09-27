@@ -21,6 +21,7 @@ import type {
   RedeemResult,
   ResolveInviteError,
   StepT,
+  TcView,
   UpdateEscrowInput,
 } from './types';
 
@@ -128,6 +129,11 @@ export interface Store {
   validateClientLink(linkId: string): Promise<{ valid: boolean }>;
   getBuyerView(escrowId: string): Promise<ClientView>;
   getSellerView(escrowId: string): Promise<ClientView>;
+  /**
+   * Transaction coordinator view (Sept 2026): both checklists on a
+   * both-side escrow; the active side's on a single-side escrow.
+   */
+  getTcView(escrowId: string): Promise<TcView>;
 }
 
 const K_PROFILE = 'ctc:profile';
@@ -145,6 +151,13 @@ const MAX_CODE_ATTEMPTS = 100;
  * Counts non-revoked invites; revoking frees a slot.
  */
 export const MAX_CLIENTS_PER_SIDE = 2;
+
+/**
+ * Exactly one active transaction coordinator per escrow (TC invite type,
+ * Sept 2026). The TC is separate from the buyer/seller sides.
+ * Counts non-revoked invites; revoking frees the slot.
+ */
+export const MAX_TC_PER_ESCROW = 1;
 
 function uid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -570,12 +583,19 @@ export function createStore(kv: KV): Store {
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {
       await ensureLoaded();
       findEscrowOrThrow(escrowId);
-      // Two-per-side cap: revoking frees a slot, so only live invites count.
-      const activeForSide = data.invites.filter(
+      // Per-role cap: two per buyer/seller side, exactly one transaction
+      // coordinator per escrow. Revoking frees a slot, so only live invites
+      // count. (The DB trigger enforces the same caps authoritatively.)
+      const cap = role === 'tc' ? MAX_TC_PER_ESCROW : MAX_CLIENTS_PER_SIDE;
+      const activeForRole = data.invites.filter(
         (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
       ).length;
-      if (activeForSide >= MAX_CLIENTS_PER_SIDE) {
-        throw new Error('createInvite: two clients per side max. Revoke one to invite someone new');
+      if (activeForRole >= cap) {
+        throw new Error(
+          role === 'tc'
+            ? 'createInvite: one transaction coordinator per escrow max. Revoke the existing invite to invite someone new'
+            : 'createInvite: two clients per side max. Revoke one to invite someone new',
+        );
       }
       const existing = new Set(data.invites.map((i) => i.code));
       let code = '';
@@ -795,6 +815,22 @@ export function createStore(kv: KV): Store {
     async getSellerView(escrowId: string): Promise<ClientView> {
       await ensureLoaded();
       return buildClientView(findEscrowOrThrow(escrowId), 'seller');
+    },
+
+    async getTcView(escrowId: string): Promise<TcView> {
+      await ensureLoaded();
+      const e = findEscrowOrThrow(escrowId);
+      // Anuraj's decision (Sept 2026): both checklists on a both-side
+      // escrow; the active side's on a single-side escrow. Inactive sides
+      // are null — never silently one side when both exist.
+      return {
+        escrowId: e.id,
+        address: e.address,
+        city: e.city,
+        daysToClose: dayCount(e.closeDate),
+        buyer: e.side === 'sell' ? null : buildClientView(e, 'buyer'),
+        seller: e.side === 'buy' ? null : buildClientView(e, 'seller'),
+      };
     },
   };
 

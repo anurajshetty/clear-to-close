@@ -55,6 +55,11 @@ export type ClientTopCardProps = {
   closeDate?: string;
   profile: RealtorProfile | null;
   onProfilePress: () => void;
+  /**
+   * Completion banner copy (Sept 2026, TC view). Defaults to the approved
+   * client-home copy; the TC screen passes its own line.
+   */
+  completionText?: string;
 };
 
 function DaysLine({ daysToClose }: { daysToClose: number }) {
@@ -155,6 +160,7 @@ function TriumphCard({
   city,
   daysToClose,
   total,
+  completionText,
 }: {
   name: string;
   photoUri: string | null;
@@ -162,9 +168,13 @@ function TriumphCard({
   city: string;
   daysToClose: number;
   total: number;
+  completionText?: string;
 }) {
   const [cardHeight, setCardHeight] = useState(0);
   const pill = completionPill({ done: total, total, daysToClose, name });
+  // The TC view passes its own completion copy; buyer/seller keep the
+  // approved client-home pill text.
+  const pillText = completionText ?? pill?.text ?? null;
   // Mockup screen 10 renders the 208-geometry ring at 150px display size.
   const k = 150 / 208;
   return (
@@ -209,9 +219,9 @@ function TriumphCard({
             testID="progress-ring"
           />
         </View>
-        {pill ? (
+        {pillText ? (
           <View style={styles.triumphPillWrap}>
-            <CompletionPill text={pill.text} />
+            <CompletionPill text={pillText} />
           </View>
         ) : null}
       </View>
@@ -231,6 +241,10 @@ export function ClientTopCard({
   closeDate,
   profile,
   onProfilePress,
+  // Optional completion-copy override (Sept 2026, TC view): when provided,
+  // the 100% triumph pill shows this text instead of the client-home copy.
+  // Absent (buyer/seller) the approved client copy renders unchanged.
+  completionText,
 }: ClientTopCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const branded = profile;
@@ -264,6 +278,7 @@ export function ClientTopCard({
         city={city}
         daysToClose={daysToClose}
         total={total}
+        completionText={completionText}
       />
     );
   }

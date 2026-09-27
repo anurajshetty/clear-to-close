@@ -17,7 +17,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
-import type { InviteRealtor, RedeemResult, ResolveInviteError } from '../src/lib/types';
+import type { ClientRole, InviteRealtor, RedeemResult, ResolveInviteError } from '../src/lib/types';
 import { InviteWelcome } from '../src/components/InviteWelcome';
 import { BackChevron, Field, Kicker, PrimaryButton, TextLink } from '../src/components/ui';
 import { RedeemCelebration } from '../src/components/RedeemCelebration';
@@ -61,7 +61,9 @@ export default function Redeem() {
   const [resolveError, setResolveError] = useState<ResolveInviteError | null>(null);
   const [redeemError, setRedeemError] = useState<RedeemError | null>(null);
   const [resolving, setResolving] = useState(!!prefillCode);
-  const [linked, setLinked] = useState<{ escrowId: string; role: 'buyer' | 'seller' } | null>(null);
+  // TC invites (role 'tc') redeem through the same stepped flow; a redeemed
+  // TC invite routes to /client/tc/<escrowId> via the role in the URL below.
+  const [linked, setLinked] = useState<{ escrowId: string; role: ClientRole } | null>(null);
   const [busy, setBusy] = useState(false);
 
   // A code arriving via ?code= still resolves the realtor (never trusted
@@ -146,6 +148,9 @@ export default function Redeem() {
     return (
       <SafeAreaView style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
+          {/* A redeemed TC invite routes to /client/tc/<escrowId> through the
+              role in the URL — that screen shows both checklists on a
+              both-side escrow (Anuraj's decision). */}
           <RedeemCelebration
             escrowId={linked.escrowId}
             role={linked.role}

@@ -28,8 +28,10 @@ export function InviteSheet({
   const [code, setCode] = useState('');
   const [creating, setCreating] = useState(false);
 
-  const label = side === 'buyer' ? 'Buyer' : 'Seller';
-  const noun = side === 'buyer' ? 'buyer' : 'seller';
+  const label =
+    side === 'buyer' ? 'Buyer' : side === 'seller' ? 'Seller' : 'Transaction coordinator';
+  const noun =
+    side === 'buyer' ? 'buyer' : side === 'seller' ? 'seller' : 'transaction coordinator';
 
   // Reset to the name phase every time the sheet opens.
   useEffect(() => {
@@ -100,7 +102,13 @@ export function InviteSheet({
             Name the invite first. Their name becomes part of the code.
           </Text>
           <Field
-            label={label === 'Buyer' ? "Buyer's name" : "Seller's name"}
+            label={
+              label === 'Buyer'
+                ? "Buyer's name"
+                : label === 'Seller'
+                  ? "Seller's name"
+                  : "Coordinator's name"
+            }
             value={name}
             onChangeText={setName}
             placeholder={`${label}'s name`}

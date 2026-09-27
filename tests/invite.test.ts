@@ -3,7 +3,7 @@
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createStore } from '../src/lib/store';
-import { MAX_CLIENTS_PER_SIDE } from '../src/lib/store';
+import { MAX_CLIENTS_PER_SIDE, MAX_TC_PER_ESCROW } from '../src/lib/store';
 
 declare const process: { exitCode?: number };
 
@@ -186,6 +186,80 @@ async function main(): Promise<void> {
   assert(v2.valid === true, 'other client link stays alive');
   const reRedeemK1 = await store.redeemInvite(k1.code, 'Buyer K1');
   assert(!reRedeemK1.ok && reRedeemK1.error === 'revoked', 'revoked invite code can never redeem again');
+
+  // ---------------------------------------------------------------------------
+  // Transaction coordinator matrix (TC invite type, Sept 2026): exactly one
+  // active TC invite per escrow, separate from the buyer/seller sides;
+  // otherwise identical invite/code/regenerate/device-binding logic.
+  // ---------------------------------------------------------------------------
+  assert(MAX_TC_PER_ESCROW === 1, 'MAX_TC_PER_ESCROW is 1');
+  const t = await newEscrow(store, 'both');
+
+  // 1. First TC invite succeeds; second active TC invite fails (cap of 1).
+  const tc1 = await store.createInvite(t.id, 'tc', 'Tina Coordinator');
+  assert(tc1.role === 'tc', 'first TC invite succeeds');
+  assert(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/.test(tc1.code), 'TC code is 6 chars from the safe alphabet');
+  let secondTcErr: unknown = null;
+  try {
+    await store.createInvite(t.id, 'tc', 'Tom Coordinator');
+  } catch (e) {
+    secondTcErr = e;
+  }
+  assert(secondTcErr !== null, 'second active TC invite fails (cap of 1)');
+
+  // 2. The TC cap is independent of the sides: 2 buyers + 2 sellers + 1 TC
+  // can all coexist on one escrow.
+  await store.createInvite(t.id, 'buyer', 'Buyer One');
+  await store.createInvite(t.id, 'buyer', 'Buyer Two');
+  await store.createInvite(t.id, 'seller', 'Seller One');
+  await store.createInvite(t.id, 'seller', 'Seller Two');
+  const tcCount = (await store.listInvites(t.id)).filter((i) => i.role === 'tc' && !i.revokedAt).length;
+  assert(tcCount === 1, 'TC invite coexists with full buyer/seller sides');
+
+  // 3. TC redeem: ok, role is tc, device binding sticks.
+  const rt = await store.redeemInvite(tc1.code, 'Tina Coordinator', 'tc-device-1');
+  assert(rt.ok === true, 'TC redeem ok');
+  if (rt.ok) {
+    assert(rt.role === 'tc', 'TC redeem role is tc');
+    assert(rt.escrowId === t.id, 'TC redeem escrowId matches');
+    assert(rt.partyName === 'Tina Coordinator', 'TC redeem partyName matches');
+    assert(typeof rt.linkId === 'string' && rt.linkId.length > 0, 'TC redeem returns linkId');
+  }
+  const tcLinkId = rt.ok ? rt.linkId : '';
+  const tcLink = await store.getLinkForInvite(tc1.id);
+  assert(tcLink !== null && (tcLink as { deviceId: string | null }).deviceId === 'tc-device-1', 'TC redeem binds the device id to the link');
+  const vt = await store.validateClientLink(tcLinkId);
+  assert(vt.valid === true, 'TC link validates while live');
+
+  // 4. TC regenerate: old code dies, old device link is killed, new code
+  // redeems and binds the new device.
+  const tcRegen = await store.regenerateInvite(tc1.id);
+  assert(tcRegen.invite.role === 'tc', 'regenerated TC invite keeps role tc');
+  assert(tcRegen.invite.code !== tc1.code, 'regenerated TC code is fresh');
+  assert(tcRegen.revokedLink !== null && tcRegen.revokedLink.id === tcLinkId, 'TC regenerate kills the old device link');
+  const vtOld = await store.validateClientLink(tcLinkId);
+  assert(vtOld.valid === false, 'old TC device link is dead after regenerate');
+  const rtOld = await store.redeemInvite(tc1.code, 'Tina Coordinator');
+  assert(!rtOld.ok && rtOld.error === 'revoked', 'old TC code dies on regeneration');
+  const rtNew = await store.redeemInvite(tcRegen.invite.code, 'Tina Coordinator', 'tc-device-2');
+  assert(rtNew.ok === true, 'new TC code redeems ok');
+  if (rtNew.ok) {
+    assert(rtNew.role === 'tc', 'regenerated TC redeem role is still tc');
+    const vtNew = await store.validateClientLink(rtNew.linkId);
+    assert(vtNew.valid === true, 'new TC link validates');
+  }
+
+  // 5. Revoking the TC invite frees the TC slot (a fresh TC can be invited).
+  await store.revokeInvite(tcRegen.invite.id);
+  const tc2 = await store.createInvite(t.id, 'tc', 'Tom Coordinator');
+  assert(tc2.role === 'tc', 'revoking the TC invite frees the slot for a new TC');
+  let tc3Err: unknown = null;
+  try {
+    await store.createInvite(t.id, 'tc', 'Tess Coordinator');
+  } catch (e) {
+    tc3Err = e;
+  }
+  assert(tc3Err !== null, 'TC cap still enforced after revoke (1 active TC)');
 
   summary('invite.test');
 }
