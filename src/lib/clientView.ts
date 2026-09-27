@@ -15,3 +15,19 @@ export function canLeaveReview(
 ): boolean {
   return view.total > 0 && view.done >= view.total && view.status !== 'cancelled';
 }
+
+/**
+ * Client top-card status label (Anuraj's call, Sept 2026): the escrow status
+ * next to "YOUR PURCHASE" / "YOUR SALE". Mirrors the get_client_view status
+ * semantics (migration 0015): the escrow is "Completed" once its checklist
+ * is 100% done or the escrow row itself is closed; anything else is
+ * "In progress" (the default when the status is absent or anything
+ * unexpected).
+ */
+export function escrowStatusLabel(
+  view: Pick<ClientView, 'done' | 'total' | 'status'>,
+): 'In progress' | 'Completed' {
+  if (view.status === 'closed') return 'Completed';
+  if (view.total > 0 && view.done >= view.total) return 'Completed';
+  return 'In progress';
+}

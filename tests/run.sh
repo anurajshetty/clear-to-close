@@ -28,6 +28,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/dates.ts" \
   "$ROOT/src/lib/pace.ts" \
+  "$ROOT/src/lib/topCard.ts" \
   "$ROOT/src/lib/shareCopy.ts" \
   "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
@@ -71,6 +72,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/banner_size.test.ts" \
   "$ROOT/tests/topcard_photo.test.ts" \
   "$ROOT/tests/review_gate.test.ts" \
+  "$ROOT/tests/topcard_status.test.ts" \
+  "$ROOT/tests/topcard_colors.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -111,9 +114,17 @@ node "$OUT/tests/confetti.test.js"
 node "$OUT/tests/banner_size.test.js"
 node "$OUT/tests/topcard_photo.test.js"
 node "$OUT/tests/review_gate.test.js"
+node "$OUT/tests/topcard_status.test.js"
+node "$OUT/tests/topcard_colors.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
+
+# Top-card redesign structural guard (Sept 2026): guided-by strip removed,
+# escrow status tag present, 100% = same card + burst with the "Just closed!"
+# triumph card below, review/share section preserved (RN components are not
+# importable in the node suite).
+python3 "$ROOT/tests/topcard_redesign.py"
 
 # Em/en-dash sweep (Sept 2026): user-facing copy must read professional and
 # human — no em dashes (—) or en dashes (–) outside code comments.

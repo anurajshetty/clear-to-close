@@ -85,9 +85,10 @@ central user; the buyers and sellers they represent are the other parties.
   upload quietly keeps the profile local-only. An optional **banner image**
   follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. The banner upload shows a recommended
-  size computed from the GUIDED BY strip's actual dimensions
-  (`src/lib/bannerSize.ts`, about 2.5 : 1 — e.g. 1024 × 417 px) so the
-  cover-cropped banner fills that strip with the least cropping. Editable
+  size computed from the client top card banner header strip's actual
+  dimensions
+  (`src/lib/bannerSize.ts`, about 2.8 : 1 — e.g. 1024 × 370 px) so the
+  cover-cropped banner fills the strip with the least cropping. Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current
@@ -158,22 +159,28 @@ central user; the buyers and sellers they represent are the other parties.
   targets, no drag grips, and no "Custom" tag. One single list in the
   realtor's order — checked steps stay in place. No recency markers of any
   kind.
-- **Client home top card (branded)** — the realtor's **banner photo** bleeds
-  behind the whole card under a dark scrim (brand-teal gradient fallback when
-  no banner is uploaded). Bold "Hi {name}" headline beside the realtor's
+- **Client home top card (branded)** — solid dark teal (#011E1D) card. The
+  realtor's **banner photo** is a header strip at the very top of the card
+  (brand-teal gradient strip fallback when no banner is uploaded); all
+  content sits below it. Bold "Hi {name}" headline beside the realtor's
   avatar (48px tap target, opens the realtor profile), "Your purchase"
   / "Your sale" plus the address in non-bold below. Centered below: "N of N
   steps" above the **208px gold progress ring**, then the days line —
-  "days left: N", "due today" on the target date, red "overdue by N day(s)"
-  past it.
-  - **GUIDED BY strip** — the same banner photo behind a dark scrim with a
-    thin gold border; realtor photo, "GUIDED BY" kicker, "Name / Realty group
-    · DRE #..." (missing pieces drop with no dangling separators), tagline in
-    quotes (omitted when empty), and **Call / Text** buttons.
+  "days left: N" (the number is white normally, yellow at 7 or fewer days,
+  red at 3 or fewer days), "due today" on the target date, red "overdue by
+  N day(s)" past it.
+  - **Escrow status tag** — next to the "Your purchase" / "Your sale" kicker,
+    a small tag reads **"In progress"** or **"Completed"** (mirrors the
+    `get_client_view` escrow status, migration 0015; "Completed" once the
+    checklist is 100% done or the escrow is closed). "Completed" fills gold;
+    "In progress" is a gold outline.
   - **Ahead-of-pace rule** (`src/lib/pace.ts`) — when the escrow is 15+
     percentage points ahead of its timeline, a gold pill reads "Ahead of
-    pace. {FirstName} has you {N} days ahead of schedule." Never at 100%,
-    never on a degenerate timeline.
+    pace. {FirstName} has you {N} days ahead of schedule." Never at 100%
+    (the completion pill owns that state), never on a degenerate timeline.
+    The mid-card completion/pace pill stays visible at 100%; the only
+    per-status changes on the top card are the status tag flip and the
+    confetti burst.
   - **"LATEST FROM {NAME}" card** — directly below the top card, above the
     checklist, always visible. Shows the single most recent realtor action:
     "Checked off {step} · {relative time}" with a green check, or the honest,
@@ -184,9 +191,12 @@ central user; the buyers and sellers they represent are the other parties.
     every toggle (`Escrow.lastAction`, additive migration
     `supabase/migrations/0009_escrow_last_action.sql`); escrows that predate
     the stamp derive the latest checkoff from `completedAt`.
-  - **100% triumph card** — a teal-and-gold celebration with falling confetti
-    (the shared `ConfettiLayer`, reduced-motion aware): the realtor's name as
-    the gold kicker, "Just closed!", realtor photo,
+  - **100%** — the top card stays the same card: the status tag flips to
+    "Completed" and the unified confetti **burst** pops up from below the
+    card (the shared `ConfettiBurst`, reduced-motion aware). Directly below
+    it renders the **triumph card**, unchanged: a teal-and-gold celebration
+    with falling confetti (the shared `ConfettiLayer`, reduced-motion aware):
+    the realtor's name as the gold kicker, "Just closed!", realtor photo,
     "Congratulations, checklist done. The property is yours.", the
     property address, and a 150px 100% gold ring. The completion pill follows
     the ahead-of-schedule rule: "Checklist complete with {N} days to spare.

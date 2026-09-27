@@ -2,38 +2,53 @@
 // and seller home views.
 //
 // Branding redesign (APPROVED mockup screen 7 "banner bleed" + screen 9
-// "ahead of pace", Sept 26, 2026):
-//  - full-bleed card: the realtor's banner photo behind everything with a dark
-//    scrim so white text stays legible; brand-teal gradient fallback (drawn
-//    with react-native-svg, no new native module) when no banner is set.
-//  - header: "Hi {name}", "YOUR PURCHASE"/"YOUR SALE" kicker, address lines,
-//    and the realtor avatar top-right opening the realtor profile.
-//  - centered: "N of N steps" above the 208px gold progress ring, then the
-//    days line ("days left: N" / "due today" / "overdue by N day(s)").
-//  - status pill (see src/lib/pace.ts): 100% + 5 or more days left ->
-//    "Checklist complete with {N} days to spare. {Name} has you ahead of
-//    schedule."; 100% with fewer -> the unchanged "Congratulations, your
-//    checklist is complete"; in progress and 15+ points ahead of the timeline
-//    -> gold "Ahead of pace. {Name} has you {X} days ahead of schedule."
-//  - "GUIDED BY" strip: the realtor's banner as the strip's own background
-//    (teal gradient fallback) with a dark scrim and thin gold border;
-//    realtor photo, name + realty group (or name + DRE when no group is set),
-//    tagline, and Call / Text buttons (Anuraj's call, Sept 2026: the Profile
-//    button was removed).
-//  - 100% (APPROVED mockup screen 10 "Home at 100% · realtor triumph"): the
-//    card becomes the realtor triumph — confetti (reduced-motion respected),
-//    the realtor's name as the gold kicker, "Just closed!", realtor photo,
+// "ahead of pace", Sept 26, 2026), with the correction pass (Anuraj's call,
+// Sept 2026):
+//  - solid dark teal (#011E1D) card background; the realtor's banner photo
+//    is a header strip at the very TOP of the card (brand-teal gradient
+//    strip fallback, drawn with react-native-svg, no new native module,
+//    when no banner is set). All existing content sits below the banner:
+//    "Hi {name}", "YOUR PURCHASE"/"YOUR SALE" + status tag, address lines,
+//    realtor avatar top-right opening the realtor profile, then centered
+//    "N of N steps" above the 208px gold progress ring, the days line
+//    ("days left: N" / "due today" / "overdue by N day(s)"), and the
+//    completion/ahead-of-pace pill below the ring.
+//  - days-left number colors: default (white) normally, yellow at 7 or
+//    fewer days, red at 3 or fewer (see daysLeftTone in src/lib/topCard).
+//  - status pill (see src/lib/pace.ts + topCardPill in src/lib/topCard.ts):
+//    100% + 5 or more days left -> "Checklist complete with {N} days to
+//    spare. {Name} has you ahead of schedule."; 100% with fewer -> the
+//    unchanged "Congratulations, your checklist is complete"; in progress
+//    and 15+ points ahead of the timeline -> gold "Ahead of pace. {Name} has
+//    you {X} days ahead of schedule."
+//  - status tag next to the "YOUR PURCHASE"/"YOUR SALE" kicker: the escrow
+//    lifecycle status ("In progress" or "Completed", see
+//    escrowStatusLabel in src/lib/clientView.ts — it mirrors the
+//    get_client_view status semantics, defaulting to "In progress").
+//  - no GUIDED BY strip (Anuraj's call, Sept 2026): the strip was removed;
+//    the realtor profile stays reachable through the top-right avatar.
+//  - 100%: the top card STAYS the same card — only the status tag flips to
+//    "Completed" and the unified confetti BURST (the shared ConfettiBurst)
+//    pops up from the card's bottom edge. The mid-card completion/pace pill
+//    stays visible at 100% (Anuraj's final call, Sept 2026). The "Just
+//    closed!" triumph card (TriumphCard, exported below) renders BELOW the
+//    top card, unchanged, followed by the review/share section. The step list
+//    below the card is untouched. No JUST NOW markers anywhere.
+//  - 100% triumph (APPROVED mockup screen 10 "Home at 100% · realtor triumph"):
+//    rendered below the top card — confetti (reduced-motion respected), the
+//    realtor's name as the gold kicker, "Just closed!", realtor photo,
 //    "Congratulations, checklist done. The property is yours.", property address,
 //    the 100% gold ring, and the ahead-of-schedule pill per the 100% rule.
-// The step list below the card is untouched. No JUST NOW markers anywhere.
 import React, { useState } from 'react';
-import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, LinearGradient, RadialGradient, Rect, Stop } from 'react-native-svg';
 import { initialsOf } from './ui';
 import { ProgressRing } from './ProgressRing';
-import { ConfettiLayer } from './Confetti';
-import { aheadOfPace, completionPill, firstNameOf } from '../lib/pace';
-import { GUIDED_BY_STRIP } from '../lib/bannerSize';
+import { ConfettiBurst, ConfettiLayer } from './Confetti';
+import { completionPill, firstNameOf } from '../lib/pace';
+import { CLIENT_TOPCARD_BG, DAYS_LEFT_COLORS, daysLeftTone, topCardPill } from '../lib/topCard';
+import { TOPCARD_BANNER_HEADER } from '../lib/bannerSize';
+import { escrowStatusLabel } from '../lib/clientView';
 import { displayBannerUri, displayPhotoUri } from '../lib/profile';
 import type { RealtorProfile } from '../lib/types';
 
@@ -59,15 +74,16 @@ export type ClientTopCardProps = {
   profile: RealtorProfile | null;
   /**
    * Tapping the realtor avatar (top-right) opens the realtor profile
-   * (Anuraj, Sept 2026): this is the way into the profile now that the
-   * GUIDED BY "Profile" button was removed.
+   * (Anuraj, Sept 2026): this is the way into the profile.
    */
   onProfilePress?: () => void;
   /**
-   * Completion banner copy (Sept 2026, TC view). Defaults to the approved
-   * client-home copy; the TC screen passes its own line.
+   * Escrow lifecycle status (Sept 2026, Anuraj's call): shown next to the
+   * "YOUR PURCHASE"/"YOUR SALE" kicker as "In progress" or "Completed"
+   * (see escrowStatusLabel). Rides in the client view since migration 0015;
+   * absent (older cached views) defaults to "In progress".
    */
-  completionText?: string;
+  status?: 'open' | 'closed' | 'cancelled';
 };
 
 function DaysLine({ daysToClose }: { daysToClose: number }) {
@@ -86,9 +102,14 @@ function DaysLine({ daysToClose }: { daysToClose: number }) {
       </Text>
     );
   }
+  // Days-left color thresholds (Anuraj, Sept 2026): the number is the default
+  // (white) color normally, yellow at 7 or fewer days, red at 3 or fewer.
+  const tone = daysLeftTone(daysToClose);
+  const numColor =
+    tone === 'alert' ? DAYS_LEFT_COLORS.alert : tone === 'warn' ? DAYS_LEFT_COLORS.warn : DAYS_LEFT_COLORS.default;
   return (
     <Text style={styles.byBig} testID="days-line">
-      days left: <Text style={styles.byBigNum}>{daysToClose}</Text>
+      days left: <Text style={[styles.byBigNum, { color: numColor }]}>{daysToClose}</Text>
     </Text>
   );
 }
@@ -153,15 +174,17 @@ function GoldGlows() {
   );
 }
 
-// Screen 10 (APPROVED mockup "Home at 100% · realtor triumph", Sept 26): at
-// 100% the top card becomes the realtor triumph — confetti (reduced-motion
-// respected, see ConfettiLayer), the realtor's name as the gold kicker, "Just
-// closed!", the realtor's photo, "Congratulations, checklist done. The
-// property is yours.", the property address, the 100% gold ring (150px display, same
-// r=88/stroke=24 geometry as the 208px ring), and the ahead-of-schedule
-// pill per the existing 100% rule. The card keeps the brand-teal gradient
-// with gold glows (mockup), not the banner photo.
-function TriumphCard({
+// Screen 10 (APPROVED mockup "Home at 100% · realtor triumph", Sept 26).
+// Rendered BELOW the client top card at 100% (the top card stays the same
+// card; only its status tag flips to "Completed"). UNCHANGED by the guided-by
+// removal (Anuraj, Sept 2026): confetti (reduced-motion respected, see
+// ConfettiLayer), the realtor's name as the gold kicker, "Just closed!", the
+// realtor's photo, "Congratulations, checklist done. The property is yours.",
+// the property address, the 100% gold ring (150px display, same r=88/stroke=24
+// geometry as the 208px ring), and the ahead-of-schedule pill per the
+// existing 100% rule. The card keeps the brand-teal gradient with gold glows
+// (mockup), not the banner photo.
+export function TriumphCard({
   name,
   photoUri,
   address,
@@ -248,53 +271,23 @@ export function ClientTopCard({
   closeDate,
   profile,
   onProfilePress,
-  // Optional completion-copy override (Sept 2026, TC view): when provided,
-  // the 100% triumph pill shows this text instead of the client-home copy.
-  // Absent (buyer/seller) the approved client copy renders unchanged.
-  completionText,
+  status,
 }: ClientTopCardProps) {
   const branded = profile;
   const name = (branded?.name ?? '').trim();
   const first = firstNameOf(name) || 'your realtor';
-  const phone = (branded?.phone ?? '').trim();
   const bannerUri = displayBannerUri(branded);
-  const realtyGroup = (branded?.realty_group ?? '').trim();
-  const dre = (branded?.dreLicense ?? '').trim();
-  const tagline = (branded?.about ?? '').trim();
 
-  // Guided-by name line (mockup screen 7): "Name · Realty group". When no
-  // group is set, name + DRE only — never a dangling separator.
-  const nameLine = realtyGroup
-    ? `${name} · ${realtyGroup}`
-    : dre
-      ? `${name} · DRE #${dre}`
-      : name;
-
-  const pill = completionPill({ done, total, daysToClose, name });
-  const pace = pill ? { kind: 'none' as const } : aheadOfPace({ done, total, openDate, closeDate });
-
-  // 100%: the top card becomes the realtor triumph (screen 10).
+  const pill = topCardPill({ done, total, daysToClose, name, openDate, closeDate });
+  // 100% (Anuraj, Sept 2026): the top card stays the same card — only the
+  // status tag flips to "Completed" and the unified confetti BURST pops up
+  // from the card's bottom edge. The mid-card completion/pace pill stays
+  // visible at 100% (Anuraj's final call); the "Just closed!" triumph card
+  // renders below the top card (see TriumphCard), unchanged.
   const isComplete = total > 0 && done >= total;
-  if (isComplete) {
-    return (
-      <TriumphCard
-        name={name}
-        photoUri={displayPhotoUri(branded)}
-        address={address}
-        city={city}
-        daysToClose={daysToClose}
-        total={total}
-        completionText={completionText}
-      />
-    );
-  }
-
-  const call = () => {
-    if (phone) Linking.openURL(`tel:${phone}`);
-  };
-  const text = () => {
-    if (phone) Linking.openURL(`sms:${phone}`);
-  };
+  const statusText = escrowStatusLabel({ done, total, status });
+  const [cardW, setCardW] = useState(0);
+  const [cardH, setCardH] = useState(0);
 
   const avatarPhoto = displayPhotoUri(branded);
   const avatar = (
@@ -308,25 +301,55 @@ export function ClientTopCard({
   );
 
   return (
-    <View style={styles.hero} testID="client-topcard">
-      {bannerUri ? (
-        <Image
-          source={{ uri: bannerUri }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-          testID="topcard-banner"
-        />
-      ) : (
-        <TealGradientFallback testID="topcard-gradient" />
-      )}
-      {/* Dark scrim over a photo so white text stays legible on any image. */}
-      {bannerUri ? <View style={styles.scrim} /> : null}
+    <View
+      style={styles.hero}
+      testID="client-topcard"
+      onLayout={(e) => {
+        setCardW(e.nativeEvent.layout.width);
+        setCardH(e.nativeEvent.layout.height);
+      }}
+    >
+      {/* Banner header strip at the very TOP of the card (Anuraj, Sept 2026):
+          the realtor's synced banner image, cover-cropped; the brand-teal
+          gradient strip is the fallback when no banner is uploaded. All
+          card content sits below it. */}
+      <View style={styles.bannerHeader} testID="topcard-banner-header">
+        {bannerUri ? (
+          <Image
+            source={{ uri: bannerUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            testID="topcard-banner"
+          />
+        ) : (
+          <TealGradientFallback testID="topcard-gradient" />
+        )}
+      </View>
+
+      {/* 100%: the unified confetti BURST pops up from below the top card
+          (the shared ConfettiBurst — one confetti implementation, same look
+          and motion everywhere; reduced-motion aware). */}
+      {isComplete ? (
+        <ConfettiBurst cardWidth={cardW} cardHeight={cardH} testID="topcard-confetti-burst" />
+      ) : null}
 
       <View style={styles.content}>
         <View style={styles.topRow}>
           <View style={styles.head}>
             <Text style={styles.greeting}>{greeting}</Text>
-            <Text style={styles.kickerGold}>{kicker.toUpperCase()}</Text>
+            <View style={styles.kickerRow}>
+              <Text style={styles.kickerGold}>{kicker.toUpperCase()}</Text>
+              <View
+                style={[styles.statusTag, statusText === 'Completed' && styles.statusTagDone]}
+                testID="escrow-status"
+              >
+                <Text
+                  style={[styles.statusTagText, statusText === 'Completed' && styles.statusTagTextDone]}
+                >
+                  {statusText.toUpperCase()}
+                </Text>
+              </View>
+            </View>
             <Text style={styles.addr} testID="client-address">
               {address}
             </Text>
@@ -366,68 +389,22 @@ export function ClientTopCard({
           <DaysLine daysToClose={daysToClose} />
         </View>
 
-        {pill ? (
+        {/* The mid-card completion/pace pill stays visible at 100% (Anuraj's
+            final call, Sept 2026): the ONLY per-status changes on the top
+            card are the status tag flipping to "Completed" and the confetti
+            burst popping from below the card. */}
+        {pill?.kind === 'completion' ? (
           <CompletionPill text={pill.text} />
-        ) : pace.kind === 'ahead' ? (
+        ) : pill?.kind === 'pace' ? (
           <View style={styles.pacePill} testID="pace-pill">
             <View style={[styles.dot, styles.dotGold]} />
             <Text style={styles.pacePillText}>
-              {`Ahead of pace. ${first} has you ${pace.daysAhead} ${
-                pace.daysAhead === 1 ? 'day' : 'days'
+              {`Ahead of pace. ${first} has you ${pill.daysAhead} ${
+                pill.daysAhead === 1 ? 'day' : 'days'
               } ahead of schedule.`}
             </Text>
           </View>
         ) : null}
-
-        <View style={styles.guided} testID="guided-by">
-          {bannerUri ? (
-            <Image
-              source={{ uri: bannerUri }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              testID="guided-banner"
-            />
-          ) : (
-            <TealGradientFallback testID="guided-gradient" />
-          )}
-          <View style={styles.guidedScrim} />
-          <View style={styles.guidedRow}>
-            <View style={styles.guidedAvatar}>
-              {avatarPhoto ? (
-                <Image source={{ uri: avatarPhoto }} style={styles.guidedAvatarImg} />
-              ) : (
-                <Text style={styles.guidedAvatarInitials}>{initialsOf(name)}</Text>
-              )}
-            </View>
-            <View style={styles.guidedText}>
-              <Text style={styles.guidedKicker}>GUIDED BY</Text>
-              <Text style={styles.guidedName}>{nameLine}</Text>
-              {tagline ? <Text style={styles.tagline}>{`"${tagline}"`}</Text> : null}
-            </View>
-          </View>
-          {phone ? (
-            <View style={styles.btnRow}>
-              <Pressable
-                onPress={call}
-                accessibilityRole="button"
-                accessibilityLabel={`Call ${name} at ${phone}`}
-                style={styles.callBtn}
-                testID="guided-call"
-              >
-                <Text style={styles.callBtnText}>Call</Text>
-              </Pressable>
-              <Pressable
-                onPress={text}
-                accessibilityRole="button"
-                accessibilityLabel={`Text ${name} at ${phone}`}
-                style={styles.ghostBtn}
-                testID="guided-text"
-              >
-                <Text style={styles.ghostBtnText}>Text</Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </View>
       </View>
 
     </View>
@@ -435,21 +412,25 @@ export function ClientTopCard({
 }
 
 const styles = StyleSheet.create({
-  // Full-bleed banner card (mockup screen 7).
+  // Top card (correction pass, Anuraj, Sept 2026): solid dark teal (#011E1D)
+  // background; the realtor's banner is a header strip at the very top of
+  // the card (brand-teal gradient strip fallback when no banner), with all
+  // content below it.
   hero: {
     marginTop: 14,
     marginBottom: 18,
     borderRadius: 26,
     overflow: 'hidden',
     position: 'relative',
+    backgroundColor: CLIENT_TOPCARD_BG,
   },
-  scrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+  // Banner header strip: realtor's synced banner, cover-cropped, full card
+  // width; the card's rounded top corners come from `overflow: hidden` above.
+  bannerHeader: {
+    height: TOPCARD_BANNER_HEADER.stripHeight,
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: '#0E3B35',
   },
   content: {
     paddingTop: 22,
@@ -474,12 +455,40 @@ const styles = StyleSheet.create({
     letterSpacing: -0.27,
     marginBottom: 6,
   },
+  kickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
   kickerGold: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 1.6,
     color: GOLD,
-    marginBottom: 4,
+  },
+  // Escrow status tag next to the kicker (Anuraj, Sept 2026): "In progress"
+  // reads as a gold outline on the dark card; "Completed" fills gold so the
+  // 100% state is unmistakable.
+  statusTag: {
+    borderWidth: 1,
+    borderColor: 'rgba(245,198,107,0.7)',
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  statusTagText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: GOLD,
+  },
+  statusTagDone: {
+    backgroundColor: GOLD,
+    borderColor: GOLD,
+  },
+  statusTagTextDone: {
+    color: '#011E1D',
   },
   addr: {
     fontSize: 14,
@@ -605,107 +614,6 @@ const styles = StyleSheet.create({
   },
   dotGold: {
     backgroundColor: GOLD,
-  },
-  // "Guided by" strip: the realtor's banner as its own background (teal
-  // gradient fallback), dark scrim for legibility, thin gold border.
-  guided: {
-    position: 'relative',
-    overflow: 'hidden',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(245,198,107,0.7)',
-    padding: GUIDED_BY_STRIP.stripPadding,
-    marginTop: 12,
-  },
-  guidedScrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
-  guidedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  guidedAvatar: {
-    width: GUIDED_BY_STRIP.avatarSize,
-    height: GUIDED_BY_STRIP.avatarSize,
-    borderRadius: GUIDED_BY_STRIP.avatarSize / 2,
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    flexShrink: 0,
-  },
-  guidedAvatarImg: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-  },
-  guidedAvatarInitials: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  guidedText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  guidedKicker: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    color: GOLD,
-  },
-  guidedName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: 2,
-  },
-  tagline: {
-    fontSize: 12,
-    fontStyle: 'italic',
-    color: FAINT,
-    marginTop: 2,
-  },
-  btnRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: GUIDED_BY_STRIP.buttonGap,
-  },
-  callBtn: {
-    flex: 1,
-    minHeight: GUIDED_BY_STRIP.buttonHeight,
-    borderRadius: 12,
-    backgroundColor: GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  callBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#3A2E12',
-  },
-  ghostBtn: {
-    flex: 1,
-    minHeight: GUIDED_BY_STRIP.buttonHeight,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 12,
-  },
-  ghostBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
   // 100% triumph card (mockup screen 10).
   triumphContent: {

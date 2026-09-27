@@ -6,12 +6,14 @@
 // "Your purchase" kicker + non-bold address, the realtor's avatar circle
 // top-right at the greeting level (tap -> Call/Text menu); centered below:
 // "N of N steps" above the 208px gold progress ring, then the days-left line
-// ("days left: N" / "due today" / "overdue by N day(s)"). Status pill: 100% +
-// 5+ days left -> "Checklist complete with {N} days to spare. {Name} has you
-// ahead of schedule."; 100% with fewer -> "Congratulations, your checklist is
-// complete"; 15+ points ahead of the timeline -> gold "Ahead of pace" pill.
-// A "GUIDED BY" strip (photo, name, tagline, Call/Text/Profile) anchors the
-// card. The single ordered checklist in the realtor's order sits below — checked steps stay in place, UP NEXT on the first
+// ("days left: N" / "due today" / "overdue by N day(s)"). Status tag next to
+// the kicker: "In progress" or "Completed" (escrow status, migration 0015).
+// Status pill (mid-escrow): 15+ points ahead of the timeline -> gold "Ahead
+// of pace" pill. At 100% the top card stays the same card (status flips to
+// "Completed", confetti burst pops up from below it) and the "Just closed!"
+// triumph card renders directly below it, unchanged, followed by the
+// review/share section (100% and not cancelled). The single ordered checklist
+// in the realtor's order sits below — checked steps stay in place, UP NEXT on the first
 // remaining step, no tap targets, no drag grips, no Custom tag, no JUST NOW
 // markers. The standalone realtor card is removed (Sept 25).
 import React, { useCallback, useState } from 'react';
@@ -23,7 +25,8 @@ import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import { useReviewSheet } from '../../../src/hooks/useReviewSheet';
 import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { SecondaryButton } from '../../../src/components/ui';
-import { ClientTopCard } from '../../../src/components/ClientTopCard';
+import { ClientTopCard, TriumphCard } from '../../../src/components/ClientTopCard';
+import { displayPhotoUri } from '../../../src/lib/profile';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
 import { canLeaveReview } from '../../../src/lib/clientView';
@@ -119,12 +122,26 @@ export default function BuyerView() {
             openDate={view.openDate}
             closeDate={view.closeDate}
             profile={profile}
+            status={view.status}
             onProfilePress={() =>
               view?.realtorId
                 ? router.push(`/realtor/${view.realtorId}`)
                 : router.push({ pathname: '/client/profile', params: { escrowId: id } })
             }
           />
+
+          {/* 100% (Anuraj, Sept 2026): the top card stays the same card and
+              the "Just closed!" triumph card renders below it, unchanged. */}
+          {view.total > 0 && view.done >= view.total ? (
+            <TriumphCard
+              name={profile?.name ?? ''}
+              photoUri={displayPhotoUri(profile)}
+              address={view.address}
+              city={view.city}
+              daysToClose={view.daysToClose}
+              total={view.total}
+            />
+          ) : null}
 
           {/* "LATEST FROM {NAME}" (mockup screen 7): directly below the top
               card, above the checklist, in every state — always visible. */}
