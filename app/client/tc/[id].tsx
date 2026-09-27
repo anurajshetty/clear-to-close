@@ -35,51 +35,56 @@ export default function TcView() {
   const [view, setView] = useState<TcView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [partyName, setPartyName] = useState('');
+  // Data load, shared by focus and foreground (Sept 2026
+  // foreground-refresh fix): the focus effect does not fire on foreground
+  // return, so the link gate invokes this to converge the view and the
+  // linked realtor profile instead of leaving the stale snapshot rendered.
+  const load = useCallback(() => {
+    let active = true;
+    if (id) {
+      store
+        .getTcView(id)
+        .then(async (v) => {
+          if (active) setView(v);
+          // The fresh cloud view carries the linked realtor profile — pick
+          // it up after the view lands so the top card always shows the
+          // latest synced photo (Sept 2026: the old two-call pattern below
+          // let the fast local getProfile() (null on client devices)
+          // overwrite the linked profile in a race).
+          try {
+            const linked = await store.getLinkedProfile(id);
+            if (active && linked) setProfile(linked);
+          } catch {}
+        })
+        .catch(() => {});
+    }
+    // Linked-first, local fallback — a single call, no race (the same
+    // pattern the redeem celebration screen uses).
+    store
+      .getClientProfile(id || null)
+      .then((p) => {
+        if (active && p) setProfile(p);
+      })
+      .catch(() => {});
+    // The greeting uses the name from this device's link (what the
+    // coordinator entered at redeem).
+    auth
+      .getClientLink()
+      .then((link) => {
+        if (active && link && link.escrowId === id) setPartyName(link.partyName);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [id]);
   // The device link is revalidated on every focus, BEFORE the escrow
   // renders — a revoked/superseded link routes to /link-dead.
-  const { gateState, retry } = useClientLinkGate(id, 'tc');
+  const { gateState, retry } = useClientLinkGate(id, 'tc', {
+    onForegroundRefresh: load,
+  });
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      if (id) {
-        store
-          .getTcView(id)
-          .then(async (v) => {
-            if (active) setView(v);
-            // The fresh cloud view carries the linked realtor profile — pick
-            // it up after the view lands so the top card always shows the
-            // latest synced photo (Sept 2026: the old two-call pattern below
-            // let the fast local getProfile() (null on client devices)
-            // overwrite the linked profile in a race).
-            try {
-              const linked = await store.getLinkedProfile(id);
-              if (active && linked) setProfile(linked);
-            } catch {}
-          })
-          .catch(() => {});
-      }
-      // Linked-first, local fallback — a single call, no race (the same
-      // pattern the redeem celebration screen uses).
-      store
-        .getClientProfile(id || null)
-        .then((p) => {
-          if (active && p) setProfile(p);
-        })
-        .catch(() => {});
-      // The greeting uses the name from this device's link (what the
-      // coordinator entered at redeem).
-      auth
-        .getClientLink()
-        .then((link) => {
-          if (active && link && link.escrowId === id) setPartyName(link.partyName);
-        })
-        .catch(() => {});
-      return () => {
-        active = false;
-      };
-    }, [id]),
-  );
+  useFocusEffect(load);
 
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
   const done = (view?.buyer?.done ?? 0) + (view?.seller?.done ?? 0);

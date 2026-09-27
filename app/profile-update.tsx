@@ -3,8 +3,9 @@
 // returns to the deal list. "Log out" is a quiet row below "Change password"
 // (Sept 2026): web returns to the login screen, native clears the persisted
 // session fully and returns to the role-picker entry screen.
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AppState,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -46,45 +47,69 @@ export default function ProfileUpdate() {
     toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
   }, []);
 
+  // True once the user has touched the form since the last load — a
+  // foreground refresh must never wipe in-progress edits.
+  const editedRef = useRef(false);
+
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
       setDraft((d) => ({ ...d, ...p }));
       if (p.name !== undefined) setNameError(null);
+      editedRef.current = true;
     },
     [],
   );
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      store
-        .getProfile()
-        .then((p) => {
-          if (!p || !active) return;
-          setDraft({
-            name: p.name ?? '',
-            photoUri: p.photoUri ?? null,
-            banner_image: p.banner_image ?? null,
-            about: p.about ?? '',
-            yearsExperience: p.yearsExperience ?? '',
-            email: p.email ?? '',
-            areasServed: p.areasServed ?? '',
-            phone: p.phone ?? '',
-            dreLicense: p.dreLicense ?? '',
-            realty_group: p.realty_group ?? '',
-          });
-          setKeptReviews(p.reviews ?? []);
-          setKeptRating(p.rating ?? null);
-          setKeptPhotoRemoteUrl(p.photoRemoteUrl ?? null);
-          setKeptBannerRemoteUrl(p.bannerRemoteUrl ?? null);
-          setNameError(null);
-        })
-        .catch(() => {});
-      return () => {
-        active = false;
-      };
-    }, []),
-  );
+  const load = useCallback(() => {
+    let active = true;
+    store
+      .getProfile()
+      .then((p) => {
+        // Never overwrite in-progress typing: if the user touched the form
+        // while the read was in flight, keep their draft.
+        if (!p || !active || editedRef.current) return;
+        setDraft({
+          name: p.name ?? '',
+          photoUri: p.photoUri ?? null,
+          banner_image: p.banner_image ?? null,
+          about: p.about ?? '',
+          yearsExperience: p.yearsExperience ?? '',
+          email: p.email ?? '',
+          areasServed: p.areasServed ?? '',
+          phone: p.phone ?? '',
+          dreLicense: p.dreLicense ?? '',
+          realty_group: p.realty_group ?? '',
+        });
+        setKeptReviews(p.reviews ?? []);
+        setKeptRating(p.rating ?? null);
+        setKeptPhotoRemoteUrl(p.photoRemoteUrl ?? null);
+        setKeptBannerRemoteUrl(p.bannerRemoteUrl ?? null);
+        setNameError(null);
+        editedRef.current = false;
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useFocusEffect(load);
+
+  // Foreground return (Sept 2026 stale-profile fix): the app may have been
+  // backgrounded while the profile changed elsewhere — converge the local
+  // snapshot from the server first, then reload the form unless the user
+  // has unsaved edits in flight (a foreground refresh must never wipe
+  // in-progress typing).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      (async () => {
+        await store.refreshProfile();
+        if (!editedRef.current) load();
+      })();
+    });
+    return () => sub.remove();
+  }, [load]);
 
   const onSave = async () => {
     if (!draft.name.trim()) {
@@ -111,6 +136,7 @@ export default function ProfileUpdate() {
       });
       // A completed profile clears the onboarding "complete your profile" nudge.
       await auth.setProfileSkipped(false);
+      editedRef.current = false;
       router.back();
     } finally {
       setSaving(false);

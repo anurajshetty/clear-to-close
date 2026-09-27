@@ -110,17 +110,11 @@ export default function InAppRealtorProfile() {
     setProfile(null);
     (async () => {
       try {
-        // Same wiring as the celebration: the linked profile rides the
-        // cloud client view; warm it once when the cache is cold.
-        let p = escrowId ? await store.getClientProfile(escrowId) : null;
-        if (!p && escrowId) {
-          try {
-            await store.getBuyerView(escrowId);
-          } catch {
-            // Offline or cloud unreachable: fall through to the fallback.
-          }
-          p = await store.getClientProfile(escrowId);
-        }
+        // Converge-on-mount (Sept 2026 stale-profile fix): the old
+        // cache-only read stayed stale — refresh the linked view from the
+        // server first (fails open offline), then read the snapshot.
+        if (escrowId) await store.refreshClientView(escrowId);
+        const p = escrowId ? await store.getClientProfile(escrowId) : null;
         if (!active) return;
         if (p) setProfile(p);
         else setFailed(true);

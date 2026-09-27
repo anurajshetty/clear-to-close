@@ -56,6 +56,13 @@ export interface Store {
    */
   pullProfileFromCloud(): Promise<RealtorProfile | null>;
   /**
+   * Realtor foreground refresh (Sept 2026 stale-profile fix): converge the
+   * local profile snapshot from the server row. A locally-dirty profile
+   * awaiting push is never clobbered; a missing server row never wipes the
+   * local snapshot. Never throws.
+   */
+  refreshProfile(): Promise<void>;
+  /**
    * Pull the realtor's cloud escrows (with steps) into the local store
    * (e.g. login on a new device/browser whose local KV was never seeded).
    * Rows with queued local edits keep the local copy so the pull cannot
@@ -176,6 +183,12 @@ export interface Store {
    * both-side escrow; the active side's on a single-side escrow.
    */
   getTcView(escrowId: string): Promise<TcView>;
+  /**
+   * Client refresh/foreground (Sept 2026): refetch this escrow's cloud view
+   * so the linked realtor profile (name/photo) converges on refresh and
+   * foreground return. Fails open to the cached snapshot; never throws.
+   */
+  refreshClientView(escrowId: string): Promise<void>;
   /**
    * Logout wipe (Sept 2026): drop every account-scoped artifact — the
    * in-memory snapshot and the persisted profile/escrows/invites/links —
@@ -434,6 +447,10 @@ export function createStore(kv: KV): Store {
       // Local-only build: no cloud to pull from.
       await ensureLoaded();
       return data.profile;
+    },
+
+    async refreshProfile(): Promise<void> {
+      // Local-only build: nothing to converge from.
     },
 
     async pullEscrowsFromCloud(): Promise<Escrow[]> {
@@ -964,6 +981,10 @@ export function createStore(kv: KV): Store {
         seller: e.side === 'buy' ? null : buildClientView(e, 'seller'),
       };
     },
+
+    // Local-only store: no cloud view to refetch — the local profile is
+    // already the source of truth here.
+    async refreshClientView(_escrowId: string): Promise<void> {},
 
     async clear(): Promise<void> {
       data.loaded = false;

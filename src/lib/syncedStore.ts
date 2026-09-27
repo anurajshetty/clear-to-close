@@ -400,6 +400,30 @@ export function createSyncedStore(
   }
 
   /**
+   * Converge-when-clean (Sept 2026 stale-profile fix): replace the local
+   * profile snapshot with the live server row — unless this device has
+   * queued (unsynced) profile edits, which win, mirroring
+   * pullEscrowsFromCloud's dirty-row rule. A missing server row never
+   * wipes the local snapshot (a profile created while the cloud was
+   * unconfigured may never have been pushed). Never throws.
+   */
+  async function convergeProfileFromCloud(): Promise<void> {
+    try {
+      if (!cloudConfigured()) return;
+      const c = client();
+      if (!c) return;
+      const ops = await readOutboxOps(kv);
+      if (ops.some((o) => o.op === 'pushProfile')) return; // local is ahead
+      const uid = await ensureCloudUser(c);
+      if (!uid) return;
+      const pulled = await pullProfileNow(c, uid);
+      if (pulled) await local.saveProfile(pulled);
+    } catch {
+      // Fail open: the local snapshot keeps rendering.
+    }
+  }
+
+  /**
    * Cloud escrow hydration. Pulls the signed-in realtor's escrows (with
    * steps) and merges them into the local store:
    *   - rows missing locally are inserted;
@@ -502,21 +526,33 @@ export function createSyncedStore(
     clear: () => local.clear(),
 
     /**
-     * Post-login profile reconcile. The routing decision in login.tsx and the
-     * boot router must not trust the local KV alone: a realtor logging in on
-     * a device/browser whose local store was never seeded (new device,
-     * cleared storage) would otherwise land on profile creation even though
-     * their profile exists in the cloud. When the local copy is missing we
-     * pull the cloud row once, persist it locally, and return it.
+     * Boot/login profile hydration.
      *
-     * A locally saved profile is returned as-is regardless of its name: an
-     * existing profile with an empty name still counts as an existing
-     * profile and must not be re-fetched or discarded.
+     * The routing decision in login.tsx and the boot router must not trust
+     * the local KV alone: a realtor logging in on a device/browser whose
+     * local store was never seeded (new device, cleared storage) would
+     * otherwise land on profile creation even though their profile exists
+     * in the cloud. When the local copy is missing we pull the cloud row
+     * once, persist it locally, and return it.
+     *
+     * Converge-when-clean (Sept 2026 stale-profile fix): when a local copy
+     * EXISTS, it used to be returned as-is forever — a profile saved on
+     * another device/browser never converged, so refresh kept rendering
+     * stale name/email. Now, when no local edits are awaiting push, the
+     * snapshot is replaced with the live server row before returning.
+     *
+     * A locally saved profile is still returned as-is regardless of its
+     * name: an existing profile with an empty name still counts as an
+     * existing profile and must not be re-fetched or discarded — the
+     * converge only swaps in the server row, it never nulls the result.
      */
     pullProfileFromCloud: async (): Promise<RealtorProfile | null> => {
       try {
         const existing = await local.getProfile();
-        if (existing) return existing;
+        if (existing) {
+          await convergeProfileFromCloud();
+          return (await local.getProfile()) ?? existing;
+        }
         if (!cloudConfigured()) return existing;
         const c = client();
         if (!c) return existing;
@@ -535,6 +571,15 @@ export function createSyncedStore(
           return null;
         }
       }
+    },
+
+    /**
+     * Realtor foreground refresh (Sept 2026 stale-profile fix): converge
+     * the local profile snapshot from the server row. Never throws; never
+     * clobbers local edits awaiting push.
+     */
+    refreshProfile: async (): Promise<void> => {
+      await convergeProfileFromCloud();
     },
 
     pullEscrowsFromCloud,
@@ -909,7 +954,14 @@ export function createSyncedStore(
         if (c) {
           try {
             const res = await Promise.race([fetchCloudView(c, linkId), timeoutMs(8000)]);
-            if (res.ok) return { valid: true };
+            if (res.ok) {
+              // Foreground-refresh fix (Sept 2026): this payload carries the
+              // live realtor profile — land it in the snapshot caches instead
+              // of discarding it, so a foreground revalidation converges the
+              // client instead of leaving the stale snapshot rendered.
+              await cacheCloudViewPayload(res);
+              return { valid: true };
+            }
             // Fail CLOSED on an explicit server rejection — the link is dead
             // ('revoked', or 'invalid' when no live link row exists). Fail open
             // only on transport failures, so a flaky network never strands a
@@ -969,7 +1021,50 @@ export function createSyncedStore(
       }
     },
     getTcView: (escrowId: string) => viewForTc(escrowId),
+
+    /**
+     * Client refresh/foreground (Sept 2026): refetch this escrow's cloud view
+     * so the linked realtor profile (name/photo) converges even when the
+     * screen never refocuses (foreground return) or never fetched at all
+     * (the in-app realtor profile screen, which used to read only the cached
+     * snapshot). Fails open to the cached snapshot; never throws.
+     */
+    refreshClientView: async (escrowId: string): Promise<void> => {
+      try {
+        const link = await cloudLinkFor(escrowId);
+        if (!link) return;
+        if (link.role === 'tc') {
+          await viewForTc(escrowId);
+        } else {
+          await viewForRole(escrowId, link.role);
+        }
+      } catch {
+        // Fail open: the cached snapshot keeps rendering.
+      }
+    },
   };
+
+  /**
+   * Land a freshly fetched get_client_view payload in the snapshot caches
+   * (Sept 2026 foreground-refresh fix). Shared by the view fetchers and the
+   * link-gate revalidation: every successful RPC must converge the
+   * ctc:cloudview snapshot, never silently discard the live profile.
+   */
+  async function cacheCloudViewPayload(res: {
+    view?: ClientView;
+    tcView?: TcView;
+    profile?: RealtorProfile | null;
+  }): Promise<void> {
+    const escrowId = res.view?.escrowId ?? res.tcView?.escrowId;
+    if (!escrowId) return;
+    const profile = res.profile ?? null;
+    profileCache.set(escrowId, profile);
+    if (res.view) {
+      await writeJson(kv, K_CLOUD_VIEW_PREFIX + escrowId, { view: res.view, profile });
+    } else if (res.tcView) {
+      await writeJson(kv, K_CLOUD_VIEW_PREFIX + escrowId, { tcView: res.tcView, profile });
+    }
+  }
 
   async function viewForRole(escrowId: string, role: ClientRole): Promise<ClientView> {
     const link = await cloudLinkFor(escrowId);

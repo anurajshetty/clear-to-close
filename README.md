@@ -323,7 +323,13 @@ silently rejects (zero rows written, no error — e.g. the rows belong to a
 different account than the current session) stays queued for retry instead of
 being dropped as synced, and converges the next time the owning account
 syncs. Failed pushes are never silently discarded, so a realtor edit can no
-longer vanish without the client ever seeing it.
+longer vanish without the client ever seeing it. The local snapshot is never
+the eternal source of truth: on boot (and when the app returns to the
+foreground) the realtor profile is refetched from the server and replaces the
+stale local snapshot, and the client side refetches its linked escrow view the
+same way. Conflict care: a locally-dirty row with edits still awaiting push is
+never clobbered by the server copy, and a missing server row never wipes the
+local snapshot; offline, the cached snapshot keeps rendering.
 
 **Sync failure reporting** — whenever a write fails to reach the server
 (profile edits, escrow edits and dates, checklist check/uncheck, reorders

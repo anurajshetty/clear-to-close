@@ -4,8 +4,8 @@
 // the license line ONLY when the realtor entered one (empty = no line at
 // all), about, stats, areas. No Call / Message actions (removed per Anuraj,
 // Sept 25). One profile per realtor, shown across all their escrows.
-import React, { createElement, useCallback, useState } from 'react';
-import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { createElement, useCallback, useEffect, useState } from 'react';
+import { AppState, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
 import { auth } from '../../src/lib/auth';
@@ -42,43 +42,57 @@ export default function ClientRealtorProfile() {
   // permission (never nags; the ask-once pre-prompt lives in PushGate).
   const [pushOff, setPushOff] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      let active = true;
-      setFailed(false);
-      store
-        .getClientProfile(escrowId)
+  // Data load, shared by focus and foreground (Sept 2026
+  // foreground-refresh fix): the linked profile is refetched from the cloud
+  // view first — the old cache-only read never fetched, so the realtor's
+  // name/photo stayed stale across refresh and foreground return.
+  const load = useCallback(() => {
+    let active = true;
+    setFailed(false);
+    const profileP = escrowId
+      ? store.refreshClientView(escrowId).then(() => store.getClientProfile(escrowId))
+      : store.getClientProfile(null);
+    profileP
+      .then((p) => {
+        if (active) {
+          setProfile(p);
+          setFailed(!p);
+        }
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      });
+    // "Back to my escrow" returns to THIS client's own home view.
+    auth
+      .getClientLink()
+      .then((link) => {
+        if (active && link && (!escrowId || link.escrowId === escrowId)) {
+          setHomeRoute({ role: link.role, escrowId: link.escrowId });
+        }
+      })
+      .catch(() => {});
+    // Quiet push hint state (native only; web is out of push scope).
+    if (Platform.OS !== 'web') {
+      getPushPermission()
         .then((p) => {
-          if (active) {
-            setProfile(p);
-            setFailed(!p);
-          }
-        })
-        .catch(() => {
-          if (active) setFailed(true);
-        });
-      // "Back to my escrow" returns to THIS client's own home view.
-      auth
-        .getClientLink()
-        .then((link) => {
-          if (active && link && (!escrowId || link.escrowId === escrowId)) {
-            setHomeRoute({ role: link.role, escrowId: link.escrowId });
-          }
+          if (active) setPushOff(p === 'denied');
         })
         .catch(() => {});
-      // Quiet push hint state (native only; web is out of push scope).
-      if (Platform.OS !== 'web') {
-        getPushPermission()
-          .then((p) => {
-            if (active) setPushOff(p === 'denied');
-          })
-          .catch(() => {});
-      }
-      return () => {
-        active = false;
-      };
-    }, [escrowId]),
-  );
+    }
+    return () => {
+      active = false;
+    };
+  }, [escrowId]);
+
+  useFocusEffect(load);
+
+  // Foreground return does not refocus the screen: reload the same way.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') load();
+    });
+    return () => sub.remove();
+  }, [load]);
 
   const goHome = useCallback(() => {
     if (homeRoute) {
