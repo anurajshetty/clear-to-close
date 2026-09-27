@@ -148,6 +148,31 @@ export function createSyncedStore(
     }
   }
 
+  /**
+   * Best-effort immediate outbox drain (fire-and-forget). enqueueOutbox
+   * alone never pushes — without this, ops queued from an already-open app
+   * sit until the next boot (the only other drain is in initCloudSync).
+   * Anuraj bug (Sept 2026): closing an escrow left the server's
+   * client_links row live, so the client kept access. Failures stay queued
+   * for the boot-time drain, so this is purely additive.
+   */
+  async function drainOutboxNow(): Promise<void> {
+    if (!cloudOk()) return;
+    const c = client();
+    const uid = userId;
+    if (!c || !uid) return;
+    try {
+      await drainOutbox(c, uid, kv, {
+        getEscrow: (id) => local.getEscrow(id),
+        getProfile: () => local.getProfile(),
+        getInvite: (id) => local.getInvite(id),
+        updateInviteCode: (id, code) => local.updateInviteCode(id, code),
+      });
+    } catch {
+      // Stays queued; the boot-time drain retries.
+    }
+  }
+
   async function cloudLinks(): Promise<Record<string, CloudLinkRef>> {
     return (await readJson<Record<string, CloudLinkRef>>(kv, K_CLOUD_LINKS)) ?? {};
   }
@@ -434,6 +459,10 @@ export function createSyncedStore(
             attempts: 0,
           });
         }
+        // The revocation must reach the server now — the outbox otherwise
+        // only drains at next boot, leaving the client's link live (Anuraj,
+        // Sept 2026). Non-blocking; failures stay queued for the boot drain.
+        void drainOutboxNow();
       }
       return { escrow: e, revokedLinks };
     },
@@ -661,6 +690,9 @@ export function createSyncedStore(
             attempts: 0,
           });
         }
+        // Same immediate-drain rationale as closeEscrow: the old device must
+        // lose access now, not at next boot (Anuraj, Sept 2026).
+        void drainOutboxNow();
       }
       return res;
     },

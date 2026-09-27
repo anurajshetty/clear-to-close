@@ -8,7 +8,8 @@
 // client device): when the cloud is reachable, get_client_view is the
 // authority and detects a remotely superseded link; otherwise the local
 // link record decides.
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../lib/auth';
 import { store } from '../lib/store-instance';
@@ -20,32 +21,48 @@ export function useClientLinkGate(escrowId: string, role: ClientRole) {
   const router = useRouter();
   const [gateState, setGateState] = useState<ClientGateState>('checking');
 
-  const check = useCallback(async () => {
-    if (!escrowId) return;
-    setGateState('checking');
-    try {
-      const link = await auth.getClientLink();
-      if (!link || link.escrowId !== escrowId || link.role !== role || !link.linkId) {
-        router.replace('/link-dead');
-        return;
+  const check = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!escrowId) return;
+      const silent = opts?.silent === true;
+      if (!silent) setGateState('checking');
+      try {
+        const link = await auth.getClientLink();
+        if (!link || link.escrowId !== escrowId || link.role !== role || !link.linkId) {
+          router.replace('/link-dead');
+          return;
+        }
+        const res = await store.validateClientLink(link.linkId);
+        if (res.valid) {
+          if (!silent) setGateState('valid');
+        } else {
+          router.replace('/link-dead');
+        }
+      } catch (err) {
+        console.warn('client link validation failed', err);
+        if (!silent) setGateState('error');
       }
-      const res = await store.validateClientLink(link.linkId);
-      if (res.valid) {
-        setGateState('valid');
-      } else {
-        router.replace('/link-dead');
-      }
-    } catch (err) {
-      console.warn('client link validation failed', err);
-      setGateState('error');
-    }
-  }, [escrowId, role, router]);
+    },
+    [escrowId, role, router],
+  );
 
   useFocusEffect(
     useCallback(() => {
       check();
     }, [check]),
   );
+
+  // Anuraj bug (Sept 2026): an already-open client app never re-focused its
+  // screen when foregrounded, so a close/revocation that landed while the
+  // app was backgrounded never took effect on the open escrow. Revalidate
+  // silently on foreground: a dead link routes to /link-dead; a live link
+  // leaves the rendered view untouched (no loading flash).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void check({ silent: true });
+    });
+    return () => sub.remove();
+  }, [check]);
 
   return { gateState, retry: check };
 }

@@ -41,11 +41,13 @@ central user; the buyers and sellers they represent are the other parties.
   versa; unchecking reopens only that side. **Explicit close revokes client
   access** (Anuraj, Sept 2026): the moment a side closes, that side's live
   buyer/seller device links are revoked (the transaction coordinator's links
-  are revoked once the whole escrow is closed). A revoked client fails the
-  link gate and lands on "This code no longer works" (the `/link-dead`
-  screen), the same state as an expired or regenerated code. A 100%-complete
-  escrow that is still open is NOT a close: the client's links keep working
-  and the top card shows "Completed" with the confetti burst.
+  are revoked once the whole escrow is closed). The revocation is pushed to
+  the cloud immediately — no app restart needed — and a client with the
+  escrow already open is re-checked when the app is foregrounded. A revoked
+  client fails the link gate and lands on "This code no longer works" (the
+  `/link-dead` screen), the same state as an expired or regenerated code. A
+  100%-complete escrow that is still open is NOT a close: the client's links
+  keep working and the top card shows "Completed" with the confetti burst.
 - **New escrow** — open an escrow with open/end dates and a side picker
   (Buy side / Sell side, multi-select for dual agency). Dates use a simple
   date picker (native date input on web, minimal inline picker on native —
