@@ -4,10 +4,14 @@
 // After the realtor picks a profile photo or banner, the crop editor opens
 // BEFORE saving: drag to position, pinch/slide to zoom; the circular frame
 // shows exactly what lands in the photo circle, the wide ~2.5:1 rectangle
-// exactly what lands in the banner strip. RN components are not importable
-// in the node suite, so this pins the pure geometry contract in
-// src/lib/cropMath.ts (cover scale, clamp, slider/zoom mapping, pinch
-// anchoring, editor->source crop rect, output size caps, frame layout).
+// exactly what lands in the banner strip. The profile photo opens ZOOMED
+// OUT at the cover scale (maximum of the picture visible; the user zooms
+// in to choose) while the banner keeps its approved starting zoom; the
+// zoom slider maps logarithmically so the motion is smooth. RN components
+// are not importable in the node suite, so this pins the pure geometry
+// contract in src/lib/cropMath.ts (cover scale, clamp, slider/zoom mapping,
+// pinch anchoring, editor->source crop rect, output size caps, frame
+// layout, initial zoom).
 
 import { assert, summary } from './assert';
 import {
@@ -41,17 +45,65 @@ assert(clampOffset(-350, 600, 100, 300) === -200, 'offset leaving a gap clamps t
 assert(clampOffset(-50, 600, 100, 300) === -50, 'offset inside the legal band is untouched');
 assert(clampOffset(0, 200, 100, 300) === 100 + (300 - 200) / 2, 'undersized image centers on the frame');
 
-// Slider band.
+// Slider band + logarithmic zoom mapping: equal slider steps multiply the
+// scale by a constant ratio, so the zoom motion feels smooth and continuous
+// across the whole range (no jumps at either end).
 assert(clampSlider(50) === 100, 'slider clamps up to 100');
 assert(clampSlider(400) === 300, 'slider clamps down to 300');
 assert(clampSlider(160) === 160, 'slider passes through in-band values');
 assert(sliderToScale(100, 0.5) === 0.5, 'slider 100 = cover scale');
 assert(sliderToScale(300, 0.5) === 1.5, 'slider 300 = 3x cover scale');
-assert(sliderToScale(130, 0.5) === 0.65, 'slider 130 = 1.3x cover (photo default)');
+assert(
+  Math.abs(sliderToScale(200, 0.5) - 0.5 * Math.sqrt(3)) < 1e-9,
+  'slider mid-point is the geometric mean, not the arithmetic mean',
+);
+{
+  // Smoothness: every equal slider step multiplies the scale by the same
+  // ratio, so there is no fast/slow wonkiness anywhere in the band.
+  const step = 25;
+  const ratio = (a: number, b: number) => sliderToScale(b, 0.5) / sliderToScale(a, 0.5);
+  const expected = Math.pow(3, step / 200);
+  for (let v = 100; v < 300; v += step) {
+    assert(
+      Math.abs(ratio(v, v + step) - expected) < 1e-9,
+      `slider ${v}->${v + step} multiplies the scale by 3^(25/200) (got ${ratio(v, v + step)})`,
+    );
+  }
+}
+{
+  // Monotonic and jump-free: strictly increasing, and no single slider
+  // unit ever multiplies the scale by more than 1% (3^(1/200) is ~1.0055).
+  let prev = sliderToScale(100, 0.5);
+  for (let v = 101; v <= 300; v++) {
+    const s = sliderToScale(v, 0.5);
+    assert(s > prev, `slider is strictly increasing at ${v}`);
+    assert(s / prev < 1.01, `no zoom jump at slider ${v}`);
+    prev = s;
+  }
+}
+{
+  // scaleToSlider is the exact inverse, so pinch/drag zoom stays in sync
+  // with the slider thumb.
+  for (const v of [100, 110, 150, 200, 250, 300]) {
+    const back = scaleToSlider(sliderToScale(v, 0.5), 0.5);
+    assert(Math.abs(back - v) < 1e-9, `slider -> scale -> slider round-trips at ${v} (got ${back})`);
+  }
+}
 assert(scaleToSlider(0.5, 0.5) === 100, 'cover scale maps back to 100');
-assert(Math.abs(scaleToSlider(0.55, 0.5) - 110) < 1e-9, '1.1x cover maps back to 110 (banner default)');
-assert(initialSliderValue('photo') === 130, 'photo starts at 130');
-assert(initialSliderValue('banner') === 110, 'banner starts at 110');
+
+// Initial zoom: the profile photo opens ZOOMED OUT at the cover scale (the
+// user sees the maximum of the picture, then zooms in and drags to select
+// the part they want). The banner keeps its approved starting zoom.
+assert(initialSliderValue('photo') === 100, 'photo starts at 100 (cover scale)');
+assert(initialSliderValue('banner') === 110, 'banner keeps its 110 starting zoom');
+assert(
+  sliderToScale(initialSliderValue('photo'), 0.5) === 0.5,
+  'photo initial scale equals the cover scale',
+);
+assert(
+  Math.abs(sliderToScale(initialSliderValue('banner'), 0.5) - 0.5 * Math.pow(3, 10 / 200)) < 1e-9,
+  'banner initial scale unchanged from its 110 zoom',
+);
 
 // Pinch: distance ratio drives the scale, never below cover.
 assert(pinchScale(1, 100, 150, 0.4) === 1.5, 'pinch out scales up');

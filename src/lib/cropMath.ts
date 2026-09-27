@@ -21,9 +21,18 @@ export const BANNER_CROP_ASPECT = 2.5;
 /** Cropped output is downscaled so its long edge is at most this (auto, quiet). */
 export const MAX_CROP_EDGE = 1024;
 
-/** Zoom slider bounds (percent of the cover scale), per the approved sample. */
+/** Zoom slider bounds, per the approved sample.
+ * The slider value maps to the display scale LOGARITHMICALLY:
+ * slider 100 = cover scale (zoomed out, maximum of the picture visible),
+ * slider 300 = 3x cover scale. Equal slider steps multiply the scale by a
+ * constant ratio, so the zoom motion feels smooth and continuous across
+ * the whole range (a linear mapping makes the top end jump).
+ */
 export const ZOOM_SLIDER_MIN = 100;
 export const ZOOM_SLIDER_MAX = 300;
+
+/** Maximum zoom relative to the cover scale (slider max = this x cover). */
+export const ZOOM_MAX_RATIO = 3;
 
 export interface CropFrame {
   x: number;
@@ -78,15 +87,28 @@ export function clampSlider(value: number): number {
   return Math.min(ZOOM_SLIDER_MAX, Math.max(ZOOM_SLIDER_MIN, value));
 }
 
-/** Slider value (100..300) -> display scale, relative to the cover scale. */
+/**
+ * Slider value (ZOOM_SLIDER_MIN..ZOOM_SLIDER_MAX) -> display scale.
+ * Logarithmic: slider 100 = cover scale, slider 300 = ZOOM_MAX_RATIO x
+ * cover scale, and equal slider steps produce proportional scale changes.
+ */
 export function sliderToScale(sliderValue: number, cover: number): number {
-  return cover * (clampSlider(sliderValue) / 100);
+  const t =
+    (clampSlider(sliderValue) - ZOOM_SLIDER_MIN) / (ZOOM_SLIDER_MAX - ZOOM_SLIDER_MIN);
+  return cover * Math.pow(ZOOM_MAX_RATIO, t);
 }
 
-/** Display scale -> slider value (100..300). */
+/**
+ * Display scale -> slider value (ZOOM_SLIDER_MIN..ZOOM_SLIDER_MAX).
+ * Exact inverse of sliderToScale, so pinch/drag zoom stays in sync with
+ * the slider thumb.
+ */
 export function scaleToSlider(scale: number, cover: number): number {
   if (cover <= 0) return ZOOM_SLIDER_MIN;
-  return clampSlider((scale / cover) * 100);
+  const ratio = scale / cover;
+  if (!(ratio > 0)) return ZOOM_SLIDER_MIN;
+  const t = Math.log(ratio) / Math.log(ZOOM_MAX_RATIO);
+  return clampSlider(ZOOM_SLIDER_MIN + t * (ZOOM_SLIDER_MAX - ZOOM_SLIDER_MIN));
 }
 
 /**
@@ -188,9 +210,16 @@ export function layoutCropFrame(
   };
 }
 
-/** Initial zoom slider value, per the approved sample's defaults. */
+/**
+ * Initial zoom slider value.
+ *
+ * The profile photo (circular frame) starts ZOOMED OUT at the cover scale:
+ * the image exactly covers the frame and the user sees the maximum of the
+ * picture, then zooms in and drags to select the part they want.
+ * The banner keeps its approved starting zoom.
+ */
 export function initialSliderValue(kind: CropKind): number {
-  return kind === 'photo' ? 130 : 110;
+  return kind === 'photo' ? ZOOM_SLIDER_MIN : 110;
 }
 
 /**
