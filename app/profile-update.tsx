@@ -122,6 +122,9 @@ export default function ProfileUpdate() {
     setLoggingOut(true);
     setExpectSignOut(true);
     try {
+      // Wipe the previous account's local cache FIRST so a different
+      // realtor signing up on this device never sees it (Sept 2026).
+      await store.clearLocalAccountData();
       await auth.signOut();
     } finally {
       // Web → login screen. Native → the persisted session is fully cleared

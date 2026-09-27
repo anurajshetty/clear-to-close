@@ -1020,6 +1020,19 @@ export async function readOutboxOps(kv: KV): Promise<OutboxOp[]> {
   return readOutbox(kv);
 }
 
+/**
+ * Drop every queued push op (logout wipe, Sept 2026): unsynced ops carry
+ * the previous account's auth.uid() and must never drain under a different
+ * realtor's session.
+ */
+export async function clearOutbox(kv: KV): Promise<void> {
+  try {
+    await kv.removeItem(K_OUTBOX);
+  } catch {
+    // best-effort
+  }
+}
+
 async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
   try {
     await kv.setItem(K_OUTBOX, JSON.stringify(ops));

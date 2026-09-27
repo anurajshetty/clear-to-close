@@ -165,6 +165,19 @@ export interface Store {
    * both-side escrow; the active side's on a single-side escrow.
    */
   getTcView(escrowId: string): Promise<TcView>;
+  /**
+   * Logout wipe (Sept 2026): drop every account-scoped artifact — the
+   * in-memory snapshot and the persisted profile/escrows/invites/links —
+   * so a different realtor using this device next never sees the previous
+   * account's data. Device-scoped keys (role, device id, client link) are
+   * owned by auth.ts and are NOT touched here.
+   */
+  clear(): Promise<void>;
+  /**
+   * Full logout wipe for the synced store (Sept 2026): clear() plus the
+   * cloud caches, the unsynced outbox, and the managed photo/banner files.
+   */
+  clearLocalAccountData(): Promise<void>;
 }
 
 const K_PROFILE = 'ctc:profile';
@@ -929,6 +942,23 @@ export function createStore(kv: KV): Store {
         seller: e.side === 'buy' ? null : buildClientView(e, 'seller'),
       };
     },
+
+    async clear(): Promise<void> {
+      data.loaded = false;
+      data.profile = null;
+      data.escrows = [];
+      data.invites = [];
+      data.links = [];
+      await Promise.all([
+        kv.removeItem(K_PROFILE),
+        kv.removeItem(K_ESCROWS),
+        kv.removeItem(K_INVITES),
+        kv.removeItem(K_LINKS),
+      ]);
+    },
+
+    /** The local store holds no cloud caches: the full wipe is clear(). */
+    clearLocalAccountData: () => store.clear(),
   };
 
   return store;

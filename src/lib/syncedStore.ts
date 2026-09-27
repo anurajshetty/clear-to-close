@@ -31,6 +31,7 @@ import type {
 import {
   cloudClient,
   cloudConfigured,
+  clearOutbox,
   drainOutbox,
   enqueueOutbox,
   ensureCloudUser,
@@ -55,6 +56,35 @@ import {
 
 const K_CLOUD_LINKS = 'ctc:cloudlinks';
 const K_CLOUD_VIEW_PREFIX = 'ctc:cloudview:';
+
+/**
+ * Delete the realtor's managed photo/banner files (logout wipe, Sept 2026).
+ * The filenames/keys are owned by src/lib/photoFile.ts; duplicated here as
+ * string literals so this module never statically imports expo-file-system
+ * (plain-node tests cannot resolve it). Web files live in localStorage;
+ * native files live in the app documents directory.
+ */
+async function deleteManagedMedia(): Promise<void> {
+  try {
+    const ls = (globalThis as { localStorage?: { removeItem(k: string): void } | undefined })
+      .localStorage;
+    if (ls && typeof ls.removeItem === 'function') {
+      ls.removeItem('ctc:profile-photo');
+      ls.removeItem('ctc:profile-banner');
+    }
+  } catch {
+    // best-effort
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = await import('expo-file-system/legacy');
+    const dd: string = fs.documentDirectory ?? '';
+    await fs.deleteAsync(`${dd}profile-photo.jpg`, { idempotent: true });
+    await fs.deleteAsync(`${dd}profile-banner.jpg`, { idempotent: true });
+  } catch {
+    // best-effort (node tests land here)
+  }
+}
 
 interface CloudLinkRef {
   linkId: string;
@@ -304,6 +334,57 @@ export function createSyncedStore(
 
   const store: Store = {
     getProfile: () => local.getProfile(),
+
+    /**
+     * Logout wipe (Sept 2026): drop every account-scoped artifact so a
+     * different realtor using this device next never sees the previous
+     * account's data. The base clear() drops the local snapshot (profile,
+     * escrows, invites, links); this additionally drops the synced store's
+     * cloud caches, the unsynced outbox (its ops carry the old uid), and
+     * the managed photo/banner files. Device-scoped state (role, device
+     * id, push-asked) is NOT touched. The device client link is NOT
+     * touched here either — it is auth-domain state cleared by
+     * auth.signOut(), which the logout flow always calls right after this.
+     */
+    clearLocalAccountData: async (): Promise<void> => {
+      // Cloud-view keys are per-escrow: collect the ids before the wipe.
+      // Read BOTH the local escrow list and the cached cloud links — a
+      // cloud view can be cached for an escrow that no longer exists
+      // locally (deleted locally, or fetched under the previous account).
+      const escrowIdSet = new Set<string>();
+      try {
+        for (const e of await local.listEscrows()) escrowIdSet.add(e.id);
+      } catch {
+        // best-effort
+      }
+      let cloudLinksRaw: string | null = null;
+      try {
+        cloudLinksRaw = await kv.getItem(K_CLOUD_LINKS);
+      } catch {
+        // best-effort
+      }
+      if (cloudLinksRaw) {
+        try {
+          const links = JSON.parse(cloudLinksRaw) as Array<{ escrowId?: string }>;
+          for (const l of links) if (l && typeof l.escrowId === 'string') escrowIdSet.add(l.escrowId);
+        } catch {
+          // malformed cache: it is removed below regardless
+        }
+      }
+      await local.clear();
+      profileCache.clear();
+      ping = null;
+      userId = null;
+      await Promise.all([
+        kv.removeItem(K_CLOUD_LINKS).catch(() => {}),
+        clearOutbox(kv),
+        ...[...escrowIdSet].map((id) => kv.removeItem(K_CLOUD_VIEW_PREFIX + id).catch(() => {})),
+        deleteManagedMedia(),
+      ]);
+    },
+
+    /** Base logout wipe: the local snapshot only. */
+    clear: () => local.clear(),
 
     /**
      * Post-login profile reconcile. The routing decision in login.tsx and the

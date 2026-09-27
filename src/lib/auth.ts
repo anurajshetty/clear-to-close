@@ -205,6 +205,22 @@ export function createAuthService(deps: AuthServiceDeps) {
     }
   }
 
+  /**
+   * F3 (Sept 2026): when a realtor session is established (sign-up or
+   * login success), any device client link from an earlier client redeem is
+   * stale — resolveBootHref checks the client link FIRST, so it would boot
+   * the new realtor session straight into the old client view. The
+   * device's client access key dies here; a client re-redeems to restore
+   * client access. Best-effort; never throws.
+   */
+  async function clearStaleClientLink(): Promise<void> {
+    try {
+      await kv.removeItem(K_CLIENT_LINK);
+    } catch {
+      // best-effort
+    }
+  }
+
   return {
     platform,
     isWeb: () => platform === 'web',
@@ -370,6 +386,10 @@ export function createAuthService(deps: AuthServiceDeps) {
         });
         if (error) return { ok: false, code: mapSignUpError(error) };
         if (data?.session) {
+          // F3 (Sept 2026): a device client link from an earlier client
+          // redeem would make resolveBootHref open the old client view on
+          // next launch — a realtor session kills the device's client key.
+          await clearStaleClientLink();
           return { ok: true, userId: data.user?.id ?? null };
         }
         // No session: the project may require email confirmation. Try an
@@ -381,6 +401,7 @@ export function createAuthService(deps: AuthServiceDeps) {
             password,
           });
           if (!again.error && again.data?.session) {
+            await clearStaleClientLink();
             return { ok: true, userId: again.data.user?.id ?? null };
           }
         } catch (e) {
@@ -405,6 +426,9 @@ export function createAuthService(deps: AuthServiceDeps) {
           password,
         });
         if (error) return { ok: false, code: mapSignInError(error) };
+        // F3 (Sept 2026): see clearStaleClientLink — a realtor session
+        // kills the device's client access key.
+        await clearStaleClientLink();
         return { ok: true, userId: data?.user?.id ?? null };
       } catch (e) {
         return { ok: false, code: mapSignInError(e) };
@@ -500,6 +524,20 @@ export function createAuthService(deps: AuthServiceDeps) {
         // previous account's onboarding state into their session.
         await kv.removeItem(K_PROFILE_SKIPPED);
         await kv.removeItem(K_PENDING_NAME);
+        // F1 (Sept 2026): the sync outbox belongs to the previous account.
+        // drainOutbox stamps the CURRENT session's uid onto each row before
+        // upserting, so lingering ops would push A's rows into B's account
+        // with RLS (auth.uid() = user_id) passing. Drop them here too —
+        // the store's clearLocalAccountData clears the outbox first, and
+        // this is the identity-boundary backstop. NEVER drain before
+        // clearing: draining under the outgoing identity is exactly the
+        // leak. (Literal key: cloudSync's K_OUTBOX; cloudSync imports auth,
+        // so auth can't import it back.)
+        await kv.removeItem('ctc:outbox');
+        // F3 (Sept 2026): resolveBootHref checks the device client link
+        // FIRST, ahead of the realtor login — a stale link would boot the
+        // signed-out device straight into the old client view.
+        await kv.removeItem(K_CLIENT_LINK);
       } catch {
         // never throw from sign-out cleanup
       }

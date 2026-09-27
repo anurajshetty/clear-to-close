@@ -81,6 +81,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/triumph_removed.test.ts" \
   "$ROOT/tests/close_revokes_links.test.ts" \
   "$ROOT/tests/close_revoke_converges.test.ts" \
+  "$ROOT/tests/account_isolation.test.ts" \
   "$ROOT/tests/photo_cropper.test.ts" \
   "$ROOT/tests/profile_form_fields.test.ts" \
   --outDir "$OUT" \
@@ -138,6 +139,7 @@ node "$OUT/tests/escrowpull.test.js"
 node "$OUT/tests/triumph_removed.test.js"
 node "$OUT/tests/close_revokes_links.test.js"
 node "$OUT/tests/close_revoke_converges.test.js"
+node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
 

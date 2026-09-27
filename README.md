@@ -112,7 +112,17 @@ central user; the buyers and sellers they represent are the other parties.
   password is verified server-side, and success shows a "Password updated."
   toast. A quiet **Log out** row below it signs out immediately (no
   confirmation): web returns to the login screen, native clears the persisted
-  session fully and returns to the role picker.
+  session fully and returns to the role picker. **Log out wipes the whole
+  local account cache** — profile, photo/banner, escrows, invites, client
+  links, cloud-view caches, and queued sync operations are all removed, so a
+  different realtor signing in next on the same device starts with a
+  fresh/empty account and never sees the previous account's data (local cache
+  keys are not per-account, so the wipe is the isolation). The sync outbox is
+  dropped, never drained — draining would stamp the new session's user id onto
+  the old account's pending operations. The device client link is cleared too
+  (a stale link would boot the device straight back into the client view), as
+  is any client link when a realtor session is newly established. Device-level
+  state (chosen role, device id, push-asked) is kept.
 - **Share / invites** — per-escrow, per-party single-use invite codes
   (6 characters, globally unique). Each code is bound to
   (escrow, role, party name); name and code must both match at redeem time.
@@ -386,6 +396,16 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
   re-creates `get_client_view` additively with the TC branch (role `'tc'`,
   both `buyer_steps` and `seller_steps`) on top of the 0011 reviews contract
   (full-row profile + `reviews` + `my_review_id`). Additive-only.
+- `supabase/migrations/0017_client_view_profile_fields.sql` — re-creates
+  `get_client_view` so the client-view profile is an **explicit field list**
+  (`name`, `photo_url`, `banner_image`, `about`, `years_experience`,
+  `areas_served`, `phone`, `dre_license`, `realty_group`, `rating`, `reviews`)
+  instead of the full `realtor_profiles` row: the `email` column (0016,
+  realtor-side only) no longer ships to linked clients. Phone stays (clients
+  need it for Call/Text). Every key app code reads from the client-view
+  profile is kept, so old and new app builds work unchanged. **Apply it on
+  the Supabase dashboard SQL editor** — until it is applied, clients keep
+  receiving the full profile row (with email) from the old function.
 
 ## Scripts
 
