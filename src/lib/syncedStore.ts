@@ -16,7 +16,6 @@
 // behaves exactly as the local-only v1 — sync stays dormant.
 
 import { createStore, type CloseEscrowResult, type KV, type Store } from './store';
-import { uploadProfileMedia } from './mediaUpload';
 import type {
   ClientRole,
   ClientView,
@@ -44,7 +43,7 @@ import {
   pullProfileNow,
   pushEscrowNow,
   pushInviteNow,
-  pushProfileNow,
+  pushProfileWithMedia,
   pushRevokeNow,
   readOutboxOps,
   redeemViaCloud,
@@ -197,6 +196,9 @@ export function createSyncedStore(
         getProfile: () => local.getProfile(),
         getInvite: (id) => local.getInvite(id),
         updateInviteCode: (id, code) => local.updateInviteCode(id, code),
+        // Media convergence (Sept 2026 stale-client-photo fix): the drain
+        // must upload a changed photo/banner, not just push the row.
+        saveProfile: (prof) => local.saveProfile(prof),
       });
     } catch {
       // Stays queued; the boot-time drain retries.
@@ -235,6 +237,9 @@ export function createSyncedStore(
           getProfile: () => local.getProfile(),
           getInvite: (id) => local.getInvite(id),
           updateInviteCode: (id, code) => local.updateInviteCode(id, code),
+          // Media convergence (Sept 2026 stale-client-photo fix): the drain
+          // must upload a changed photo/banner, not just push the row.
+          saveProfile: (prof) => local.saveProfile(prof),
         });
       } catch {
         // Outbox drain is best-effort; ops stay queued for next time.
@@ -266,11 +271,15 @@ export function createSyncedStore(
       // Lightweight reconcile: upserts are idempotent, so pushing everything
       // converges any state that missed the outbox (e.g. a launch where the
       // cloud config was broken and fixed later). Best-effort, background.
+      // The profile push funnels through pushProfileWithMedia (Sept 2026
+      // stale-client-photo fix) so a never-uploaded photo still converges;
+      // the fingerprint guard keeps this from re-uploading every boot.
       void (async () => {
         try {
           if (!c || !userId) return;
           const profile = await local.getProfile();
-          if (profile) await pushProfileNow(c, userId, profile);
+          if (profile)
+            await pushProfileWithMedia(c, userId, kv, profile, (p) => local.saveProfile(p));
           for (const escrow of await local.listEscrows()) {
             await pushEscrowNow(c, userId, escrow);
             for (const inv of await local.listInvites(escrow.id)) {
@@ -449,29 +458,16 @@ export function createSyncedStore(
       await local.saveProfile(p);
       bgPush(
         async (c, uid) => {
-          // Photo/banner Storage upload (Sept 2026, Anuraj-approved): the
-          // managed photo/banner upload to the public realtor-media bucket
-          // so client devices can see them. Best-effort — any failure keeps
-          // the profile local-only, exactly the old behavior. The local
-          // managed files remain the offline source and display fallback.
-          let withRemote = p;
-          try {
-            const [photoUrl, bannerUrl] = await Promise.all([
-              uploadProfileMedia(c, uid, 'photo', p.photoUri),
-              uploadProfileMedia(c, uid, 'banner', p.banner_image),
-            ]);
-            if (photoUrl !== null || bannerUrl !== null) {
-              withRemote = {
-                ...p,
-                photoRemoteUrl: photoUrl ?? p.photoRemoteUrl ?? null,
-                bannerRemoteUrl: bannerUrl ?? p.bannerRemoteUrl ?? null,
-              };
-              await local.saveProfile(withRemote);
-            }
-          } catch {
-            // Keep the local-only profile; the outbox retry covers the push.
-          }
-          await pushProfileNow(c, uid, withRemote);
+          // Photo/banner convergence (Sept 2026 stale-client-photo fix):
+          // the managed media upload whenever the local image changed
+          // since the last successful upload (fingerprint-guarded, so a
+          // name-only edit does not re-upload or churn the ?v= cache
+          // buster). Every profile-push path funnels through
+          // pushProfileWithMedia — never pushProfileNow alone — so a save
+          // that converges via the outbox or the boot reconcile still
+          // uploads the new image instead of stranding the old photo_url
+          // on the server.
+          await pushProfileWithMedia(c, uid, kv, p, (next) => local.saveProfile(next));
         },
         { op: 'pushProfile' },
       );

@@ -100,7 +100,12 @@ central user; the buyers and sellers they represent are the other parties.
   upload quietly keeps the profile local-only. Each upload stamps a fresh
   `?v=<timestamp>` on the stored Storage URL so client devices drop the
   stale cached image and show the new photo/banner right after the realtor
-  saves. An optional **banner image**
+  saves. The upload runs on every profile-push path (the live save, the
+  offline outbox retry, and the boot-time reconcile) but only when the
+  image actually changed (a name-only edit never re-uploads or churns the
+  `?v=`), so a photo updated while offline still converges to the new
+  image on the client after the next sync instead of stranding the old
+  photo. An optional **banner image**
   follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. The banner upload shows a recommended
   size computed from the celebration card banner strip's actual dimensions

@@ -41,6 +41,7 @@ import { isSupabaseConfigured } from './supabase';
 import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
 import { applyDerivedStatus } from './lifecycle';
+import { uploadProfileMedia } from './mediaUpload';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -867,6 +868,130 @@ export async function pushProfileNow(client: Cloud, userId: string, profile: Rea
   }
 }
 
+// ------------------------------------------------- profile media convergence --
+
+/**
+ * Fingerprints of the managed photo/banner at the last successful upload
+ * (KV `ctc:media-uploaded`). The managed files are single-overwrite paths,
+ * so the URI alone never changes — the fingerprint captures the content:
+ * web managed files are data: URIs (the URI embeds the bytes), native
+ * managed files are fingerprinted by size+mtime via expo-file-system
+ * (dynamically imported so plain node never loads it).
+ */
+const K_MEDIA_UPLOADED = 'ctc:media-uploaded';
+
+async function readJson<T>(kv: KV, key: string): Promise<T | null> {
+  try {
+    const raw = await kv.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeJson(kv: KV, key: string, value: unknown): Promise<void> {
+  try {
+    await kv.setItem(key, JSON.stringify(value));
+  } catch {
+    // Cache writes are best-effort.
+  }
+}
+
+async function mediaFingerprint(uri: string | null): Promise<string | null> {
+  if (!uri) return null;
+  if (uri.startsWith('data:')) {
+    let h = 0;
+    for (let i = 0; i < uri.length; i++) h = (Math.imul(h, 31) + uri.charCodeAt(i)) | 0;
+    return `data:${uri.length}:${h >>> 0}`;
+  }
+  if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('blob:')) {
+    // Already remote (or a dead blob:): there is nothing local to upload.
+    return `remote:${uri}`;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = await import('expo-file-system/legacy');
+    const info = await fs.getInfoAsync(uri);
+    if (info.exists) {
+      const size = (info as { size?: unknown }).size;
+      const mtime = (info as { modificationTime?: unknown }).modificationTime;
+      return `file:${typeof size === 'number' ? size : 0}:${typeof mtime === 'number' ? mtime : 0}`;
+    }
+    return 'missing';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
+ * Ensure the profile's managed photo/banner are uploaded to Storage,
+ * uploading ONLY media whose content changed since the last successful
+ * upload (fingerprint guard — a name-only edit must not re-upload or churn
+ * the ?v= cache-buster). Fresh ?v=-versioned public URLs are stamped onto
+ * the returned profile, which is persisted via saveProfile; the server row
+ * push itself is the caller's job (see pushProfileWithMedia).
+ *
+ * This is the Sept 2026 stale-client-photo convergence fix. The media
+ * upload used to run ONLY inside saveProfile's live bgPush: any save that
+ * converged through the outbox (offline / ping failed / the live run threw)
+ * or through the boot-time background reconcile pushed the profile row
+ * WITHOUT uploading the new image — the server kept the old photo_url
+ * forever while the realtor's device showed the new photo from its local
+ * managed file, so clients kept seeing the old photo even after refresh.
+ * Every profile-push path now funnels through here. A failed upload keeps
+ * the previous URL and records nothing, so the next convergence retries.
+ */
+export async function ensureProfileMedia(
+  client: Cloud,
+  userId: string,
+  kv: KV,
+  p: RealtorProfile,
+  saveProfile: (next: RealtorProfile) => Promise<void>,
+): Promise<RealtorProfile> {
+  const uploaded =
+    (await readJson<{ photo?: string; banner?: string }>(kv, K_MEDIA_UPLOADED)) ?? {};
+  let out = p;
+  let dirty = false;
+  const slots = [
+    { kind: 'photo' as const, uri: p.photoUri },
+    { kind: 'banner' as const, uri: p.banner_image },
+  ];
+  for (const s of slots) {
+    const fp = await mediaFingerprint(s.uri);
+    if (!fp || fp === uploaded[s.kind]) continue;
+    if (!fp.startsWith('remote:')) {
+      const url = await uploadProfileMedia(client, userId, s.kind, s.uri);
+      if (!url) continue; // upload failed: keep the old URL, retry next time
+      out =
+        s.kind === 'photo' ? { ...out, photoRemoteUrl: url } : { ...out, bannerRemoteUrl: url };
+    }
+    uploaded[s.kind] = fp;
+    dirty = true;
+  }
+  if (dirty) {
+    await saveProfile(out);
+    await writeJson(kv, K_MEDIA_UPLOADED, uploaded);
+  }
+  return out;
+}
+
+/**
+ * Converge one profile to the cloud: upload changed managed media first
+ * (fresh ?v= URLs), then upsert the profile row. Use this on EVERY path
+ * that pushes the profile — the live save, the outbox drain, and the
+ * boot-time background reconcile — never pushProfileNow alone.
+ */
+export async function pushProfileWithMedia(
+  client: Cloud,
+  userId: string,
+  kv: KV,
+  p: RealtorProfile,
+  saveProfile: (next: RealtorProfile) => Promise<void>,
+): Promise<void> {
+  const withRemote = await ensureProfileMedia(client, userId, kv, p, saveProfile);
+  await pushProfileNow(client, userId, withRemote);
+}
+
 /**
  * Upsert an invite on its primary key. On a code collision (DB unique
  * constraint 23505 on the code column) the code is regenerated and the
@@ -1064,6 +1189,13 @@ export async function drainOutbox(
     getProfile(): Promise<RealtorProfile | null>;
     getInvite?(inviteId: string): Promise<Invite | null>;
     updateInviteCode?(inviteId: string, code: string): Promise<unknown>;
+    /**
+     * Persist the profile after the media-convergence step stamps fresh
+     * ?v= URLs (Sept 2026 stale-client-photo fix). Optional so older
+     * callers keep working; when absent the drain falls back to a plain
+     * row push with no media upload.
+     */
+    saveProfile?(p: RealtorProfile): Promise<void>;
   },
 ): Promise<{ drained: number; pending: number }> {
   let ops = await readOutbox(kv);
@@ -1076,7 +1208,14 @@ export async function drainOutbox(
         if (e) await pushEscrowNow(client, userId, e);
       } else if (op.op === 'pushProfile') {
         const p = await load.getProfile();
-        if (p) await pushProfileNow(client, userId, p);
+        if (p) {
+          // Media convergence (Sept 2026 stale-client-photo fix): a queued
+          // profile push must also upload a changed photo/banner. The old
+          // code pushed the row alone, so the server kept the old photo_url
+          // forever while the realtor's device showed the new local image.
+          if (load.saveProfile) await pushProfileWithMedia(client, userId, kv, p, load.saveProfile);
+          else await pushProfileNow(client, userId, p);
+        }
       } else if (op.op === 'pushInvite' && op.inviteId && load.getInvite) {
         const inv = await load.getInvite(op.inviteId);
         if (inv) {
