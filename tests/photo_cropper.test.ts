@@ -16,12 +16,14 @@
 import { assert, summary } from './assert';
 import {
   BANNER_CROP_ASPECT,
+  DRAG_START_THRESHOLD,
   MAX_CROP_EDGE,
   anchorOffset,
   clampOffset,
   clampSlider,
   coverScale,
   cropSourceRect,
+  dragExceeded,
   initialOffset,
   initialSliderValue,
   layoutCropFrame,
@@ -180,5 +182,64 @@ assert(BANNER_CROP_ASPECT === 2.5, 'banner frame aspect is 2.5:1');
 
 // initialOffset: the image starts centered on the frame.
 assert(initialOffset(100, 250, 1200, 0.5) === 100 + 125 - 300, 'image centers on the frame at start');
+
+// ---------------------------------------------------------------------------
+// Gesture logic (Anuraj, Sept 2026): tap must not move the image — panning
+// arms only after real drag travel; slider touches zoom only and never move
+// the screen.
+// ---------------------------------------------------------------------------
+
+// dragExceeded: the tap/drag threshold contract.
+assert(DRAG_START_THRESHOLD === 8, 'drag threshold is 8pt');
+assert(dragExceeded(0, 0) === false, 'no travel is a tap');
+assert(dragExceeded(5, 5) === false, '7.07px diagonal travel is still a tap');
+assert(dragExceeded(8, 0) === true, '8px horizontal travel arms the drag');
+assert(dragExceeded(0, -8) === true, '8px vertical travel arms the drag (any direction)');
+assert(dragExceeded(6, 6) === true, '8.49px diagonal travel arms the drag');
+assert(dragExceeded(100, 100) === true, 'large travel arms the drag');
+assert(dragExceeded(4, 4, 10) === false, 'custom threshold respected (below)');
+assert(dragExceeded(7, 7, 10) === false, 'custom threshold respected (9.9px < 10)');
+assert(dragExceeded(8, 8, 10) === true, 'custom threshold respected (above)');
+
+// Component gesture wiring (static source pins — RN is not importable here;
+// globals are declared the same way tests/celebration_redesign.test.ts
+// declares them).
+declare const process: { env: Record<string, string | undefined> };
+declare const require: any;
+const fs: { readFileSync(p: string, enc: string): string } = require('fs');
+const path: { join(...parts: string[]): string } = require('path');
+const ROOT = process.env.CTC_REPO_ROOT ?? '';
+assert(ROOT.length > 0, 'CTC_REPO_ROOT is set (tests/run.sh exports it)');
+const cropper = fs.readFileSync(path.join(ROOT, 'src/components/PhotoCropper.tsx'), 'utf8');
+
+// 1. Tap must not move the image: the drag arms only past the threshold,
+// and below it the move handler returns before applying any offset.
+assert(cropper.includes('dragExceeded('), 'editor gates panning on dragExceeded');
+assert(cropper.includes('started: false'), 'drag starts disarmed on touch start');
+assert(
+  /if \(!dragExceeded\(dx, dy\)\) return;/.test(cropper),
+  'sub-threshold travel returns before the offset is applied (tap = no-op)',
+);
+
+// 2. Slider touches must not move the screen: the slider isolates its
+// touches, the editor ignores touches that began on the bottom controls,
+// and the browser is told never to scroll from the editor or the slider.
+assert(
+  cropper.includes('evt.preventDefault?.()') && cropper.includes('evt.stopPropagation?.()'),
+  'slider handler calls preventDefault/stopPropagation',
+);
+assert(cropper.includes('controlTouches'), 'editor tracks touches that began on the bottom controls');
+assert(
+  cropper.includes('controlTouches.current.has(t.identifier)'),
+  'editor ignores touches that started on the slider/bottom controls',
+);
+{
+  const trackBlock = cropper.slice(cropper.indexOf('track: {'), cropper.indexOf('track: {') + 400);
+  assert(trackBlock.includes("touchAction: 'none'"), 'slider track sets touchAction none (web)');
+}
+{
+  const editorBlock = cropper.slice(cropper.indexOf('editor: {'), cropper.indexOf('editor: {') + 400);
+  assert(editorBlock.includes("touchAction: 'none'"), 'editor surface sets touchAction none (web)');
+}
 
 summary('photo_cropper');

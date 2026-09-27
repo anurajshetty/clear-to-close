@@ -34,6 +34,25 @@ export const ZOOM_SLIDER_MAX = 300;
 /** Maximum zoom relative to the cover scale (slider max = this x cover). */
 export const ZOOM_MAX_RATIO = 3;
 
+/**
+ * Tap vs drag: panning begins only after the pointer has traveled this far
+ * (points). A tap with less travel is a no-op — the image must not jump.
+ */
+export const DRAG_START_THRESHOLD = 8;
+
+/**
+ * True once the pointer travel since touch-start exceeds the drag threshold,
+ * i.e. the gesture is a real drag and panning may begin; below it the
+ * gesture is a tap and the image stays put.
+ */
+export function dragExceeded(
+  dx: number,
+  dy: number,
+  threshold: number = DRAG_START_THRESHOLD,
+): boolean {
+  return Math.hypot(dx, dy) >= threshold;
+}
+
 export interface CropFrame {
   x: number;
   y: number;

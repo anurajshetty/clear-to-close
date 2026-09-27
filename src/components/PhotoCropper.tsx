@@ -15,6 +15,7 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -27,6 +28,7 @@ import {
   clampOffset,
   coverScale,
   cropSourceRect,
+  dragExceeded,
   initialOffset,
   initialSliderValue,
   layoutCropFrame,
@@ -95,7 +97,19 @@ export function PhotoCropper({
   const trackRef = useRef<View | null>(null);
   const trackW = useRef(0);
   const touches = useRef(new Map<number, TouchPoint>());
-  const drag = useRef<{ startX: number; startY: number; ox: number; oy: number } | null>(null);
+  // Panning arms only after the pointer travels DRAG_START_THRESHOLD — a tap
+  // with less travel is a no-op and the image must not jump.
+  const drag = useRef<{
+    startX: number;
+    startY: number;
+    ox: number;
+    oy: number;
+    started: boolean;
+  } | null>(null);
+  // Touch identifiers that began on the bottom controls (zoom slider, hint,
+  // CTA buttons). The editor's pan/pinch handlers must ignore them so slider
+  // touches never route into image movement.
+  const controlTouches = useRef(new Set<number>());
   const pinch = useRef<{
     dist: number;
     scale: number;
@@ -171,6 +185,9 @@ export function PhotoCropper({
     });
     const changed: any[] = e.nativeEvent.changedTouches ?? [];
     for (const t of changed) {
+      // Touches that began on the bottom controls belong to the slider /
+      // buttons — never let them arm a drag or pinch on the image.
+      if (controlTouches.current.has(t.identifier)) continue;
       touches.current.set(t.identifier, { x: t.pageX, y: t.pageY });
     }
     const pts = [...touches.current.values()];
@@ -192,6 +209,7 @@ export function PhotoCropper({
         startY: pts[0].y,
         ox: st.current.offsetX,
         oy: st.current.offsetY,
+        started: false,
       };
       pinch.current = null;
     }
@@ -217,12 +235,17 @@ export function PhotoCropper({
       apply(ns, nx, ny, cover);
     } else if (pts.length === 1 && drag.current) {
       const d = drag.current;
-      apply(
-        st.current.scale,
-        d.ox + pts[0].x - d.startX,
-        d.oy + pts[0].y - d.startY,
-        cover,
-      );
+      const dx = pts[0].x - d.startX;
+      const dy = pts[0].y - d.startY;
+      if (!d.started) {
+        // Below the tap threshold the gesture is a tap: do nothing at all,
+        // so the image never jumps under the user's finger.
+        if (!dragExceeded(dx, dy)) return;
+        d.started = true;
+      }
+      // Anchor to the original touch start, not the threshold crossing, so
+      // the pan continues smoothly with no visible jump when it arms.
+      apply(st.current.scale, d.ox + dx, d.oy + dy, cover);
     }
   };
 
@@ -233,8 +256,12 @@ export function PhotoCropper({
     if (touches.current.size === 0) drag.current = null;
   };
 
-  // Zoom slider: tap or drag the track.
+  // Zoom slider: tap or drag the track. Touches here belong to the slider
+  // alone — never let them scroll the page (web) or leak anywhere else.
   const setSliderFromTrack = (e: any) => {
+    const evt: any = e;
+    evt.preventDefault?.();
+    evt.stopPropagation?.();
     if (busy || !frame || trackW.current <= 0) return;
     const locX: number =
       e.nativeEvent.locationX ??
@@ -369,7 +396,23 @@ export function PhotoCropper({
         </View>
 
         {/* Bottom controls */}
-        <View style={styles.bottom}>
+        <View
+          style={styles.bottom}
+          onTouchStart={(e: any) => {
+            // Record touches that begin on the controls so the editor's
+            // pan/pinch handlers ignore them (slider touches zoom only).
+            const changed: any[] = e.nativeEvent.changedTouches ?? [];
+            for (const t of changed) controlTouches.current.add(t.identifier);
+          }}
+          onTouchEnd={(e: any) => {
+            const changed: any[] = e.nativeEvent.changedTouches ?? [];
+            for (const t of changed) controlTouches.current.delete(t.identifier);
+          }}
+          onTouchCancel={(e: any) => {
+            const changed: any[] = e.nativeEvent.changedTouches ?? [];
+            for (const t of changed) controlTouches.current.delete(t.identifier);
+          }}
+        >
           <Text style={styles.hint}>{hint}</Text>
           <View style={styles.zoomRow}>
             <Text style={styles.zoomGlyph}>−</Text>
@@ -434,6 +477,9 @@ const styles = StyleSheet.create({
     flex: 1,
     overflow: 'hidden',
     backgroundColor: '#000',
+    // Web: the image surface must never scroll the page — drags pan the
+    // image only.
+    ...(Platform.OS === 'web' ? ({ touchAction: 'none' } as object) : null),
   },
   mask: {
     ...StyleSheet.absoluteFill,
@@ -507,6 +553,9 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 28,
     justifyContent: 'center',
+    // Web: sliding the thumb must zoom only — the browser must not scroll
+    // the page or take over the gesture mid-slide.
+    ...(Platform.OS === 'web' ? ({ touchAction: 'none' } as object) : null),
   },
   trackLine: {
     height: 4,

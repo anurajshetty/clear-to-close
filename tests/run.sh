@@ -143,6 +143,11 @@ node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
 
+# Profile picker options (Sept 2026): the library pickers must launch with
+# allowsEditing: false and stay single-select, so the raw image flows
+# straight into our own crop editor with no native edit UI.
+python3 "$ROOT/tests/profile_picker_options.py"
+
 # Top-card redesign structural guard (Sept 2026): guided-by strip removed,
 # escrow status tag present, 100% = same card + burst, the "Just closed!"
 # triumph card and the pace/completion pills removed, review/share section
