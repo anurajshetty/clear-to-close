@@ -94,7 +94,10 @@ central user; the buyers and sellers they represent are the other parties.
   (paths `<user_id>/photo.jpg` and `<user_id>/banner.jpg`, single overwrite
   files), so client devices see them on the branded surfaces; the local
   managed files remain the offline source and display fallback, and a failed
-  upload quietly keeps the profile local-only. An optional **banner image**
+  upload quietly keeps the profile local-only. Each upload stamps a fresh
+  `?v=<timestamp>` on the stored Storage URL so client devices drop the
+  stale cached image and show the new photo/banner right after the realtor
+  saves. An optional **banner image**
   follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. The banner upload shows a recommended
   size computed from the celebration card banner strip's actual dimensions

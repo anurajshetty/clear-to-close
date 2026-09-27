@@ -36,6 +36,26 @@ export function publicUrlFor(client: Cloud, userId: string, kind: MediaKind): st
   }
 }
 
+/**
+ * Cache-busted public URL (Sept 2026 — client stale-photo fix): the Storage
+ * files are single-overwrite paths (`<uid>/photo.jpg`, `<uid>/banner.jpg`),
+ * so re-uploads produce an identical URL and client devices keep showing the
+ * old image from cache. Appending `?v=<upload timestamp>` makes every upload
+ * a distinct URL, so the client surfaces show the new photo/banner right
+ * after the realtor saves. Device-local fallbacks never carry the param.
+ * `now` is injectable for tests.
+ */
+export function versionedPublicUrl(
+  client: Cloud,
+  userId: string,
+  kind: MediaKind,
+  now: () => number = Date.now,
+): string | null {
+  const base = publicUrlFor(client, userId, kind);
+  if (!base) return null;
+  return `${base}?v=${now()}`;
+}
+
 // ---------------------------------------------------------------------------
 // base64 -> bytes (no Buffer/atob on React Native; tiny self-contained
 // decoder so this works on native, web, and plain node for tests).
@@ -120,7 +140,9 @@ export async function uploadProfileMedia(
       { contentType: 'image/jpeg', upsert: true },
     );
     if (error) return null;
-    return publicUrlFor(client, userId, kind);
+    // Cache-busted URL: every successful upload stamps a fresh version, so
+    // client surfaces drop the stale cached image immediately.
+    return versionedPublicUrl(client, userId, kind);
   } catch {
     return null;
   }
