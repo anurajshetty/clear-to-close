@@ -22,6 +22,7 @@ import { auth, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { PushGate } from '../src/components/PushGate';
+import { SyncErrorBar } from '../src/components/SyncErrorBar';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
@@ -126,6 +127,9 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="dark" />
+      {/* Sync failures are never silent: a persistent bar shows every
+          write that did not reach the server (realtor only). */}
+      <SyncErrorBar />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="role" />

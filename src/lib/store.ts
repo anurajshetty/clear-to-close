@@ -75,6 +75,17 @@ export interface Store {
    */
   getClientProfile(escrowId: string | null): Promise<RealtorProfile | null>;
   saveProfile(p: RealtorProfile): Promise<void>;
+  /**
+   * Sync-failure surface (Anuraj, Sept 2026): pending failure records for
+   * writes that did not reach the server, oldest first. Never throws.
+   */
+  getSyncErrors(): Promise<import('./syncErrors').SyncError[]>;
+  /** Subscribe to failure-record changes. Returns an unsubscribe function. */
+  onSyncErrors(fn: () => void): () => void;
+  /** Retry every pending write now. Records clear as their writes land. */
+  retrySync(): Promise<void>;
+  /** Dismiss a final (non-retryable) failure record. Never throws. */
+  dismissSyncError(key: string): Promise<void>;
   listEscrows(): Promise<Escrow[]>;
   getEscrow(id: string): Promise<Escrow | null>;
   createEscrow(input: CreateEscrowInput): Promise<Escrow>;
@@ -407,6 +418,17 @@ export function createStore(kv: KV): Store {
       await ensureLoaded();
       return data.profile;
     },
+
+    // Sync-failure surface (Anuraj, Sept 2026): the local-only store never
+    // talks to a server, so there are never failure records here.
+    async getSyncErrors(): Promise<import('./syncErrors').SyncError[]> {
+      return [];
+    },
+    onSyncErrors(): () => void {
+      return () => {};
+    },
+    async retrySync(): Promise<void> {},
+    async dismissSyncError(): Promise<void> {},
 
     async pullProfileFromCloud(): Promise<RealtorProfile | null> {
       // Local-only build: no cloud to pull from.

@@ -74,6 +74,13 @@ interface OutboxOp {
   linkId?: string;
   revokedAt?: string;
   attempts: number;
+  /**
+   * Set once automatic attempts hit MAX_PUSH_ATTEMPTS (Sept 2026
+   * sync-failure surface): the op stays queued so a MANUAL Retry still
+   * has something to retry, but automatic drains stop hammering it. A
+   * fresh user edit re-arms it via enqueueOutbox.
+   */
+  manualOnly?: boolean;
 }
 
 /** Exported for the pull-merge: rows with a queued push keep the local copy. */
@@ -1072,8 +1079,19 @@ export async function pushInviteNow(
 }
 
 export async function pushRevokeNow(client: Cloud, inviteId: string, revokedAt: string): Promise<void> {
-  const { error } = await client.from('invites').update({ revoked_at: revokedAt }).eq('id', inviteId);
+  // RLS silent-no-op guard (Sept 2026): PostgREST can report success with
+  // zero affected rows when an owner policy rejects the write, so a plain
+  // { error } check would read the revocation as synced. Request the
+  // affected row and verify it — a revocation that touched nothing must
+  // surface as a failure, never as a silent success.
+  const { data, error } = await client
+    .from('invites')
+    .update({ revoked_at: revokedAt })
+    .eq('id', inviteId)
+    .select('id');
   if (error) throw error;
+  const affected = Array.isArray(data) ? data.length : 0;
+  if (affected < 1) throw new SyncNotAppliedError('invites', 1, affected);
 }
 
 /** Best-effort pull of invite states (redeemed/revoked) for one escrow. */
@@ -1159,11 +1177,16 @@ export async function pushLinkRevokeNow(
   linkId: string,
   revokedAt: string,
 ): Promise<void> {
-  const { error } = await client
+  // RLS silent-no-op guard (Sept 2026): same as pushRevokeNow — verify the
+  // revocation actually touched a row.
+  const { data, error } = await client
     .from('client_links')
     .update({ revoked_at: revokedAt })
-    .eq('id', linkId);
+    .eq('id', linkId)
+    .select('id');
   if (error) throw error;
+  const affected = Array.isArray(data) ? data.length : 0;
+  if (affected < 1) throw new SyncNotAppliedError('client_links', 1, affected);
 }
 
 export async function fetchCloudView(client: Cloud, linkId: string): Promise<CloudViewResult> {
@@ -1226,7 +1249,10 @@ export async function enqueueOutbox(kv: KV, op: OutboxOp): Promise<void> {
 
 /**
  * Drain the outbox against current local state (retries converge on the
- * latest local values). Drops ops that keep failing past MAX_PUSH_ATTEMPTS.
+ * latest local values). Ops that keep failing past MAX_PUSH_ATTEMPTS are NOT
+ * dropped: they become manual-only (kept for an explicit Retry, skipped by
+ * automatic drains). SyncNotAppliedError ops are kept as-is; a cap
+ * rejection is authoritative and drops the op (the failure record stays).
  */
 export async function drainOutbox(
   client: Cloud,
@@ -1244,12 +1270,31 @@ export async function drainOutbox(
      * row push with no media upload.
      */
     saveProfile?(p: RealtorProfile): Promise<void>;
+    /**
+     * Called with the op and the error each time an op fails during the
+     * drain (Sept 2026 sync-failure surface: the realtor must see every
+     * failure on screen, never silently queued). Optional so existing
+     * callers and tests keep working.
+     */
+    onOpError?(op: OutboxOp, error: unknown): void;
+    /**
+     * True when the drain was triggered by an explicit user Retry (Sept
+     * 2026 sync-failure surface). Manual drains also attempt manual-only
+     * ops; automatic drains (boot, background) skip them.
+     */
+    manual?: boolean;
   },
 ): Promise<{ drained: number; pending: number }> {
   let ops = await readOutbox(kv);
   let drained = 0;
   const remaining: OutboxOp[] = [];
   for (const op of ops) {
+    // Manual-only ops wait for an explicit Retry; automatic drains leave
+    // them untouched (and keep their failure records visible).
+    if (op.manualOnly && !load.manual) {
+      remaining.push(op);
+      continue;
+    }
     try {
       if (op.op === 'pushEscrow' && op.escrowId) {
         const e = await load.getEscrow(op.escrowId);
@@ -1281,6 +1326,7 @@ export async function drainOutbox(
       }
       drained++;
     } catch (e) {
+      load.onOpError?.(op, e);
       if (e instanceof SyncNotAppliedError) {
         // Ownership mismatch (the target row belongs to a different user
         // than this session): retrying under THIS identity can never
@@ -1289,9 +1335,23 @@ export async function drainOutbox(
         // Keep it queued without counting toward the drop: it converges on
         // the next drain under the owning identity.
         remaining.push(op);
+      } else if (op.op === 'pushInvite' && isCapViolation(e)) {
+        // Authoritative cap rejection at drain time (the invite was queued
+        // while offline and another device filled the cap meanwhile):
+        // retrying would never succeed, so the op is dropped. The final
+        // inviteCap failure record (from onOpError above) stays until the
+        // user dismisses it.
       } else {
         op.attempts++;
-        if (op.attempts < MAX_PUSH_ATTEMPTS) remaining.push(op);
+        if (op.attempts < MAX_PUSH_ATTEMPTS) {
+          remaining.push(op);
+        } else {
+          // Automatic attempts are exhausted: keep the op for an explicit
+          // manual Retry instead of dropping it, so the failure record the
+          // user sees still has something to retry.
+          op.manualOnly = true;
+          remaining.push(op);
+        }
       }
     }
   }

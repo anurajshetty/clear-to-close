@@ -50,8 +50,21 @@ import {
   regenerateInviteNow,
   resolveInviteRealtor as resolveInviteRealtorViaCloud,
   type Cloud,
+  type OutboxOp,
   type PingResult,
 } from './cloudSync';
+import {
+  classifySyncError,
+  clearAllSyncErrors,
+  clearSyncError,
+  opErrorKey,
+  readSyncErrors,
+  recordSyncError,
+  subscribeSyncErrors,
+  syncErrorCopy,
+  type SyncError,
+  type SyncOpKind,
+} from './syncErrors';
 
 const K_CLOUD_LINKS = 'ctc:cloudlinks';
 const K_CLOUD_VIEW_PREFIX = 'ctc:cloudview:';
@@ -139,6 +152,28 @@ export function createSyncedStore(
   // can still redeem an invite and validate its device link.
   const publicOk = (): boolean => cloudConfigured() && !!client();
 
+  /**
+   * Build a persisted failure record for a write that did not reach the
+   * server (Sept 2026 sync-failure surface: the realtor must see every
+   * failure on screen, never silently queued).
+   */
+  function syncErrorForOp(
+    op: { op: SyncOpKind; escrowId?: string; inviteId?: string; linkId?: string },
+    error: unknown,
+  ): SyncError {
+    const kind = classifySyncError(error);
+    return {
+      key: opErrorKey(op),
+      op: op.op,
+      escrowId: op.escrowId,
+      inviteId: op.inviteId,
+      linkId: op.linkId,
+      kind,
+      ...syncErrorCopy(op.op, kind),
+      at: Date.now(),
+    };
+  }
+
   /** Fire-and-forget cloud push; failures (or a not-yet-healthy cloud) go
    *  to the outbox for retry, so the system self-heals when connectivity or
    *  the project configuration is fixed later. */
@@ -158,8 +193,15 @@ export function createSyncedStore(
       void (async () => {
         try {
           await run(c, uid);
-        } catch {
-          if (op) await enqueueOutbox(kv, { ...op, attempts: 0 });
+        } catch (e) {
+          // Sync-failure surface (Anuraj, Sept 2026): the write did not
+          // reach the server. It is queued for retry, AND the failure is
+          // recorded so the realtor sees it on screen immediately — no
+          // silent queueing, no "looks saved but wasn't".
+          if (op) {
+            await enqueueOutbox(kv, { ...op, attempts: 0 });
+            await recordSyncError(kv, syncErrorForOp(op, e));
+          }
         }
       })();
       return;
@@ -169,7 +211,24 @@ export function createSyncedStore(
     // reachable again — without waiting for the next app reload. This
     // covers the "boot ping failed transiently, user stays in the app and
     // creates an invite" case.
-    if (op) void enqueueOutbox(kv, { ...op, attempts: 0 });
+    //
+    // Sync-failure surface (Anuraj, Sept 2026): when sync is NOT dormant,
+    // a queued-but-unsent write is still a write that is not on the
+    // server, and the realtor must see it. Dormant sync (no session yet,
+    // or the project unconfigured) is the designed local-only path, not
+    // a failure — nothing is recorded there.
+    const dormant =
+      !userId && (!ping || /no realtor session|not configured/i.test(ping.error ?? ''));
+    if (op && !dormant) {
+      void (async () => {
+        await enqueueOutbox(kv, { ...op, attempts: 0 });
+        // Same visibility rule as an immediate push failure: the write is
+        // queued but not on the server, and the realtor must know.
+        await recordSyncError(kv, syncErrorForOp(op, new Error('network: cloud not reachable')));
+      })();
+    } else if (op) {
+      void enqueueOutbox(kv, { ...op, attempts: 0 });
+    }
     const now = Date.now();
     if (now - lastBgReinit > 60_000) {
       lastBgReinit = now;
@@ -185,21 +244,75 @@ export function createSyncedStore(
    * client_links row live, so the client kept access. Failures stay queued
    * for the boot-time drain, so this is purely additive.
    */
+  /**
+   * Drain the outbox and reconcile the failure records (Sept 2026
+   * sync-failure surface): every op that fails during the drain is
+   * recorded for the on-screen bar, and every record whose op is no
+   * longer pending (it drained) is cleared. Retryable records survive
+   * only while their write is still unsent. Pass manual=true for an
+   * explicit user Retry so manual-only ops are attempted too.
+   */
+  async function drainAndReconcileErrors(
+    c: NonNullable<ReturnType<typeof cloudClient>>,
+    uid: string,
+    manual = false,
+  ): Promise<void> {
+    const load = {
+      getEscrow: (id: string) => local.getEscrow(id),
+      getProfile: () => local.getProfile(),
+      getInvite: (id: string) => local.getInvite(id),
+      updateInviteCode: (id: string, code: string) => local.updateInviteCode(id, code),
+      // Media convergence (Sept 2026 stale-client-photo fix): the drain
+      // must upload a changed photo/banner, not just push the row.
+      saveProfile: (prof: RealtorProfile) => local.saveProfile(prof),
+      manual,
+      onOpError: (op: OutboxOp, error: unknown) => {
+        // A cap rejection is authoritative and final: retrying it would
+        // never succeed, so it gets the final (dismissable) copy instead
+        // of the retryable one.
+        const copy =
+          op.op === 'pushInvite' && isCapViolation(error)
+            ? syncErrorCopy('inviteCap', 'rejected')
+            : syncErrorForOp(
+                { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
+                error,
+              );
+        void recordSyncError(kv, {
+          key: opErrorKey(op),
+          op: op.op === 'pushInvite' && isCapViolation(error) ? 'inviteCap' : op.op,
+          escrowId: op.escrowId,
+          inviteId: op.inviteId,
+          linkId: op.linkId,
+          kind: classifySyncError(error),
+          ...copy,
+          at: Date.now(),
+        });
+      },
+    };
+    try {
+      await drainOutbox(c, uid, kv, load);
+    } finally {
+      // Clear records whose writes landed: retryable records persist only
+      // while their op is still in the outbox. Final (non-retryable)
+      // records are dismissed by the user, never auto-cleared.
+      const remaining = await readOutboxOps(kv);
+      const pendingKeys = new Set(remaining.map(opErrorKey));
+      const errors = await readSyncErrors(kv);
+      for (const err of errors) {
+        if (err.retryable && !pendingKeys.has(err.key)) {
+          await clearSyncError(kv, err.key);
+        }
+      }
+    }
+  }
+
   async function drainOutboxNow(): Promise<void> {
     if (!cloudOk()) return;
     const c = client();
     const uid = userId;
     if (!c || !uid) return;
     try {
-      await drainOutbox(c, uid, kv, {
-        getEscrow: (id) => local.getEscrow(id),
-        getProfile: () => local.getProfile(),
-        getInvite: (id) => local.getInvite(id),
-        updateInviteCode: (id, code) => local.updateInviteCode(id, code),
-        // Media convergence (Sept 2026 stale-client-photo fix): the drain
-        // must upload a changed photo/banner, not just push the row.
-        saveProfile: (prof) => local.saveProfile(prof),
-      });
+      await drainAndReconcileErrors(c, uid);
     } catch {
       // Stays queued; the boot-time drain retries.
     }
@@ -232,15 +345,7 @@ export function createSyncedStore(
     if (result.ok && result.userId) {
       userId = result.userId;
       try {
-        await drainOutbox(c, userId, kv, {
-          getEscrow: (id) => local.getEscrow(id),
-          getProfile: () => local.getProfile(),
-          getInvite: (id) => local.getInvite(id),
-          updateInviteCode: (id, code) => local.updateInviteCode(id, code),
-          // Media convergence (Sept 2026 stale-client-photo fix): the drain
-          // must upload a changed photo/banner, not just push the row.
-          saveProfile: (prof) => local.saveProfile(prof),
-        });
+        await drainAndReconcileErrors(c, userId);
       } catch {
         // Outbox drain is best-effort; ops stay queued for next time.
       }
@@ -387,6 +492,7 @@ export function createSyncedStore(
       await Promise.all([
         kv.removeItem(K_CLOUD_LINKS).catch(() => {}),
         clearOutbox(kv),
+        clearAllSyncErrors(kv),
         ...[...escrowIdSet].map((id) => kv.removeItem(K_CLOUD_VIEW_PREFIX + id).catch(() => {})),
         deleteManagedMedia(),
       ]);
@@ -578,8 +684,21 @@ export function createSyncedStore(
               // no phantom over-cap invite survives in the UI, and do NOT
               // enqueue the push — the cap rejection is authoritative and
               // retrying it would never succeed.
+              //
+              // Sync-failure surface (Anuraj, Sept 2026): this is a final
+              // server rejection the realtor must see on screen (what
+              // failed, why, next step) — not just a console warning.
               await local.revokeInvite(invite.id);
-              console.warn(`[syncedStore] server cap rejected invite ${invite.id}; rolled back locally`);
+              const cap = syncErrorCopy('inviteCap', 'rejected');
+              await recordSyncError(kv, {
+                key: `inviteCap:${invite.id}`,
+                op: 'inviteCap',
+                escrowId,
+                inviteId: invite.id,
+                kind: 'rejected',
+                ...cap,
+                at: Date.now(),
+              });
               return;
             }
             throw e;
@@ -808,6 +927,47 @@ export function createSyncedStore(
 
     getBuyerView: (escrowId: string) => viewForRole(escrowId, 'buyer'),
     getSellerView: (escrowId: string) => viewForRole(escrowId, 'seller'),
+
+    /**
+     * Sync-failure surface (Anuraj, Sept 2026): every write that did not
+     * reach the server is recorded and shown on screen until it lands.
+     */
+    /** Pending failure records, oldest first. Never throws. */
+    getSyncErrors: async (): Promise<SyncError[]> => {
+      try {
+        return await readSyncErrors(kv);
+      } catch {
+        return [];
+      }
+    },
+    /** Subscribe to failure-record changes (the SyncErrorBar). */
+    onSyncErrors: (fn: () => void): (() => void) => subscribeSyncErrors(fn),
+    /**
+     * Retry every pending write now: drain the outbox immediately when the
+     * cloud is healthy, otherwise re-run the boot sync so the drain
+     * happens as soon as the cloud is reachable. This is a MANUAL drain:
+     * ops that exhausted their automatic attempts are attempted again.
+     * Records clear as their writes land.
+     */
+    retrySync: async (): Promise<void> => {
+      if (!cloudConfigured()) return;
+      if (cloudOk()) {
+        const c = client();
+        const uid = userId;
+        if (!c || !uid) return;
+        await drainAndReconcileErrors(c, uid, true);
+        return;
+      }
+      await initCloudSync();
+    },
+    /** Dismiss a final (non-retryable) failure record. Never throws. */
+    dismissSyncError: async (key: string): Promise<void> => {
+      try {
+        await clearSyncError(kv, key);
+      } catch {
+        // best-effort
+      }
+    },
     getTcView: (escrowId: string) => viewForTc(escrowId),
   };
 

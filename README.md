@@ -325,6 +325,22 @@ being dropped as synced, and converges the next time the owning account
 syncs. Failed pushes are never silently discarded, so a realtor edit can no
 longer vanish without the client ever seeing it.
 
+**Sync failure reporting** — whenever a write fails to reach the server
+(profile edits, escrow edits and dates, checklist check/uncheck, reorders
+and custom steps, invite creation and regeneration, invite revocation,
+client-link revocation), a persistent red bar appears at the top of the
+realtor app — not a toast that disappears. It says what failed (for
+example, "Your profile could not reach the server"), why in plain words
+("Your change is saved on this device. It is not on the server yet." for
+connection problems; a sign-in-account mismatch explanation when the
+server silently rejects the write), and the next step ("Check your
+connection, then tap Retry."). **Retry** re-sends the pending writes
+immediately; the bar clears the moment they land. Pending failures survive
+app restarts until they are resolved. The invite cap (2 active invite
+codes per escrow side) is a final rejection: it shows a **Dismiss** button
+instead of Retry, with the hint to revoke an unused code first. Client
+devices never see this bar.
+
 **Sheets on small screens** — every modal sheet wraps its content in a
 height-bounded scroll region (the grabber stays outside it), so lower fields
 and the primary button are reachable by scrolling at any viewport. When the
