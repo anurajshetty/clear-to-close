@@ -17,10 +17,11 @@
 // The React screens are not unit-rendered (RN components are not importable
 // in the node suite); the gate they call is covered here.
 import { assert, summary } from './assert';
-import { canLeaveReview } from '../src/lib/clientView';
+import { canLeaveReview, REVIEWS_ENABLED } from '../src/lib/clientView';
 import { mapClientViewRpc } from '../src/lib/cloudSync';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
+declare const require: any;
 
 // ---- 1. The gate predicate -----------------------------------------------
 assert(canLeaveReview({ done: 5, total: 5, status: 'open' }) === true,
@@ -70,5 +71,44 @@ assert(garbage.ok === true && garbage.view!.status === undefined,
 const gatedView = cancelled.ok ? cancelled.view! : null;
 assert(gatedView !== null && canLeaveReview(gatedView) === false,
   'end to end: a 100% cancelled escrow from the RPC is not reviewable');
+
+// ---- 3. Review feature ON HOLD (Anuraj, Sept 2026) -------------------------
+// The gating logic above stays intact and working, but the review/share
+// entry points are not surfaced: REVIEWS_ENABLED is false and the
+// buyer/seller screens render the triumph review/share section only when
+// the gate passes AND the flag is on. The review sheet and the section
+// itself stay wired (code intact), just hidden.
+assert(REVIEWS_ENABLED === false, 'review feature is on hold: REVIEWS_ENABLED is false');
+
+// RN components are not importable in the node suite, so the screens pin
+// the surfacing contract statically (repo root via CTC_REPO_ROOT, exported
+// by tests/run.sh).
+/* eslint-disable @typescript-eslint/no-require-imports */
+const fs: { readFileSync(p: string, enc: string): string } = require('fs');
+const path: { join(...parts: string[]): string } = require('path');
+/* eslint-enable @typescript-eslint/no-require-imports */
+const ROOT = process.env.CTC_REPO_ROOT ?? '';
+assert(ROOT.length > 0, 'CTC_REPO_ROOT is set (tests/run.sh exports it)');
+const srcFile = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+const triumph = srcFile('src/components/ClientTriumph.tsx');
+assert(triumph.includes('testID="triumph-review"'),
+  'review button code intact in the triumph section (not deleted)');
+assert(triumph.includes('testID="triumph-share"'),
+  'share button code intact in the triumph section (not deleted)');
+assert(triumph.includes('onLeaveReviewPress'),
+  'review sheet opener wiring intact on the section');
+
+for (const screen of ['app/client/buyer/[id].tsx', 'app/client/seller/[id].tsx']) {
+  const s = srcFile(screen);
+  assert(s.includes('showTriumphActions && REVIEWS_ENABLED'),
+    `${screen}: review/share section hidden behind the on-hold flag`);
+  assert(!/showTriumphActions \? \(\s*<ClientTriumphSection/.test(s),
+    `${screen}: section is not surfaced on the gate alone`);
+  assert(s.includes('<ReviewSheet'),
+    `${screen}: review sheet stays mounted (code intact, just never opened)`);
+  assert(s.includes('canLeaveReview'),
+    `${screen}: the review gate is still consulted`);
+}
 
 summary('review_gate');

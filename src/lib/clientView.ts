@@ -17,6 +17,15 @@ export function canLeaveReview(
 }
 
 /**
+ * Review feature ON HOLD (Anuraj's call, Sept 2026): the review/share entry
+ * points are hidden — the "provide review" button and the review/share
+ * section are not surfaced. All review code and gating logic stays intact
+ * (canLeaveReview above, the 0015 status wiring, the review sheet); only
+ * the UI is not shown. Flip back to true to resurface the feature.
+ */
+export const REVIEWS_ENABLED = false;
+
+/**
  * Client top-card status label (Anuraj's call, Sept 2026): the escrow status
  * next to "YOUR PURCHASE" / "YOUR SALE". Mirrors the get_client_view status
  * semantics (migration 0015): the escrow is "Completed" once its checklist

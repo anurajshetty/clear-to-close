@@ -14,12 +14,14 @@ check pins the composition contract:
   4. The "Just closed!" triumph card is exported and rendered BELOW the top
      card on the buyer/seller/TC screens, unchanged (realtor-name kicker,
      congratulations copy, review/share section all intact).
-  5. Celebration redesign (Anuraj, Sept 2026): the banner header strip is
-     GONE from the client top card (the banner moved to the redeem
-     celebration card), and all client cards are back on the LIGHT theme:
-     solid white card background, ink "days left" number that is amber at
-     7 or fewer days and red at 3 or fewer days, and the mid-card
-     completion/pace pill stays visible at 100%.
+  5. Approved client-home-card sample (Anuraj, Sept 2026): the banner
+     header strip is BACK on top of the client top card (the realtor's
+     synced banner, cover-cropped; brand-teal gradient fallback), with the
+     realtor photo ON the banner's right side, tappable to the in-app
+     realtor profile; the old top-right photo position is gone. The card is
+     responsive (390pt/320pt size classes from the sample's exact tokens).
+     The ahead-of-pace pill and its logic are gone; the mid-card completion
+     pill stays visible at 100%.
 
 Usage: python3 tests/topcard_redesign.py   (also wired into tests/run.sh)
 Exit 1 with the offending locations on failure.
@@ -48,6 +50,8 @@ triumph = read("src/components/ClientTriumph.tsx")
 buyer = read("app/client/buyer/[id].tsx")
 seller = read("app/client/seller/[id].tsx")
 tc = read("app/client/tc/[id].tsx")
+topcard_lib = read("src/lib/topCard.ts")
+pace_lib = read("src/lib/pace.ts")
 
 # 1. GUIDED BY strip is gone from the top card.
 check('testID="guided-by"' not in card, "guided-by strip markup removed from ClientTopCard")
@@ -88,15 +92,21 @@ check("<ClientTriumphSection" in buyer, "buyer review/share section preserved")
 check("<ClientTriumphSection" in seller, "seller review/share section preserved")
 check("onLeaveReviewPress" in buyer, "buyer review sheet wiring preserved")
 
-# 5. Celebration redesign (Anuraj, Sept 2026): the banner header strip is
-#    GONE from the client top card (the banner moved to the redeem
-#    celebration card), and ALL client cards are back on the LIGHT theme:
-#    solid white card, ink "days left" number that is amber at 7 or fewer
-#    days and red at 3 or fewer, and the mid-card completion/pace pill stays
-#    visible at 100%.
-check('testID="topcard-banner-header"' not in card, "banner header strip removed from the top card")
-check("TOPCARD_BANNER_HEADER" not in card, "old banner strip constants no longer used by the top card")
-check("topcard-gradient" not in card, "dark-teal banner gradient removed from the top card")
+# 5. Approved client-home-card sample (Anuraj, Sept 2026): the banner
+#    header strip is BACK on the top card with the realtor photo on its
+#    right side (tappable to the in-app profile); the old top-right photo
+#    is gone; the card is responsive via the sample's size-class tokens;
+#    the ahead-of-pace pill and its logic are gone; the light theme and
+#    the mid-card completion pill stay.
+check('testID="topcard-banner-header"' in card, "banner header strip back on the top card")
+check('testID="topcard-banner"' in card, "synced banner image in the strip")
+check('testID="topcard-gradient"' in card, "teal gradient fallback when no banner is set")
+check('testID="topcard-banner-photo"' in card, "realtor photo on the banner strip")
+check("onProfilePress" in card, "banner photo opens the realtor profile in-app")
+check('testID="greeting-avatar"' not in card, "old top-right photo position removed")
+check("avatarCircle" not in card, "old avatar styles removed")
+check("topCardSizeClass" in card, "card reads the responsive size class")
+check("TOPCARD_TOKENS" in card, "card sizes come from the sample token table")
 check("011E1D" not in card, "no dark teal in the top card")
 check("CLIENT_TOPCARD_BG" in card, "card background uses the CLIENT_TOPCARD_BG token")
 check("backgroundColor: CLIENT_TOPCARD_BG" in card, "white light theme set as the hero background")
@@ -104,6 +114,12 @@ check("daysLeftTone" in card, "days-line number colored by daysLeftTone")
 check("DAYS_LEFT_COLORS" in card, "days-left palette imported for the number colors")
 check("topCardPill" in card, "mid-card pill driven by topCardPill")
 check("!isComplete" not in card, "no 100%-only pill suppression on the top card")
+check('testID="pace-pill"' not in card, "ahead-of-pace pill markup removed")
+check("pacePill" not in card, "pace pill styles removed")
+check("aheadOfPace" not in pace_lib, "aheadOfPace helper removed from pace.ts")
+check("PACE_GAP_POINTS" not in pace_lib, "pace threshold constant removed")
+check("aheadOfPace" not in topcard_lib, "topCardPill no longer calls the pace logic")
+check("'pace'" not in topcard_lib, "no pace pill kind in the top-card pill type")
 
 if failures:
     print("\n%d FAILURE(S)" % len(failures))

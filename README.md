@@ -160,25 +160,28 @@ central user; the buyers and sellers they represent are the other parties.
   targets, no drag grips, and no "Custom" tag. One single list in the
   realtor's order — checked steps stay in place. No recency markers of any
   kind.
-- **Client home top card** — light theme (approved redesign, Sept 2026):
-  solid white card with a subtle border; no banner header, no dark teal.
-  Bold "Hi {name}" headline beside the realtor's
-  avatar (48px tap target, opens the realtor profile), "Your purchase"
-  / "Your sale" plus the address in non-bold below. Centered below: "N of N
-  steps" above the **208px progress ring** (light track, ink label), then the
-  days line — "days left: N" (the number is ink normally, amber at 7 or fewer
-  days, red at 3 or fewer days), "due today" on the target date, red
-  "overdue by N day(s)" past it.
+- **Client home top card** — light theme (approved client-home-card
+  sample, Anuraj, Sept 2026): solid white card with a subtle border and a
+  soft shadow. A banner header strip on top shows the realtor's synced
+  banner (cover-cropped; brand-teal gradient fallback); the realtor's photo
+  sits on the banner's right side (tappable, opens the realtor profile
+  in-app). Bold "Hi {name}" headline, then the "Your purchase" / "Your sale"
+  kicker plus the escrow status tag, then the address lines. Centered below:
+  "N of N steps" above the progress ring (amber-gold #E3B95C on the light
+  track), then the days line — "days left: N" (the number is ink normally,
+  amber at 7 or fewer days, red at 3 or fewer days), "due today" on the
+  target date, red "overdue by N day(s)" past it. The card is responsive:
+  the sample pins exact sizes at the 390pt and 320pt phones (the
+  `TOPCARD_TOKENS` table in `src/lib/topCard.ts`), flipping at a 355pt
+  breakpoint, so small phones scale the banner, photo, type, spacing, and
+  ring down while large screens keep the full-size layout.
   - **Escrow status tag** — next to the "Your purchase" / "Your sale" kicker,
     a small tag reads **"In progress"** or **"Completed"** (mirrors the
     `get_client_view` escrow status, migration 0015; "Completed" once the
-    checklist is 100% done or the escrow is closed). "Completed" fills teal;
+    checklist is 100% done or the escrow is closed). "Completed" fills amber;
     "In progress" is an amber outline.
-  - **Ahead-of-pace rule** (`src/lib/pace.ts`) — when the escrow is 15+
-    percentage points ahead of its timeline, a gold pill reads "Ahead of
-    pace. {FirstName} has you {N} days ahead of schedule." Never at 100%
-    (the completion pill owns that state), never on a degenerate timeline.
-    The mid-card completion/pace pill stays visible at 100%; the only
+  - The ahead-of-pace pill is gone (Anuraj, Sept 2026): no pace pill, no
+    pace logic. The mid-card completion pill stays visible at 100%; the only
     per-status changes on the top card are the status tag flip and the
     confetti burst.
   - **"LATEST FROM {NAME}" card** — directly below the top card, above the
@@ -203,7 +206,13 @@ central user; the buyers and sellers they represent are the other parties.
     the ahead-of-schedule rule: "Checklist complete with {N} days to spare.
     {FirstName} has you ahead of schedule." when 5+ days out, otherwise the
     unchanged "Congratulations, your checklist is complete".
-- **Below the triumph card (100% and not cancelled)** — the checklist collapses to one
+- **Below the triumph card (100% and not cancelled)** — the review feature
+  is **on hold** (Anuraj, Sept 2026): the review/share entry points are not
+  surfaced. All review code stays intact (the `canLeaveReview` gate, the
+  0015 escrow-status wiring, the review sheet, and the
+  `ClientTriumphSection` below), gated by `REVIEWS_ENABLED = false` in
+  `src/lib/clientView.ts`; flipping it back to true resurfaces the section:
+  the checklist collapses to one
   tappable row ("{N} of {N} steps complete") that expands inline; a gold
   **"Leave {FirstName} a review"** button (opens the review sheet; the wiring
   point is `ClientTriumphSection.onLeaveReviewPress` in
@@ -240,7 +249,10 @@ central user; the buyers and sellers they represent are the other parties.
   SMS). The profile body is the shared `RealtorProfileView`
   (`src/components/RealtorProfileView.tsx`) in its `inApp` variant, the same
   component the public page uses, so the content cannot drift.
-- **Client reviews** — after the escrow completes (and only if it was not
+- **Client reviews** — **on hold** (Anuraj, Sept 2026): the review/share
+  entry points are not surfaced (`REVIEWS_ENABLED = false` in
+  `src/lib/clientView.ts`); all review code and gating stays intact. When
+  re-enabled: after the escrow completes (and only if it was not
   cancelled), the client can leave a review: a star rating plus one line of
   text. Reviews are per-realtor and
   keyed to the client's link, so each client can leave (and later edit or

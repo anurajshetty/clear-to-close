@@ -6,10 +6,11 @@
 //     teal anywhere.
 //  2. The "days left" number is ink normally, amber at 7 or fewer days, red
 //     at 3 or fewer days (restyled to read on the light background).
-//  3. At 100% the mid-card completion/pace pill stays visible: the ONLY
+//  3. At 100% the mid-card completion pill stays visible: the ONLY
 //     per-status changes on the top card are the status tag flip and the
 //     confetti burst. topCardPill therefore returns the completion pill at
-//     100% instead of suppressing it.
+//     100% instead of suppressing it. The ahead-of-pace pill is gone
+//     (Anuraj's call, Sept 2026): mid-escrow, topCardPill returns null.
 import { assert, summary } from './assert';
 import {
   CLIENT_TOPCARD_BG,
@@ -53,14 +54,10 @@ assert(
   '100% with few days left keeps the unchanged congratulations line',
 );
 
-// Mid-escrow: the ahead-of-pace pill still returns, unchanged.
-const open = '2026-08-01';
-const close = '2026-09-30';
-const pace = topCardPill({ done: 8, total: 10, daysToClose: 30, name: 'Jane Rao', openDate: open, closeDate: close, nowMs: new Date('2026-09-01T12:00:00').getTime() });
-assert(pace?.kind === 'pace', 'mid-escrow 15+ points ahead returns the pace pill');
+// Mid-escrow: no pill at all (the ahead-of-pace pill is gone).
 assert(
-  pace?.kind === 'pace' && pace.daysAhead >= 1,
-  'pace pill carries a positive days-ahead number',
+  topCardPill({ done: 8, total: 10, daysToClose: 30, name: 'Jane Rao' }) === null,
+  'mid-escrow -> no pill (ahead-of-pace removed)',
 );
 
 // Empty checklist: no pill.

@@ -29,7 +29,7 @@ import { ClientTopCard, TriumphCard } from '../../../src/components/ClientTopCar
 import { displayPhotoUri } from '../../../src/lib/profile';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
-import { canLeaveReview } from '../../../src/lib/clientView';
+import { canLeaveReview, REVIEWS_ENABLED } from '../../../src/lib/clientView';
 import { ReviewSheet } from '../../../src/components/ReviewSheet';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
@@ -94,6 +94,9 @@ export default function BuyerView() {
   // shows only at 100% on a non-cancelled escrow — a cancelled escrow never
   // shows the review button, even if its checklist is complete. (The top
   // card computes its own 100% state from done/total.)
+  // The review feature is ON HOLD (Anuraj, Sept 2026): the section is
+  // additionally gated on REVIEWS_ENABLED, so no review/share UI is surfaced
+  // while the flag is false. The gate, the sheet, and the section stay wired.
   const showTriumphActions = view != null && canLeaveReview(view);
 
   return (
@@ -119,8 +122,6 @@ export default function BuyerView() {
             daysToClose={view.daysToClose}
             done={view.done}
             total={view.total}
-            openDate={view.openDate}
-            closeDate={view.closeDate}
             profile={profile}
             status={view.status}
             onProfilePress={() =>
@@ -153,7 +154,7 @@ export default function BuyerView() {
             openDate={view.openDate}
           />
 
-          {showTriumphActions ? (
+          {showTriumphActions && REVIEWS_ENABLED ? (
             <ClientTriumphSection
               steps={view.steps}
               profile={profile}

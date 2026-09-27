@@ -195,9 +195,9 @@ def main():
             check("no pace pill below threshold", pg.query_selector('[data-testid="pace-pill"]') is None)
             check("no completion banner in progress", pg.query_selector('[data-testid="completion-banner"]') is None)
             # Greeting avatar -> the client-facing realtor profile page.
-            pg.get_by_test_id("greeting-avatar").click()
+            pg.get_by_test_id("topcard-banner-photo").click()
             pg.get_by_text("Back to my escrow", exact=True).wait_for(timeout=8000)
-            check("greeting avatar opens realtor profile", True)
+            check("banner photo opens realtor profile", True)
             pg.screenshot(path=os.path.join(OUT, "topcard-branding.png"))
             check("case 1: zero JS errors", not errs, "; ".join(errs[:3]))
             pg.close()
@@ -211,19 +211,11 @@ def main():
             check("case 2: zero JS errors", not errs, "; ".join(errs[:3]))
             pg.close()
 
-            # --- Case 3: ahead of pace.
-            # done 7/10 (70%), elapsed 10/60 (16.7%): gap 53.3 -> 32 days ahead.
+            # --- Case 3: ahead-of-pace pill REMOVED (Anuraj, Sept 2026).
+            # done 7/10 (70%), elapsed 10/60 (16.7%): the pace pill is gone
+            # entirely — nothing is surfaced mid-escrow, only the top card.
             pg, errs = load(browser, seed(7, 10, -10, 50))
-            pill = pg.query_selector('[data-testid="pace-pill"]')
-            check("pace pill shown", pill is not None)
-            if pill:
-                text = pill.inner_text().replace("\n", " ").strip()
-                check("pace pill copy exact",
-                      text == "Ahead of pace. Maya has you 32 days ahead of schedule.", text)
-                border = pg.evaluate(
-                    """() => { const c = getComputedStyle(document.querySelector('[data-testid="pace-pill"]'));
-                               return c.borderColor + '|' + c.backgroundColor; }""")
-                check("pace pill gold-tinted", "245, 198, 107" in border, border)
+            check("no pace pill (feature removed)", pg.query_selector('[data-testid="pace-pill"]') is None)
             check("no completion banner at 70%", pg.query_selector('[data-testid="completion-banner"]') is None)
             check("case 3: zero JS errors", not errs, "; ".join(errs[:3]))
             pg.close()
