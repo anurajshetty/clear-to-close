@@ -84,7 +84,12 @@ central user; the buyers and sellers they represent are the other parties.
   target ≤ ~1MB) and stored as a single managed file — one fixed filename
   in the app's document directory, overwritten on every pick (one
   localStorage key on web) — so old photo files never pile up and the OS
-  can't purge the photo. On every profile save the downscaled photo and
+  can't purge the photo. After picking a photo or banner, an **in-app crop
+  editor** opens before saving: drag to position, pinch or use the zoom
+  slider, with a circular frame showing exactly what lands in the photo
+  circle and a wide ~2.5 : 1 frame showing exactly what lands in the banner
+  strip; "Use photo" / "Use banner" saves the cropped result (still
+  auto-shrunk to ≤ 1024px), Cancel / Retake backs out without saving. On every profile save the downscaled photo and
   banner upload to the public Supabase Storage bucket `realtor-media`
   (paths `<user_id>/photo.jpg` and `<user_id>/banner.jpg`, single overwrite
   files), so client devices see them on the branded surfaces; the local

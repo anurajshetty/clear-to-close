@@ -10,11 +10,11 @@ import React, { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { deleteLegacyPhotoFile, saveManagedBanner, saveManagedPhoto } from '../lib/photoFile';
 import { bannerSizeHint } from '../lib/bannerSize';
 import { Field } from './ui';
 import { initialsOf } from './ui';
+import { PhotoCropper, type CropKind } from './PhotoCropper';
 import { colors } from '../theme';
 
 export interface ProfileDraft {
@@ -67,51 +67,17 @@ function CameraIcon() {
   );
 }
 
-// Profile-photo size cap (Sept 2026, automatic — no user prompt): at pick
-// time the long edge is scaled to at most 1024px and the image is saved as
-// JPEG at ~0.8 quality, targeting ≤ ~1MB. Both the signup profile step and
-// the edit-profile "Change photo" flow share this form, so both get it.
-const MAX_PHOTO_EDGE = 1024;
+// Profile-photo size cap (Sept 2026, automatic — no user prompt): the crop
+// editor downscales the cropped result so its long edge is at most 1024px,
+// saved as JPEG at ~0.8 quality, targeting ≤ ~1MB. Both the signup profile
+// step and the edit-profile "Change photo" flow share this form, so both
+// get it. See src/lib/cropMath.ts (MAX_CROP_EDGE).
 
-async function cappedPhotoUri(
-  uri: string,
-  width?: number,
-  height?: number,
-): Promise<string> {
-  let w = width ?? 0;
-  let h = height ?? 0;
-  if (!w || !h) {
-    // Best-effort dimension lookup for pickers that omit them.
-    const size = await new Promise<{ width: number; height: number } | null>(
-      (resolve) => {
-        Image.getSize(
-          uri,
-          (sw, sh) => resolve({ width: sw, height: sh }),
-          () => resolve(null),
-        );
-      },
-    );
-    if (!size) return uri;
-    w = size.width;
-    h = size.height;
-  }
-  const longEdge = Math.max(w, h);
-  const actions: { resize: { width: number; height: number } }[] =
-    longEdge > MAX_PHOTO_EDGE
-      ? [
-          {
-            resize: {
-              width: Math.round((w * MAX_PHOTO_EDGE) / longEdge),
-              height: Math.round((h * MAX_PHOTO_EDGE) / longEdge),
-            },
-          },
-        ]
-      : [];
-  const out = await manipulateAsync(uri, actions, {
-    compress: 0.8,
-    format: SaveFormat.JPEG,
-  });
-  return out.uri;
+interface CropJob {
+  uri: string;
+  width?: number;
+  height?: number;
+  kind: CropKind;
 }
 
 export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
@@ -134,51 +100,75 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
   }, [value.banner_image]);
   const [bannerError, setBannerError] = useState<string | null>(null);
 
+  // Crop editor (Sept 2026, Anuraj-approved): after picking, the raw image
+  // opens in the cropper BEFORE anything is saved. Use photo / Use banner
+  // crops + downscales and lands here for the managed-file save below.
+  const [cropJob, setCropJob] = useState<CropJob | null>(null);
+
   const pickBanner = async () => {
     setBannerError(null);
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [16, 9],
-      // Full quality here: we resize + JPEG-compress ourselves below.
+      // No native editing: our own crop editor (wide rectangle frame) runs
+      // before saving.
+      allowsEditing: false,
+      // Full quality here: we crop + JPEG-compress ourselves below.
       quality: 1,
     });
     if (res.canceled || !res.assets?.[0]?.uri) return;
     const asset = res.assets[0];
-    try {
-      const capped = await cappedPhotoUri(asset.uri, asset.width, asset.height);
-      const managed = await saveManagedBanner(capped);
-      onChange({ banner_image: managed });
-    } catch {
-      setBannerError('Couldn’t use that image. Try a different one.');
-    }
+    setCropJob({ uri: asset.uri, width: asset.width, height: asset.height, kind: 'banner' });
   };
 
   const pickPhoto = async () => {
     setPhotoError(null);
     const res = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      // Full quality here: we resize + JPEG-compress ourselves below.
+      // No native editing: our own crop editor (circular frame) runs before
+      // saving.
+      allowsEditing: false,
+      // Full quality here: we crop + JPEG-compress ourselves below.
       quality: 1,
     });
     if (res.canceled || !res.assets?.[0]?.uri) return;
     const asset = res.assets[0];
+    setCropJob({ uri: asset.uri, width: asset.width, height: asset.height, kind: 'photo' });
+  };
+
+  const onCropUse = async (croppedUri: string) => {
+    const job = cropJob;
+    setCropJob(null);
+    if (!job) return;
     try {
-      const capped = await cappedPhotoUri(asset.uri, asset.width, asset.height);
-      const previous = value.photoUri;
-      // Single managed file (Sept 2026): the final image is copied to one
-      // fixed location, overwriting the previous photo, so files never pile up.
-      const managed = await saveManagedPhoto(capped);
-      // Drop the stale file from the previous pick, if any (the old flow
-      // stored unique cache URIs). The managed file itself was overwritten,
-      // never deleted.
-      await deleteLegacyPhotoFile(previous);
-      onChange({ photoUri: managed });
+      if (job.kind === 'photo') {
+        const previous = value.photoUri;
+        // Single managed file (Sept 2026): the final image is copied to one
+        // fixed location, overwriting the previous photo, so files never pile up.
+        const managed = await saveManagedPhoto(croppedUri);
+        // Drop the stale file from the previous pick, if any (the old flow
+        // stored unique cache URIs). The managed file itself was overwritten,
+        // never deleted.
+        await deleteLegacyPhotoFile(previous);
+        onChange({ photoUri: managed });
+      } else {
+        const managed = await saveManagedBanner(croppedUri);
+        onChange({ banner_image: managed });
+      }
     } catch {
-      setPhotoError('Couldn’t use that photo. Try a different one.');
+      if (job.kind === 'photo') {
+        setPhotoError('Couldn’t use that photo. Try a different one.');
+      } else {
+        setBannerError('Couldn’t use that image. Try a different one.');
+      }
     }
+  };
+
+  const onCropRetake = () => {
+    const kind = cropJob?.kind;
+    setCropJob(null);
+    // Re-open the picker so the realtor can choose a different image.
+    if (kind === 'photo') void pickPhoto();
+    else if (kind === 'banner') void pickBanner();
   };
 
   const set = (key: keyof ProfileDraft) => (text: string) => onChange({ [key]: text } as Partial<ProfileDraft>);
@@ -285,6 +275,18 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         onChangeText={set('phone')}
         placeholder="Shown as a tap-to-call row on your client profile"
       />
+      {cropJob ? (
+        <PhotoCropper
+          visible
+          imageUri={cropJob.uri}
+          imageWidth={cropJob.width}
+          imageHeight={cropJob.height}
+          kind={cropJob.kind}
+          onUse={onCropUse}
+          onCancel={() => setCropJob(null)}
+          onRetake={onCropRetake}
+        />
+      ) : null}
     </View>
   );
 }

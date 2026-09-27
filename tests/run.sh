@@ -35,6 +35,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/cloudSync.ts" \
   "$ROOT/src/lib/confetti.ts" \
   "$ROOT/src/lib/bannerSize.ts" \
+  "$ROOT/src/lib/cropMath.ts" \
   "$ROOT/src/lib/mediaUpload.ts" \
   "$ROOT/src/lib/profile.ts" \
   "$ROOT/src/lib/push.ts" \
@@ -79,6 +80,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/profile_view_fixes.test.ts" \
   "$ROOT/tests/triumph_removed.test.ts" \
   "$ROOT/tests/close_revokes_links.test.ts" \
+  "$ROOT/tests/photo_cropper.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -133,6 +135,7 @@ node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
 node "$OUT/tests/triumph_removed.test.js"
 node "$OUT/tests/close_revokes_links.test.js"
+node "$OUT/tests/photo_cropper.test.js"
 
 # Top-card redesign structural guard (Sept 2026): guided-by strip removed,
 # escrow status tag present, 100% = same card + burst, the "Just closed!"
