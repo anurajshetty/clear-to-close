@@ -18,12 +18,10 @@
 //    kicker: amber outline while in progress, filled amber once completed.
 //  - The days-left number is ink normally, amber at 7 or fewer days, red at
 //    3 or fewer days. Overdue and "due today" keep their own treatments.
-//  - At 100% the mid-card completion pill stays visible: the ONLY
-//    per-status changes on the top card are the status tag flip and the
-//    confetti burst popping from below the card.
-//  - The ahead-of-pace pill is GONE (Anuraj's call, Sept 2026): no pace
-//    pill, no pace logic anywhere.
-import { completionPill } from './pace';
+//  - At 100% the ONLY per-status changes on the top card are the status tag
+//    flip and the confetti burst popping from below the card. There is no
+//    mid-card pill in any state (Anuraj's call, Sept 2026): the pace pill
+//    and the completion pill are both gone — no pace logic anywhere.
 
 /** Solid background of the client top card (white, on the paper screen). */
 export const CLIENT_TOPCARD_BG = '#FFFFFF';
@@ -51,28 +49,6 @@ export function daysLeftTone(daysToClose: number): DaysLeftTone {
   if (daysToClose <= 3) return 'alert';
   if (daysToClose <= 7) return 'warn';
   return 'default';
-}
-
-export type TopCardPill = { kind: 'completion'; text: string } | null;
-
-/**
- * The pill shown on the mid-card slot at ANY checklist state (Sept 2026,
- * Anuraj's final call): the completion pill at 100% ("Checklist complete
- * with {N} days to spare..." with 5+ days left, otherwise the unchanged
- * congratulations line), nothing otherwise. There is no 100%-only
- * suppression — the top card keeps its pill at 100%; only the status tag
- * flips and the confetti burst pops. The ahead-of-pace pill is gone.
- */
-export function topCardPill(args: {
-  done: number;
-  total: number;
-  daysToClose: number;
-  name: string;
-}): TopCardPill {
-  const { done, total, daysToClose, name } = args;
-  const completion = completionPill({ done, total, daysToClose, name });
-  if (completion) return { kind: 'completion', text: completion.text };
-  return null;
 }
 
 /** Screen-width breakpoint between the two top-card size classes: the

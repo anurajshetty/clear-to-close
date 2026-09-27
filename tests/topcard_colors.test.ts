@@ -6,18 +6,16 @@
 //     teal anywhere.
 //  2. The "days left" number is ink normally, amber at 7 or fewer days, red
 //     at 3 or fewer days (restyled to read on the light background).
-//  3. At 100% the mid-card completion pill stays visible: the ONLY
-//     per-status changes on the top card are the status tag flip and the
-//     confetti burst. topCardPill therefore returns the completion pill at
-//     100% instead of suppressing it. The ahead-of-pace pill is gone
-//     (Anuraj's call, Sept 2026): mid-escrow, topCardPill returns null.
+//  3. No pill logic anywhere (Anuraj's call, Sept 2026): the ahead-of-pace
+//     pill AND the completion pill are both gone — topCardPill no longer
+//     exists.
 import { assert, summary } from './assert';
 import {
   CLIENT_TOPCARD_BG,
   DAYS_LEFT_COLORS,
   daysLeftTone,
-  topCardPill,
 } from '../src/lib/topCard';
+import * as topCardModule from '../src/lib/topCard';
 
 // 1. Light theme: white card, no dark teal.
 assert(CLIENT_TOPCARD_BG === '#FFFFFF', `card background is white (got ${CLIENT_TOPCARD_BG})`);
@@ -40,30 +38,8 @@ assert(daysLeftTone(3) === 'alert', '3 days left -> red');
 assert(daysLeftTone(1) === 'alert', '1 day left -> red');
 assert(daysLeftTone(30) === 'default', '30 days left -> default color');
 
-// 3. Completion/pace pill stays visible at 100%.
-const spare = topCardPill({ done: 5, total: 5, daysToClose: 10, name: 'Jane Rao' });
-assert(spare?.kind === 'completion', '100% with 10 days left returns the completion pill');
-assert(
-  spare?.kind === 'completion' && spare.text.includes('10 days to spare'),
-  '100% spare copy names the days to spare',
-);
-
-const plain = topCardPill({ done: 5, total: 5, daysToClose: 2, name: 'Jane Rao' });
-assert(
-  plain?.kind === 'completion' && plain.text === 'Congratulations, your checklist is complete',
-  '100% with few days left keeps the unchanged congratulations line',
-);
-
-// Mid-escrow: no pill at all (the ahead-of-pace pill is gone).
-assert(
-  topCardPill({ done: 8, total: 10, daysToClose: 30, name: 'Jane Rao' }) === null,
-  'mid-escrow -> no pill (ahead-of-pace removed)',
-);
-
-// Empty checklist: no pill.
-assert(
-  topCardPill({ done: 0, total: 0, daysToClose: 30, name: 'Jane Rao' }) === null,
-  '0/0 checklist -> no pill',
-);
+// 3. No pill logic anywhere (Anuraj's call, Sept 2026): the ahead-of-pace
+// pill and the completion pill are both gone — topCardPill is removed.
+assert(!('topCardPill' in topCardModule), 'topCardPill removed from src/lib/topCard');
 
 summary('topcard_colors');

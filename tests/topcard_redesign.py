@@ -11,17 +11,18 @@ check pins the composition contract:
      the "YOUR TRANSACTION" kicker, driven by escrowStatusLabel.
   3. At 100% the top card stays the same card: the unified ConfettiBurst
      pops up from below the top card (no ConfettiLayer-as-top-card swap).
-  4. The "Just closed!" triumph card is exported and rendered BELOW the top
-     card on the buyer/seller/TC screens, unchanged (realtor-name kicker,
-     congratulations copy, review/share section all intact).
+  4. The "Just closed!" triumph card is REMOVED (Anuraj, Sept 2026): the
+     completed state is just the top card (status tag "Completed") with
+     the burst — no TriumphCard export, no triumph render on the
+     buyer/seller/TC screens. The review/share section is preserved.
   5. Approved client-home-card sample (Anuraj, Sept 2026): the banner
      header strip is BACK on top of the client top card (the realtor's
      synced banner, cover-cropped; brand-teal gradient fallback), with the
      realtor photo ON the banner's right side, tappable to the in-app
      realtor profile; the old top-right photo position is gone. The card is
      responsive (390pt/320pt size classes from the sample's exact tokens).
-     The ahead-of-pace pill and its logic are gone; the mid-card completion
-     pill stays visible at 100%.
+     The ahead-of-pace pill, the completion pill, and their logic are all
+     gone (Anuraj, Sept 2026).
 
 Usage: python3 tests/topcard_redesign.py   (also wired into tests/run.sh)
 Exit 1 with the offending locations on failure.
@@ -67,25 +68,23 @@ check("escrowStatusLabel" in card, "status tag driven by escrowStatusLabel")
 check("IN PROGRESS" not in card.replace("In progress", ""),
       "no hardcoded uppercase status copy (label helper owns the copy)")
 
-# 3. 100%: same card + unified burst, no top-card swap.
+# 3. 100%: same card + unified burst, no top-card swap, no triumph card.
 check("ConfettiBurst" in card, "top card uses the shared ConfettiBurst")
 check('testID="topcard-confetti-burst"' in card, "burst testID present on the top card")
 check("isComplete ? (" in card and "topcard-confetti-burst" in card,
       "burst only renders at 100%")
 check("if (isComplete)" not in card, "top card no longer swaps itself out at 100%")
-check("export function TriumphCard" in card, "TriumphCard exported for below-card use")
+check("TriumphCard" not in card, "TriumphCard removed from ClientTopCard")
 
-# 4. "Just closed!" triumph card below the top card, unchanged; review/share
+# 4. "Just closed!" triumph card REMOVED (Anuraj, Sept 2026); review/share
 #    section preserved.
 for name, src in (("buyer", buyer), ("seller", seller), ("tc", tc)):
-    check("<TriumphCard" in src, name + " screen renders the triumph card below the top card")
-    check("ClientTopCard, TriumphCard" in src or "TriumphCard" in src,
-          name + " screen imports TriumphCard")
-check("Just closed!" in card, "'Just closed!' headline unchanged")
-check("Congratulations, checklist done. The property is yours." in card,
-      "triumph congratulations copy unchanged")
-check('testID="triumph-confetti"' in card,
-      "triumph falling confetti preserved on the light theme")
+    check("<TriumphCard" not in src, name + " screen no longer renders the triumph card")
+    check("TriumphCard" not in src, name + " screen no longer imports TriumphCard")
+    check("Just closed!" not in src, name + ' screen has no "Just closed!" copy')
+check("Just closed!" not in card, "'Just closed!' headline removed")
+check("triumphHeadline" not in card, "triumph headline styles removed")
+check("triumph-confetti" not in card, "triumph confetti layer removed")
 check('testID="triumph-review"' in triumph, "review button preserved")
 check('testID="triumph-share"' in triumph, "share button preserved")
 check("<ClientTriumphSection" in buyer, "buyer review/share section preserved")
@@ -96,8 +95,8 @@ check("onLeaveReviewPress" in buyer, "buyer review sheet wiring preserved")
 #    header strip is BACK on the top card with the realtor photo on its
 #    right side (tappable to the in-app profile); the old top-right photo
 #    is gone; the card is responsive via the sample's size-class tokens;
-#    the ahead-of-pace pill and its logic are gone; the light theme and
-#    the mid-card completion pill stay.
+#    the pace/completion pills and their logic are gone; the light theme
+#    stays.
 check('testID="topcard-banner-header"' in card, "banner header strip back on the top card")
 check('testID="topcard-banner"' in card, "synced banner image in the strip")
 check('testID="topcard-gradient"' in card, "teal gradient fallback when no banner is set")
@@ -112,14 +111,15 @@ check("CLIENT_TOPCARD_BG" in card, "card background uses the CLIENT_TOPCARD_BG t
 check("backgroundColor: CLIENT_TOPCARD_BG" in card, "white light theme set as the hero background")
 check("daysLeftTone" in card, "days-line number colored by daysLeftTone")
 check("DAYS_LEFT_COLORS" in card, "days-left palette imported for the number colors")
-check("topCardPill" in card, "mid-card pill driven by topCardPill")
-check("!isComplete" not in card, "no 100%-only pill suppression on the top card")
+check("topCardPill" not in card, "topCardPill removed from the top card")
+check("completionPill" not in topcard_lib, "completionPill removed from topCard.ts")
 check('testID="pace-pill"' not in card, "ahead-of-pace pill markup removed")
 check("pacePill" not in card, "pace pill styles removed")
+check('testID="completion-banner"' not in card, "completion pill markup removed")
 check("aheadOfPace" not in pace_lib, "aheadOfPace helper removed from pace.ts")
 check("PACE_GAP_POINTS" not in pace_lib, "pace threshold constant removed")
-check("aheadOfPace" not in topcard_lib, "topCardPill no longer calls the pace logic")
-check("'pace'" not in topcard_lib, "no pace pill kind in the top-card pill type")
+check("completionPill" not in pace_lib, "completionPill helper removed from pace.ts")
+check("aheadOfPace" not in topcard_lib, "no pace logic in topCard.ts")
 
 if failures:
     print("\n%d FAILURE(S)" % len(failures))

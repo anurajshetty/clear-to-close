@@ -115,8 +115,11 @@ export default function TransactionDetail() {
     setSaving(true);
     try {
       // Per-side close (dual agency closes independently). Stay on the page
-      // so the "Closed" indicator renders in place of the banner.
-      setEscrow(await store.closeEscrow(escrow.id, r));
+      // so the "Closed" indicator renders in place of the banner. Closing
+      // kills the clients' device links for the closed side (and the TC's
+      // once the whole escrow is closed) — they land on the dead-link
+      // screen ("this code no longer works").
+      setEscrow((await store.closeEscrow(escrow.id, r)).escrow);
     } catch (err) {
       console.warn('closeEscrow failed', err);
     } finally {

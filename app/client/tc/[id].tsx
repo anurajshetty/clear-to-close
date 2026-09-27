@@ -12,8 +12,7 @@ import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import type { ClientView, RealtorProfile, TcView } from '../../../src/lib/types';
 import { Kicker, SecondaryButton } from '../../../src/components/ui';
-import { ClientTopCard, TriumphCard } from '../../../src/components/ClientTopCard';
-import { displayPhotoUri } from '../../../src/lib/profile';
+import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
 
@@ -85,10 +84,6 @@ export default function TcView() {
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
   const done = (view?.buyer?.done ?? 0) + (view?.seller?.done ?? 0);
   const total = (view?.buyer?.total ?? 0) + (view?.seller?.total ?? 0);
-  const bothSides = !!view?.buyer && !!view?.seller;
-  const completionText = bothSides
-    ? 'Congratulations, both checklists are complete'
-    : 'Congratulations, the checklist is complete';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -123,20 +118,6 @@ export default function TcView() {
               router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
           />
-
-          {/* 100% (Anuraj, Sept 2026): the top card stays the same card and
-              the "Just closed!" triumph card renders below it, unchanged. */}
-          {total > 0 && done >= total ? (
-            <TriumphCard
-              name={profile?.name ?? ''}
-              photoUri={displayPhotoUri(profile)}
-              address={view.address}
-              city={view.city}
-              daysToClose={view.daysToClose}
-              total={total}
-              completionText={completionText}
-            />
-          ) : null}
 
           {view.buyer ? <SideSection title="Buyer checklist" view={view.buyer} /> : null}
           {view.seller ? <SideSection title="Seller checklist" view={view.seller} /> : null}

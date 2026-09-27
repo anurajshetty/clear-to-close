@@ -77,6 +77,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/topcard_responsive.test.ts" \
   "$ROOT/tests/celebration_redesign.test.ts" \
   "$ROOT/tests/profile_view_fixes.test.ts" \
+  "$ROOT/tests/triumph_removed.test.ts" \
+  "$ROOT/tests/close_revokes_links.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -129,11 +131,13 @@ node "$OUT/tests/profile_view_fixes.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
+node "$OUT/tests/triumph_removed.test.js"
+node "$OUT/tests/close_revokes_links.test.js"
 
 # Top-card redesign structural guard (Sept 2026): guided-by strip removed,
-# escrow status tag present, 100% = same card + burst with the "Just closed!"
-# triumph card below, review/share section preserved (RN components are not
-# importable in the node suite).
+# escrow status tag present, 100% = same card + burst, the "Just closed!"
+# triumph card and the pace/completion pills removed, review/share section
+# preserved (RN components are not importable in the node suite).
 python3 "$ROOT/tests/topcard_redesign.py"
 
 # Em/en-dash sweep (Sept 2026): user-facing copy must read professional and

@@ -11,8 +11,8 @@
 //     the component source is pinned statically via CTC_REPO_ROOT): the
 //     banner strip is back on top of the card with the realtor photo on
 //     its right side, tappable to the in-app realtor profile; the old
-//     top-right photo position is gone; the ahead-of-pace pill and the
-//     pace helpers are gone.
+//     top-right photo position is gone; the ahead-of-pace pill, the
+//     completion pill, and their logic are gone.
 import { assert, summary } from './assert';
 import {
   TOPCARD_BREAKPOINT,
@@ -106,14 +106,19 @@ assert(card.includes('t.photoRight'), 'photo offset comes from the responsive to
 assert(!card.includes('testID="greeting-avatar"'), 'old top-right photo removed');
 assert(!card.includes('avatarCircle'), 'old avatar circle styles removed');
 
-// The ahead-of-pace pill and its logic are gone.
+// The ahead-of-pace pill, the completion pill, and their logic are gone.
 assert(!card.includes('testID="pace-pill"'), 'pace pill markup removed');
 assert(!card.includes('pacePill'), 'pace pill styles removed');
+assert(!card.includes('testID="completion-banner"'), 'completion pill markup removed');
+assert(!card.includes('CompletionPill'), 'CompletionPill component removed');
+assert(!card.includes('TriumphCard'), 'TriumphCard removed from the top-card component');
+assert(!card.includes('Just closed!'), '"Just closed!" copy removed from the top-card component');
 const paceLib = srcFile('src/lib/pace.ts');
 assert(!paceLib.includes('aheadOfPace'), 'aheadOfPace helper removed');
 assert(!paceLib.includes('PACE_GAP_POINTS'), 'pace threshold constant removed');
+assert(!paceLib.includes('completionPill'), 'completionPill helper removed');
 const topCardLib = srcFile('src/lib/topCard.ts');
-assert(!topCardLib.includes("'pace'"), "no 'pace' pill kind in topCardPill");
+assert(!topCardLib.includes('topCardPill'), 'topCardPill removed from topCard.ts');
 assert(!topCardLib.includes('aheadOfPace'), 'topCardPill no longer calls the pace logic');
 
 summary('topcard_responsive');

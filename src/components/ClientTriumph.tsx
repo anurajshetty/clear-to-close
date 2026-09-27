@@ -1,7 +1,7 @@
 // Clear to Close — client home 100% below-card section.
 //
 // APPROVED mockup screen 10 "Home at 100% · realtor triumph" (Sept 26, 2026).
-// Below the triumph card:
+// Below the top card:
 //   - the checklist collapses to one tappable row ("{N} of {N} steps
 //     complete · View") that expands inline to the full read-only list;
 //   - "Leave {Name} a review" (gold) and "Share {Name}'s profile" buttons;

@@ -26,24 +26,21 @@
 //    fewer; "due today" / "overdue by N day(s)" keep their treatments).
 //  - 100%: the top card STAYS the same card — only the status tag flips to
 //    "Completed" and the unified confetti BURST (the shared ConfettiBurst)
-//    pops up from the card's bottom edge. The mid-card completion pill stays
-//    visible at 100%. The ahead-of-pace pill is GONE (Anuraj's call).
-//  - The "Just closed!" triumph card (TriumphCard, exported below) renders
-//    BELOW the top card. The step list below the card is untouched.
-//    No JUST NOW markers anywhere.
+//    pops up from the card's bottom edge. No pace pill, no completion pill,
+//    no separate 100% triumph card (Anuraj's call, Sept 2026).
+//  - The step list below the card is untouched. No JUST NOW markers
+//    anywhere.
 import React, { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { initialsOf } from './ui';
 import { ProgressRing } from './ProgressRing';
-import { ConfettiBurst, ConfettiLayer } from './Confetti';
-import { completionPill } from '../lib/pace';
+import { ConfettiBurst } from './Confetti';
 import {
   CLIENT_TOPCARD_BG,
   DAYS_LEFT_COLORS,
   TOPCARD_TOKENS,
   daysLeftTone,
-  topCardPill,
   topCardSizeClass,
 } from '../lib/topCard';
 import { escrowStatusLabel } from '../lib/clientView';
@@ -51,7 +48,6 @@ import { displayBannerUri, displayPhotoUri } from '../lib/profile';
 import { colors } from '../theme';
 import type { RealtorProfile } from '../lib/types';
 
-const GOLD = '#F5C66B';
 const RING_GOLD = '#E3B95C';
 const AMBER = '#A86A12';
 const AMBER_LIGHT = '#E0B34E';
@@ -199,97 +195,6 @@ function DaysLine({
   );
 }
 
-/** The 100% status pill, shared by the mid-card slot and the triumph card. */
-function CompletionPill({ text }: { text: string }) {
-  return (
-    <View style={styles.statusPill} testID="completion-banner">
-      <View style={[styles.dot, styles.dotAccent]} />
-      <Text style={styles.statusPillText}>{text}</Text>
-    </View>
-  );
-}
-
-// "Just closed!" triumph card, rendered BELOW the client top card at 100%
-// (the top card stays the same card; only its status tag flips to
-// "Completed"). Light theme (celebration redesign, Anuraj, Sept 2026):
-// white card, the realtor's name as the amber kicker, "Just closed!", the
-// realtor's photo, "Congratulations, checklist done. The property is yours.",
-// the property address, the 100% gold ring (150px display, same r=88/stroke=24
-// geometry as the 208px ring), and the ahead-of-schedule pill per the
-// existing 100% rule.
-export function TriumphCard({
-  name,
-  photoUri,
-  address,
-  city,
-  daysToClose,
-  total,
-  completionText,
-}: {
-  name: string;
-  photoUri: string | null;
-  address: string;
-  city: string;
-  daysToClose: number;
-  total: number;
-  completionText?: string;
-}) {
-  const [cardHeight, setCardHeight] = useState(0);
-  const pill = completionPill({ done: total, total, daysToClose, name });
-  // The TC view passes its own completion copy; buyer/seller keep the
-  // approved client-home pill text.
-  const pillText = completionText ?? pill?.text ?? null;
-  // Mockup screen 10 renders the 208-geometry ring at 150px display size.
-  const k = 150 / 208;
-  return (
-    <View
-      style={styles.hero}
-      testID="client-topcard"
-      onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
-    >
-      <ConfettiLayer cardHeight={cardHeight} testID="triumph-confetti" />
-      <View style={styles.triumphContent}>
-        <Text style={styles.triumphKicker}>{name}</Text>
-        <Text style={styles.triumphHeadline}>Just closed!</Text>
-        <View style={styles.triumphPhotoWrap}>
-          <View style={styles.triumphPhoto}>
-            {photoUri ? (
-              <Image source={{ uri: photoUri }} style={styles.triumphPhotoImg} />
-            ) : (
-              <Text style={styles.triumphPhotoInitials}>{initialsOf(name)}</Text>
-            )}
-          </View>
-        </View>
-        <Text style={styles.triumphText} testID="triumph-text">
-          Congratulations, checklist done. The property is yours.
-        </Text>
-        <Text style={styles.triumphAddr} testID="triumph-address">
-          {city ? `${address}, ${city}` : address}
-        </Text>
-        <View style={styles.triumphRingWrap}>
-          <ProgressRing
-            done={total}
-            total={total}
-            size={150}
-            radius={88 * k}
-            strokeWidth={24 * k}
-            labelSize={32}
-            trackStroke={LINE}
-            progressStroke={GOLD}
-            labelColor={INK}
-            testID="progress-ring"
-          />
-        </View>
-        {pillText ? (
-          <View style={styles.triumphPillWrap}>
-            <CompletionPill text={pillText} />
-          </View>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
 export function ClientTopCard({
   greeting,
   kicker,
@@ -313,13 +218,10 @@ export function ClientTopCard({
   const sizeClass = topCardSizeClass(screenW);
   const t = TOPCARD_TOKENS[sizeClass];
 
-  const pill = topCardPill({ done, total, daysToClose, name });
   // 100% (Anuraj, Sept 2026): the top card stays the same card — only the
   // status tag flips to "Completed" and the unified confetti BURST pops up
-  // from the card's bottom edge. The mid-card completion pill stays visible
-  // at 100% (Anuraj's final call); the "Just closed!" triumph card renders
-  // below the top card (see TriumphCard). The step list below the card is
-  // untouched. No JUST NOW markers anywhere.
+  // from the card's bottom edge. No pace pill, no completion pill anywhere.
+  // The step list below the card is untouched. No JUST NOW markers anywhere.
   const isComplete = total > 0 && done >= total;
   const statusText = escrowStatusLabel({ done, total, status });
   const [cardW, setCardW] = useState(0);
@@ -449,13 +351,6 @@ export function ClientTopCard({
             <DaysLine daysToClose={daysToClose} daysSize={t.days} numSize={t.daysNum} />
           </View>
         </View>
-
-        {/* The mid-card completion pill stays visible at 100% (Anuraj's
-            final call, Sept 2026): the ONLY per-status changes on the top
-            card are the status tag flipping to "Completed" and the confetti
-            burst popping from below the card. The ahead-of-pace pill is
-            gone. */}
-        {pill?.kind === 'completion' ? <CompletionPill text={pill.text} /> : null}
       </View>
     </View>
   );
@@ -584,99 +479,6 @@ const styles = StyleSheet.create({
   overNum: {
     color: RED,
   },
-  // Status pill.
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: colors.accentSoft,
-    borderRadius: 14,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    marginTop: 14,
-  },
-  statusPillText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.accent,
-    lineHeight: 18.2,
-    textAlign: 'center',
-    flexShrink: 1,
-    flexGrow: 1,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    flexShrink: 0,
-  },
-  dotAccent: {
-    backgroundColor: colors.accent,
-  },
-  // 100% triumph card (light theme).
-  triumphContent: {
-    position: 'relative',
-    paddingTop: 22,
-    paddingBottom: 24,
-    paddingHorizontal: 20,
-  },
-  triumphKicker: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.8,
-    color: AMBER,
-    textAlign: 'center',
-  },
-  triumphHeadline: {
-    fontSize: 34,
-    fontWeight: '800',
-    color: INK,
-    textAlign: 'center',
-    marginTop: 6,
-  },
-  triumphPhotoWrap: {
-    alignItems: 'center',
-    marginTop: 12,
-  },
-  triumphPhoto: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 3,
-    borderColor: colors.photoBorder,
-    overflow: 'hidden',
-    backgroundColor: colors.accentSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  triumphPhotoImg: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-  },
-  triumphPhotoInitials: {
-    color: colors.accent,
-    fontWeight: '800',
-    fontSize: 18,
-  },
-  triumphText: {
-    fontSize: 15,
-    lineHeight: 22.5,
-    color: INK,
-    textAlign: 'center',
-    marginTop: 10,
-  },
-  triumphAddr: {
-    fontSize: 13,
-    color: BODY,
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  triumphRingWrap: {
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  triumphPillWrap: {
-    marginTop: 12,
-  },
+  // 100% triumph card removed (Anuraj, Sept 2026): the completed state is
+  // just the top card (status tag "Completed") with the confetti burst.
 });

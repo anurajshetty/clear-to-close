@@ -215,8 +215,8 @@ export interface ClientView {
   myReviewId: string | null;
   /**
    * Escrow open / target-close dates (local 'YYYY-MM-DD'). Feed the client
-   * top card's ahead-of-pace pill. Optional: older or cloud views may omit
-   * them, and the pill then stays hidden.
+   * top card's days-left line and the share copy's close-day math. Optional:
+   * older or cloud views may omit them.
    */
   openDate?: string;
   closeDate?: string;

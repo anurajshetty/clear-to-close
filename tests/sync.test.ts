@@ -127,7 +127,7 @@ async function main(): Promise<void> {
   for (const s of fresh!.buyerSteps) {
     if (!s.done) await store.toggleStep(escrow.id, 'buyer', s.id);
   }
-  const buyerClosed = await store.closeEscrow(escrow.id, 'buyer');
+  const { escrow: buyerClosed } = await store.closeEscrow(escrow.id, 'buyer');
   assert(buyerClosed.buyerClosedAt !== null, 'closeEscrow stamps the buyer close date');
   assert(buyerClosed.sellerClosedAt === null, 'seller side stays active');
   assert(buyerClosed.status === 'open', 'escrow stays open while the seller side is active');
@@ -137,7 +137,7 @@ async function main(): Promise<void> {
   for (const s of fresh2!.sellerSteps) {
     if (!s.done) await store.toggleStep(escrow.id, 'seller', s.id);
   }
-  const closed = await store.closeEscrow(escrow.id, 'seller');
+  const { escrow: closed } = await store.closeEscrow(escrow.id, 'seller');
   assert(closed.status === 'closed', 'closeEscrow sets status closed when every side is closed');
 
   summary('sync.test');

@@ -15,7 +15,7 @@
 // When the ping fails (offline / no realtor session / RLS blocking) the app
 // behaves exactly as the local-only v1 — sync stays dormant.
 
-import { createStore, type KV, type Store } from './store';
+import { createStore, type CloseEscrowResult, type KV, type Store } from './store';
 import { uploadProfileMedia } from './mediaUpload';
 import type {
   ClientRole,
@@ -419,10 +419,23 @@ export function createSyncedStore(
 
     // Per-side close (escrow lifecycle, Sept 2026): closing is per side —
     // dual-agency escrows close the buyer and seller sides independently.
-    closeEscrow: async (escrowId, role): Promise<Escrow> => {
-      const e = await local.closeEscrow(escrowId, role);
+    // An explicit close kills client access: the killed links are converged
+    // to the cloud (client_links.revoked_at) so the public gate rejects
+    // them and the client lands on the dead-link screen.
+    closeEscrow: async (escrowId, role): Promise<CloseEscrowResult> => {
+      const { escrow: e, revokedLinks } = await local.closeEscrow(escrowId, role);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      if (cloudConfigured()) {
+        for (const link of revokedLinks) {
+          await enqueueOutbox(kv, {
+            op: 'revokeClientLink',
+            linkId: link.id,
+            revokedAt: link.revokedAt,
+            attempts: 0,
+          });
+        }
+      }
+      return { escrow: e, revokedLinks };
     },
 
     createInvite: async (escrowId, role, partyName): Promise<Invite> => {

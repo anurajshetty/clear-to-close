@@ -31,6 +31,20 @@ export interface KV {
   removeItem(k: string): Promise<void>;
 }
 
+/** A client device link killed by an explicit escrow close (for cloud
+ * convergence via the revokeClientLink outbox op). */
+export interface RevokedClientLink {
+  id: string;
+  revokedAt: string;
+}
+
+/** closeEscrow result: the closed escrow plus the client links revoked at
+ * close time. */
+export interface CloseEscrowResult {
+  escrow: Escrow;
+  revokedLinks: RevokedClientLink[];
+}
+
 export interface Store {
   getProfile(): Promise<RealtorProfile | null>;
   /**
@@ -83,8 +97,16 @@ export interface Store {
    * Close one side of an escrow (per-side lifecycle). Dual-agency sides
    * close independently; the escrow-level status flips to 'closed' only
    * when every side is closed.
+   *
+   * An explicit close kills client access (Anuraj, Sept 2026): every live
+   * client device link for the closed side is revoked, and the TC links die
+   * too once the whole escrow is closed — the same treatment as a revoked
+   * invite, so the client lands on the dead-link screen ("this code no
+   * longer works"). A side that stays active keeps its clients' access
+   * (dual agency). Returns the closed escrow plus the killed links, for
+   * cloud convergence.
    */
-  closeEscrow(escrowId: string, role: ClientRole): Promise<Escrow>;
+  closeEscrow(escrowId: string, role: ClientRole): Promise<CloseEscrowResult>;
   createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite>;
   revokeInvite(inviteId: string): Promise<void>;
   /** Replace an invite's code (cloud collision regeneration). */
@@ -544,7 +566,7 @@ export function createStore(kv: KV): Store {
      * to 'closed' only when every side is closed. Requires every step on the
      * side to be checked off (the UI only offers the button then).
      */
-    async closeEscrow(escrowId: string, role: ClientRole): Promise<Escrow> {
+    async closeEscrow(escrowId: string, role: ClientRole): Promise<CloseEscrowResult> {
       await ensureLoaded();
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
       const steps = roleSteps(e, role);
@@ -555,9 +577,25 @@ export function createStore(kv: KV): Store {
       if (role === 'buyer') e.buyerClosedAt = today;
       else e.sellerClosedAt = today;
       applyDerivedStatus(e);
+      // Anuraj (Sept 2026): an explicit close kills client access, same as a
+      // revoked invite. The closed side's live client links die now; the TC
+      // links die once the whole escrow is closed (every side closed). A
+      // side that stays active keeps its clients' access (dual agency).
+      // validateClientLink reads link.revokedAt, so the killed clients land
+      // on the dead-link screen.
+      const now = new Date().toISOString();
+      const rolesToKill: ClientRole[] = [role];
+      if (e.status === 'closed') rolesToKill.push('tc');
+      const revokedLinks: RevokedClientLink[] = [];
+      for (const link of data.links) {
+        if (link.escrowId === escrowId && !link.revokedAt && rolesToKill.includes(link.role)) {
+          link.revokedAt = now;
+          revokedLinks.push({ id: link.id, revokedAt: now });
+        }
+      }
       const next = replaceEscrow(e);
       await persist();
-      return next;
+      return { escrow: next, revokedLinks };
     },
 
     async updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {

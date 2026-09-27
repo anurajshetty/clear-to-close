@@ -38,7 +38,14 @@ central user; the buyers and sellers they represent are the other parties.
   re-completed). **Dual agency closes per side**: each tab has its own
   **"Close buyer side" / "Close seller side"** button and **"Closed"
   indicator** — closing the buyer side leaves the seller side active and vice
-  versa; unchecking reopens only that side.
+  versa; unchecking reopens only that side. **Explicit close revokes client
+  access** (Anuraj, Sept 2026): the moment a side closes, that side's live
+  buyer/seller device links are revoked (the transaction coordinator's links
+  are revoked once the whole escrow is closed). A revoked client fails the
+  link gate and lands on "This code no longer works" (the `/link-dead`
+  screen), the same state as an expired or regenerated code. A 100%-complete
+  escrow that is still open is NOT a close: the client's links keep working
+  and the top card shows "Completed" with the confetti burst.
 - **New escrow** — open an escrow with open/end dates and a side picker
   (Buy side / Sell side, multi-select for dual agency). Dates use a simple
   date picker (native date input on web, minimal inline picker on native —
@@ -180,10 +187,9 @@ central user; the buyers and sellers they represent are the other parties.
     `get_client_view` escrow status, migration 0015; "Completed" once the
     checklist is 100% done or the escrow is closed). "Completed" fills amber;
     "In progress" is an amber outline.
-  - The ahead-of-pace pill is gone (Anuraj, Sept 2026): no pace pill, no
-    pace logic. The mid-card completion pill stays visible at 100%; the only
-    per-status changes on the top card are the status tag flip and the
-    confetti burst.
+  - The pace pill and the completion pill are gone (Anuraj, Sept 2026): no
+    pace logic anywhere, in any state. The only per-status changes on the
+    top card are the status tag flip and the confetti burst.
   - **"LATEST FROM {NAME}" card** — directly below the top card, above the
     checklist, always visible. Shows the single most recent realtor action:
     "Checked off {step} · {relative time}" with a green check, or the honest,
@@ -196,17 +202,10 @@ central user; the buyers and sellers they represent are the other parties.
     the stamp derive the latest checkoff from `completedAt`.
   - **100%** — the top card stays the same card: the status tag flips to
     "Completed" and the unified confetti **burst** pops up from below the
-    card (the shared `ConfettiBurst`, reduced-motion aware). Directly below
-    it renders the **triumph card** on the light theme too (white card,
-    approved redesign, Sept 2026): falling confetti (the shared
-    `ConfettiLayer`, reduced-motion aware), the realtor's name as the gold
-    kicker, "Just closed!", realtor photo,
-    "Congratulations, checklist done. The property is yours.", the
-    property address, and a 150px 100% gold ring. The completion pill follows
-    the ahead-of-schedule rule: "Checklist complete with {N} days to spare.
-    {FirstName} has you ahead of schedule." when 5+ days out, otherwise the
-    unchanged "Congratulations, your checklist is complete".
-- **Below the triumph card (100% and not cancelled)** — the review feature
+    card (the shared `ConfettiBurst`, reduced-motion aware). There is no
+    separate 100% triumph card (removed, Anuraj, Sept 2026): no
+    "Just closed!" card, no pace or completion pill in any state.
+- **Below the top card (100% and not cancelled)** — the review feature
   is **on hold** (Anuraj, Sept 2026): the review/share entry points are not
   surfaced. All review code stays intact (the `canLeaveReview` gate, the
   0015 escrow-status wiring, the review sheet, and the

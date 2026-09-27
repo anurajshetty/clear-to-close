@@ -65,7 +65,7 @@ async function main(): Promise<void> {
     assert(threw, 'closeEscrow rejects an incomplete side');
 
     await checkAll(store, e.id, 'buyer');
-    const closed = await store.closeEscrow(e.id, 'buyer');
+    const { escrow: closed } = await store.closeEscrow(e.id, 'buyer');
     assert(closed.buyerClosedAt === today, `buyer close stamps today (${closed.buyerClosedAt})`);
     assert(closed.sellerClosedAt === null, 'seller side untouched on a buy-side escrow');
     assert(closed.status === 'closed', 'single-side escrow reads closed');
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
 
     // Re-completing lets the side close again.
     await store.toggleStep(e.id, 'buyer', firstStep);
-    const reclosed = await store.closeEscrow(e.id, 'buyer');
+    const { escrow: reclosed } = await store.closeEscrow(e.id, 'buyer');
     assert(reclosed.status === 'closed', 'side can be closed again after re-completion');
   }
 
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     await checkAll(store, e.id, 'buyer');
     await checkAll(store, e.id, 'seller');
 
-    const buyerClosed = await store.closeEscrow(e.id, 'buyer');
+    const { escrow: buyerClosed } = await store.closeEscrow(e.id, 'buyer');
     assert(isSideClosed(buyerClosed, 'buyer'), 'buyer side closed');
     assert(!isSideClosed(buyerClosed, 'seller'), 'seller side stays active');
     assert(buyerClosed.status === 'open', 'escrow stays open while one side is active');
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     await store.toggleStep(e.id, 'buyer', buyerStep); // re-check
     await store.toggleStep(e.id, 'seller', sellerStep); // re-check
     await store.closeEscrow(e.id, 'buyer');
-    const fullyClosed = await store.closeEscrow(e.id, 'seller');
+    const { escrow: fullyClosed } = await store.closeEscrow(e.id, 'seller');
     assert(fullyClosed.status === 'closed', 'dual-agency escrow closed when both sides close');
     assert(isEscrowClosed(fullyClosed), 'isEscrowClosed for fully closed dual agency');
     assert(
