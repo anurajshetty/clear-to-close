@@ -1,4 +1,4 @@
--- 0009_public_profile.sql — Clear to Close, Sept 2026.
+-- 0011_public_profile.sql — Clear to Close, Sept 2026.
 --
 -- Public realtor profile page (/realtor/<realtor-id>, approved branding
 -- mockup screen 2) + client reviews (approved screen 11).

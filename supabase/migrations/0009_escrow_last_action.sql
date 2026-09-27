@@ -1,4 +1,4 @@
--- 0008_escrow_last_action.sql — "LATEST FROM {NAME}" card (Sept 2026).
+-- 0009_escrow_last_action.sql — "LATEST FROM {NAME}" card (Sept 2026).
 --
 -- The client home's "LATEST FROM" card shows the single most recent realtor
 -- action on the escrow — forward AND backward moves (neutral wording, no

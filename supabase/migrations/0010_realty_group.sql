@@ -1,4 +1,4 @@
--- 0008_realty_group.sql — realtor profile branding fields (Sept 2026).
+-- 0010_realty_group.sql — realtor profile branding fields (Sept 2026).
 --
 -- realty_group: optional free-text brokerage shown on the branded client
 --   surfaces per the approved branding mockups, e.g.
