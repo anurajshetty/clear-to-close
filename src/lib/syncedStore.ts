@@ -21,8 +21,10 @@ import type {
   ClientView,
   Escrow,
   Invite,
+  InviteRealtor,
   RealtorProfile,
   RedeemResult,
+  ResolveInviteError,
 } from './types';
 import {
   cloudClient,
@@ -42,6 +44,7 @@ import {
   readOutboxOps,
   redeemViaCloud,
   regenerateInviteNow,
+  resolveInviteRealtor as resolveInviteRealtorViaCloud,
   type Cloud,
   type PingResult,
 } from './cloudSync';
@@ -434,6 +437,30 @@ export function createSyncedStore(
         }
       }
       return local.redeemInvite(code, name, deviceId);
+    },
+
+    resolveInviteRealtor: async (
+      code: string,
+    ): Promise<{ ok: true; realtor: InviteRealtor } | { ok: false; error: ResolveInviteError }> => {
+      if (publicOk()) {
+        const c = client();
+        if (c) {
+          try {
+            const rpcP = resolveInviteRealtorViaCloud(c, code).then((res) => res);
+            rpcP.catch(() => {});
+            const res = (await Promise.race([rpcP, timeoutMs(8000)])) as
+              | ({ ok: true; realtor: InviteRealtor } | { ok: false; error: ResolveInviteError })
+              | undefined;
+            // Timeout or RPC failure: report a retryable network error, never
+            // a code verdict — the code may be perfectly good.
+            if (!res) return { ok: false, error: 'network' };
+            return res;
+          } catch {
+            return { ok: false, error: 'network' };
+          }
+        }
+      }
+      return local.resolveInviteRealtor(code);
     },
 
     /**

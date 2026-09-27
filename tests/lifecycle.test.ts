@@ -226,10 +226,14 @@ async function main(): Promise<void> {
       photoUri: null,
       about: 'Realtor',
       yearsExperience: '12',
-      dealsClosed: '240',
+      avgDaysToClose: '21',
       areasServed: 'Santa Clarita',
       phone: '(555) 234-5678',
       dreLicense: '01998877',
+    realty_group: '',
+    banner_image: null,
+      reviews: [],
+      rating: null,
     });
     const p = await store.getProfile();
     assert(p !== null && p.phone === '(555) 234-5678', 'phone number persists on the profile');

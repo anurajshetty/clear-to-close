@@ -15,6 +15,20 @@ export interface StepT {
   completedAt: string | null;
 }
 
+/**
+ * The single most recent realtor action on an escrow's checklist, stamped
+ * on every check/uncheck. The client home's "LATEST FROM" card reflects
+ * reality — forward AND backward moves (neutral wording, no blame). An
+ * uncheck leaves no completedAt behind, so the action is recorded
+ * explicitly (migration 0009 adds the escrows.last_action JSONB column).
+ */
+export interface RealtorAction {
+  kind: 'checked' | 'reopened';
+  stepTitle: string;
+  /** ISO timestamp of the action. */
+  at: string;
+}
+
 export interface Escrow {
   id: string;
   address: string;
@@ -38,6 +52,12 @@ export interface Escrow {
   buyerClosedAt: string | null;
   sellerClosedAt: string | null;
   createdAt: string;
+  /**
+   * The most recent realtor check/uncheck on this escrow (see
+   * RealtorAction). Optional: escrows created before the field existed
+   * simply don't carry it.
+   */
+  lastAction?: RealtorAction | null;
 }
 
 export interface CreateEscrowInput {
@@ -71,11 +91,48 @@ export interface RealtorProfile {
   photoUri: string | null;
   about: string;
   yearsExperience: string;
-  dealsClosed: string;
+  /** New (Sept 2026): average days to close — free text, like yearsExperience. */
+  avgDaysToClose: string;
   areasServed: string;
   phone: string;
   /** Optional DRE / license number — shown on the client profile only if entered. */
   dreLicense: string;
+  /**
+   * Optional realty group / brokerage (Sept 2026) — shown on the branded
+   * client surfaces per the approved branding mockups, e.g.
+   * "Maya Sharma / Compass Realty · DRE #01998877". Empty for profiles
+   * saved before the field existed. Field name is contractual (another
+   * agent reads it by name).
+   */
+  realty_group: string;
+  /**
+   * Optional banner image (Sept 2026) — wide image shown behind the client
+   * home top card. One managed file, overwritten on every pick (same
+   * pattern as the profile photo); null when none. Field name is
+   * contractual (another agent reads it by name).
+   */
+  banner_image: string | null;
+  /** Client reviews, newest first (Sept 2026). */
+  reviews: Review[];
+  /**
+   * Average of review stars, null when there are no reviews (Sept 2026).
+   * Contractual: the share-copy builder reads profile.rating by name.
+   */
+  rating: number | null;
+}
+
+/** A client review of the realtor (Sept 2026). Stored on the realtor's profile. */
+export interface Review {
+  /** Stable id (uuid). */
+  id: string;
+  /** Display name of the client who wrote it. */
+  clientName: string;
+  /** 1–5. */
+  stars: number;
+  /** One line of text (may be empty). */
+  text: string;
+  /** ISO timestamp. */
+  createdAt: string;
 }
 
 export interface Invite {
@@ -92,6 +149,20 @@ export interface Invite {
 export type RedeemResult =
   | { ok: true; escrowId: string; role: ClientRole; partyName: string; linkId: string }
   | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'device_has_link' };
+
+/**
+ * The inviting realtor's public branding for the branded invite welcome
+ * (Sept 2026). Returned by resolve_invite_realtor / store.resolveInviteRealtor.
+ */
+export interface InviteRealtor {
+  name: string;
+  photoUrl: string | null;
+  realtyGroup: string;
+  dreLicense: string;
+  realtorId: string;
+}
+
+export type ResolveInviteError = 'invalid' | 'already_used' | 'revoked' | 'unknown' | 'network';
 
 export interface ClientLink {
   id: string;
@@ -125,4 +196,33 @@ export interface ClientView {
   total: number;
   steps: StepT[];
   upNext: StepT | null;
+  /** The id of this link's own review, if it posted one (Sept 2026). */
+  myReviewId: string | null;
+  /**
+   * Escrow open / target-close dates (local 'YYYY-MM-DD'). Feed the client
+   * top card's ahead-of-pace pill. Optional: older or cloud views may omit
+   * them, and the pill then stays hidden.
+   */
+  openDate?: string;
+  closeDate?: string;
+  /**
+   * The realtor's id (auth user id) behind this escrow — feeds the public
+   * profile URL in "Share {Name}'s profile". Present on cloud-linked views
+   * (the RPC returns the escrow row's user_id); absent on the local-only
+   * build, where the share copy then omits the profile link.
+   */
+  realtorId?: string;
+  /**
+   * The most recent realtor action on this escrow's checklist — feeds the
+   * client home's "LATEST FROM" card. Absent on escrows last touched before
+   * the field existed; the card then derives from the steps' completed_at
+   * timestamps.
+   */
+  lastAction?: RealtorAction | null;
+  /**
+   * When the escrow was created (ISO). Fallback timestamp for the
+   * "LATEST FROM" card when no step has ever been checked off:
+   * "{Name} opened your escrow · {relative time}".
+   */
+  openedAt?: string;
 }

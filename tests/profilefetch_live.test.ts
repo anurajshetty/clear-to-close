@@ -121,7 +121,7 @@ async function main(): Promise<void> {
     assert(pulled !== null, 'pullProfileNow returns the name-NULL row instead of discarding it');
     assert(pulled !== null && pulled.about === 'Live test about', 'about hydrates from the live row');
     assert(pulled !== null && pulled.yearsExperience === '10', 'years_experience hydrates');
-    assert(pulled !== null && pulled.dealsClosed === '30', 'deals_closed hydrates');
+    assert(pulled !== null && !('dealsClosed' in pulled), 'deals_closed never surfaces on the profile');
     assert(pulled !== null && pulled.areasServed === 'Santa Clarita', 'areas_served hydrates');
     assert(pulled !== null && pulled.phone === '555-0100', 'phone hydrates through the shared mapper');
     assert(pulled !== null && pulled.dreLicense === 'DRE-LIVE', 'dre_license hydrates');

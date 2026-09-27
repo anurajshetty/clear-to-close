@@ -403,10 +403,17 @@ def main():
             created = [c for c in new_chips if CODE_RE.match(c)]
             check("sheet: code issued", len(created) >= 1, f"chips={new_chips}")
             pg.screenshot(path=f"{OUT}/04-invite-sheet-code.png")
-            # The client-list sheet underneath has its own "Copy" link first in
-            # DOM order; the invite sheet's Copy button is the last match.
-            pg.get_by_text("Copy", exact=True).last.click()
-            pg.wait_for_timeout(900)
+            # Branded invite deep link (Sept 2026): "Copy invite link"
+            # copies the full shareable URL carrying the code.
+            pg.context.grant_permissions(["clipboard-read", "clipboard-write"])
+            pg.get_by_text("Copy invite link", exact=True).click()
+            pg.wait_for_timeout(600)
+            clip = pg.evaluate("navigator.clipboard.readText()")
+            # created[] also matches the client-list chip underneath; the
+            # invite sheet renders last in the DOM, so its code is last.
+            check("invite link carries the code",
+                  clip == f"https://anurajshetty.github.io/clear-to-close/invite/{created[-1]}",
+                  f"clipboard={clip!r} chips={created}")
             check("overlay: back to 2 of 2", pg.get_by_text("Buyer · 2 of 2").count() > 0)
             check("overlay: Dan Buyer listed", pg.get_by_text("Dan Buyer").count() > 0)
 

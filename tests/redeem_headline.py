@@ -6,7 +6,8 @@ their invite code is headlined "Hooray! Your escrow is open." (celebratory).
 Surgical copy change — the subtext and both actions are unchanged.
 
 Runs the REAL client redeem flow on built output (390x844):
-  - role picker -> "I'm a client" -> name + code -> Continue;
+  - role picker -> "I'm a client" -> code step -> branded welcome
+    (realtor name, realty group, DRE) -> name step -> Join;
   - confirmation shows "Hooray! Your escrow is open.";
   - subtext "This device is now linked to your escrow" unchanged;
   - "View my escrow" and "Not your escrow? Start over" unchanged;
@@ -137,6 +138,23 @@ def main():
             "localStorage.setItem('ctc:links', %s);"
             % (json.dumps(json.dumps(escrows)), json.dumps(json.dumps(invites)), json.dumps(json.dumps(links)))
         )
+        # The built bundle carries the real Supabase config, so the branded
+        # invite resolve takes the cloud RPC path. Answer it with the
+        # realtor's public branding (mirrors resolve_invite_realtor).
+        def rresolve(route):
+            if route.request.method == "OPTIONS":
+                route.fulfill(status=200, headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "apikey, Content-Type, Authorization"})
+                return
+            route.fulfill(status=200, headers={
+                "Access-Control-Allow-Origin": "*", "Content-Type": "application/json"},
+                json={"ok": True, "realtor": {
+                    "name": "Rita Realtor", "photo_url": None,
+                    "realty_group": "Compass Realty", "dre_license": "01998877",
+                    "realtor_id": "user-test-1"}})
+        pg.route("**/rest/v1/rpc/resolve_invite_realtor*", rresolve)
         # The built bundle carries the real Supabase config, so redeem takes
         # the cloud RPC path. Answer it with the seeded invite's success
         # payload (mirrors the shape of the real redeem_invite RPC).
@@ -155,16 +173,31 @@ def main():
         try:
             pg.goto(BASE)
             pg.wait_for_timeout(3000)
-            # Role picker -> client path.
+            # Role picker -> client path -> stepped redeem: code first.
             pg.get_by_text("I'm a client").click()
             pg.get_by_text("Continue", exact=True).click()
             pg.get_by_text("Join your escrow", exact=True).wait_for(timeout=12000)
-            pg.locator("[placeholder='e.g. Jordan Lee']").fill("Alice Buyer")
             pg.locator("[placeholder='6-character code']").fill("QK7M2X")
             pg.wait_for_timeout(400)
             # The role screen's Continue is still in the stack; the redeem
             # screen's is the topmost.
             pg.get_by_role("button", name="Continue").last.click()
+
+            # Branded welcome (Sept 2026): the code resolved the realtor
+            # before name entry — name, realty group, DRE subline, no
+            # dangling separator.
+            pg.get_by_text("Rita Realtor", exact=True).wait_for(timeout=12000)
+            check("welcome: realtor name", pg.get_by_text("Rita Realtor", exact=True).count() > 0)
+            check("welcome: realty group and DRE subline",
+                  pg.get_by_text("Compass Realty · DRE #01998877", exact=True).count() > 0)
+            pg.screenshot(path=os.path.join(OUT, "redeem-welcome.png"))
+            pg.get_by_role("button", name="Continue").last.click()
+
+            # Name step -> Join -> confirmation.
+            pg.get_by_text("Almost there", exact=True).wait_for(timeout=12000)
+            pg.locator("[placeholder='e.g. Jordan Lee']").fill("Alice Buyer")
+            pg.wait_for_timeout(400)
+            pg.get_by_role("button", name="Join your escrow").click()
 
             # Confirmation screen.
             pg.get_by_text("Hooray! Your escrow is open.", exact=True).wait_for(timeout=12000)

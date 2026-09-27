@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """Clear to Close — client top-card polish regression (Sept 2026).
 
-Approved polish round on the buyer/seller top card (mockup 01 devices
-4/5/11/14):
+Branding redesign round on the buyer/seller top card (approved mockup):
   1. City on its own line below the address (no "address · city" duplication).
-  2. Top-card bottom margin 14 -> 22px.
-  3. Ring 84 -> 96px with mockup geometry (r=42, stroke=9, dasharray=263.9,
-     pct text 20px) and trimmed center-stack margins (.by-center 16,
-     .ringcap 8, .by-big 8); the top card measures 322px.
+  2. Top-card margins: 14px top / 18px bottom.
+  3. Ring 208px with mockup geometry (r=88, stroke=24, dasharray=553.0,
+     pct text 44px) and trimmed center-stack margins (.by-center 14,
+     .ringcap 10, .by-big 8); banner card over a photo (teal fallback).
 
 Guards (real rendered component, 390x844, client buyer view):
   - address and city render as two separate lines; neither contains "·".
-  - hero card computed margin-bottom == 22px.
-  - ring svg is 96x96, circle r=42, stroke-width=9, dasharray == 2*pi*42,
-    % text font-size == 20px, and the visible arc fraction matches the text
+  - hero card computed margin-bottom == 18px, margin-top == 14px.
+  - ring svg is 208x208, circle r=88, stroke-width=24, dasharray == 2*pi*88,
+    % text font-size == 44px, and the visible arc fraction matches the text
     percentage at 0% and 50% (the arc/text agreement from the ring fix).
-  - center stack margins: 16 / 8 / 8.
-  - card height within tolerance of the spec'd 322px.
+  - center stack margins: 14 / 10 / 8.
+  - card height within tolerance of the spec'd banner-card height.
   - zero JS errors.
 
 Usage: APP_ROOT=/home/hatch/workspace/realtor-app-wt-dragrow python3 tests/topcard_polish.py
@@ -42,6 +41,11 @@ BASE = "http://127.0.0.1:8916/clear-to-close/"
 PORT = 8916
 
 CHECKS = []
+
+# Measured banner-card height in the reference state (done 0 of 14, no pill,
+# teal fallback, 390px viewport): 567px. Re-measure from the real render if
+# the branded card's layout changes; the assertion allows +/-16px.
+TOPCARD_H = 567
 
 
 def check(name, cond, detail=""):
@@ -131,13 +135,15 @@ def run_case(browser, done_count, shot_name=None):
     )
     check("topcard: hero found", hero is not None)
     if hero is not None:
-        check("topcard: bottom margin 22px", hero["mb"] == "22px", f"marginBottom={hero['mb']}")
+        check("topcard: bottom margin 18px", hero["mb"] == "18px", f"marginBottom={hero['mb']}")
         check("topcard: top margin still 14px", hero["mt"] == "14px", f"marginTop={hero['mt']}")
-        # Spec: the polished top card measures 322px in the reference state.
-        check("topcard: card height ~322px", abs(hero["h"] - 322) <= 14,
+        # Spec: the branded banner top card measures ~TOPCARD_H px in the
+        # reference state (measured from the real render; see the constant
+        # at the top of this file).
+        check("topcard: card height ~TOPCARD_Hpx", abs(hero["h"] - TOPCARD_H) <= 16,
               f"height={hero['h']:.1f}px")
 
-    # --- ring geometry (mockup: 96px, r=42, stroke=9, dasharray=263.9) ---
+    # --- ring geometry (mockup: 208px, r=88, stroke=24, dasharray=553.0) ---
     ring = pg.evaluate(
         """() => {
           const circles = [...document.querySelectorAll('circle')]
@@ -168,14 +174,14 @@ def run_case(browser, done_count, shot_name=None):
     )
     check("topcard: ring found", ring is not None)
     if ring is not None:
-        check("topcard: ring is 96x96", ring["w"] == 96 and ring["h"] == 96,
+        check("topcard: ring is 208x208", ring["w"] == 208 and ring["h"] == 208,
               f"{ring['w']}x{ring['h']}")
-        check("topcard: ring r=42", abs(ring["r"] - 42) < 0.01, f"r={ring['r']}")
-        check("topcard: ring stroke=9", abs(ring["sw"] - 9) < 0.01, f"stroke={ring['sw']}")
-        check("topcard: dasharray == 2*pi*42",
-              abs(ring["dasharray"] - 2 * math.pi * 42) < 0.5,
+        check("topcard: ring r=88", abs(ring["r"] - 88) < 0.01, f"r={ring['r']}")
+        check("topcard: ring stroke=24", abs(ring["sw"] - 24) < 0.01, f"stroke={ring['sw']}")
+        check("topcard: dasharray == 2*pi*88",
+              abs(ring["dasharray"] - 2 * math.pi * 88) < 0.5,
               f"dasharray={ring['dasharray']:.2f}")
-        check("topcard: pct text 20px", ring["pctSize"] == "20px",
+        check("topcard: pct text 44px", ring["pctSize"] == "44px",
               f"fontSize={ring['pctSize']}")
         # Arc/text agreement at this case's percentage.
         frac = done_count / 14
@@ -184,7 +190,7 @@ def run_case(browser, done_count, shot_name=None):
               abs(visible - frac) < 0.02,
               f"visible={visible:.3f} expected={frac:.3f}")
 
-    # --- center stack margins: 16 / 8 / 8 ---
+    # --- center stack margins: 14 / 10 / 8 ---
     margins = pg.evaluate(
         """() => {
           const q = (t) => document.querySelector(`[data-testid="${t}"]`);
@@ -199,9 +205,9 @@ def run_case(browser, done_count, shot_name=None):
     )
     check("topcard: stack elements found", margins is not None)
     if margins is not None:
-        check("topcard: .by-center margin-top 16px", margins["centerMt"] == "16px",
+        check("topcard: .by-center margin-top 14px", margins["centerMt"] == "14px",
               f"marginTop={margins['centerMt']}")
-        check("topcard: .ringcap margin-bottom 8px", margins["capMb"] == "8px",
+        check("topcard: .ringcap margin-bottom 10px", margins["capMb"] == "10px",
               f"marginBottom={margins['capMb']}")
         check("topcard: .by-big margin-top 8px", margins["daysMt"] == "8px",
               f"marginTop={margins['daysMt']}")

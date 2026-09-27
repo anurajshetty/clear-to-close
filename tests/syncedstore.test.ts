@@ -29,10 +29,14 @@ function profileFixture(): RealtorProfile {
     photoUri: null,
     about: 'About Rita',
     yearsExperience: '8',
-    dealsClosed: '42',
+    avgDaysToClose: '21',
     areasServed: 'Valencia',
     phone: '555-0100',
     dreLicense: 'DRE-123',
+    realty_group: '',
+    banner_image: null,
+    reviews: [],
+    rating: null,
   };
 }
 

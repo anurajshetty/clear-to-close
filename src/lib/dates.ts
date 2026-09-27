@@ -56,3 +56,35 @@ export function timeline(
   );
   return { totalDays, dayNum };
 }
+
+const SHORT_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * Compact relative time for the client home's "LATEST FROM" card:
+ * "just now" (<5 min), "Xm ago", "Xh ago", "Yesterday", "Xd ago", then
+ * "Mar 3" ("Mar 3, 2025" across years). The card is ALWAYS visible, so old
+ * timestamps render as calendar dates — never hidden. Future or
+ * unparseable input reads "just now" rather than a wrong or blank value.
+ */
+export function relativeTime(iso: string, nowMs: number = Date.now()): string {
+  const at = new Date(iso).getTime();
+  if (!Number.isFinite(at) || at > nowMs) return 'just now';
+  const mins = Math.floor((nowMs - at) / 60_000);
+  if (mins < 5) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 24 * 60) return `${Math.floor(mins / 60)}h ago`;
+  const now = new Date(nowMs);
+  const then = new Date(at);
+  const startOfDay = (d: Date) =>
+    new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(then)) / DAY_MS);
+  if (dayDiff === 1) return 'Yesterday';
+  if (dayDiff < 7) return `${dayDiff}d ago`;
+  const date = `${SHORT_MONTHS[then.getMonth()]} ${then.getDate()}`;
+  return then.getFullYear() === now.getFullYear()
+    ? date
+    : `${date}, ${then.getFullYear()}`;
+}

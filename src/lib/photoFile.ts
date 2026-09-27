@@ -76,3 +76,35 @@ export function readManagedWebPhoto(): string | null {
   if (Platform.OS !== 'web') return null;
   return localStorage.getItem(WEB_PHOTO_KEY);
 }
+
+// ---------------------------------------------------------------------------
+// Banner image (Sept 2026): the same single-managed-file pattern as the
+// profile photo, but a separate fixed file — the banner never shares the
+// photo's file. Wide crop at pick time; the same ≤1024px / JPEG ~0.8
+// downscale applies before this is called.
+
+export const MANAGED_BANNER_FILENAME = 'profile-banner.jpg';
+const WEB_BANNER_KEY = 'ctc:profile-banner';
+
+/**
+ * Persist the final (downscaled) banner to the single managed location,
+ * overwriting any previous banner. Returns the URI to store as
+ * banner_image.
+ */
+export async function saveManagedBanner(sourceUri: string): Promise<string> {
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(sourceUri)).blob();
+    const dataUri = await blobToDataUri(blob);
+    localStorage.setItem(WEB_BANNER_KEY, dataUri);
+    return dataUri;
+  }
+  const dest = `${documentDirectory ?? ''}${MANAGED_BANNER_FILENAME}`;
+  await copyAsync({ from: sourceUri, to: dest });
+  return dest;
+}
+
+/** Read back the managed web banner (used by tests/diagnostics). */
+export function readManagedWebBanner(): string | null {
+  if (Platform.OS !== 'web') return null;
+  return localStorage.getItem(WEB_BANNER_KEY);
+}

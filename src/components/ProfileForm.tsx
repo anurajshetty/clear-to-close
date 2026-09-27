@@ -1,27 +1,32 @@
 // Clear to Close — shared realtor profile form.
 //
 // The single approved profile form, reused by profile setup (01·⑬),
-// onboarding profile creation (㉒), and profile update (㉕): photo, about,
-// years of experience, deals closed, areas served, optional DRE/license,
-// plus full name and phone. Buttons and headers belong to the screens;
-// this component owns the fields only.
+// onboarding profile creation (㉒), and profile update (㉕): photo, full
+// name, optional realty group, about, years of experience, average days to
+// close, areas served, optional DRE/license, plus phone. Buttons and headers
+// belong to the screens; this component owns the fields only.
 
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
-import { deleteLegacyPhotoFile, saveManagedPhoto } from '../lib/photoFile';
+import { deleteLegacyPhotoFile, saveManagedBanner, saveManagedPhoto } from '../lib/photoFile';
 import { Field } from './ui';
 import { initialsOf } from './ui';
 import { colors } from '../theme';
 
 export interface ProfileDraft {
   name: string;
+  /** Optional realty group / brokerage (Sept 2026) — free text, no validation. */
+  realty_group: string;
   photoUri: string | null;
+  /** Optional banner image (Sept 2026) — one managed file, same pattern as the photo. */
+  banner_image: string | null;
   about: string;
   yearsExperience: string;
-  dealsClosed: string;
+  /** Average days to close (Sept 2026) — free text, no validation. */
+  avgDaysToClose: string;
   areasServed: string;
   phone: string;
   dreLicense: string;
@@ -29,10 +34,12 @@ export interface ProfileDraft {
 
 export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
   name: '',
+  realty_group: '',
   photoUri: null,
+  banner_image: null,
   about: '',
   yearsExperience: '',
-  dealsClosed: '',
+  avgDaysToClose: '',
   areasServed: '',
   phone: '',
   dreLicense: '',
@@ -116,6 +123,36 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
   // Quiet inline error when a picked image genuinely can't be processed.
   const [photoError, setPhotoError] = useState<string | null>(null);
 
+  // Banner image (Sept 2026): same pick + downscale pipeline as the photo,
+  // stored as one managed file (profile-banner.jpg) that is overwritten on
+  // every pick. No legacy-file cleanup: banners never existed before, so
+  // there is nothing stale to drop.
+  const [bannerBroken, setBannerBroken] = useState(false);
+  useEffect(() => {
+    setBannerBroken(false);
+  }, [value.banner_image]);
+  const [bannerError, setBannerError] = useState<string | null>(null);
+
+  const pickBanner = async () => {
+    setBannerError(null);
+    const res = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      aspect: [16, 9],
+      // Full quality here: we resize + JPEG-compress ourselves below.
+      quality: 1,
+    });
+    if (res.canceled || !res.assets?.[0]?.uri) return;
+    const asset = res.assets[0];
+    try {
+      const capped = await cappedPhotoUri(asset.uri, asset.width, asset.height);
+      const managed = await saveManagedBanner(capped);
+      onChange({ banner_image: managed });
+    } catch {
+      setBannerError('Couldn’t use that image. Try a different one.');
+    }
+  };
+
   const pickPhoto = async () => {
     setPhotoError(null);
     const res = await ImagePicker.launchImageLibraryAsync({
@@ -147,6 +184,14 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
 
   return (
     <View>
+      <Field label="Full name" value={value.name} onChangeText={set('name')} placeholder="e.g. Maya Chen" />
+      {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
+      <Field
+        label="Realty group"
+        value={value.realty_group}
+        onChangeText={set('realty_group')}
+        placeholder="e.g. Compass Realty"
+      />
       <View style={styles.photoRow}>
         <Pressable
           accessibilityRole="button"
@@ -177,8 +222,33 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
       </View>
       {photoError ? <Text style={styles.photoError}>{photoError}</Text> : null}
 
-      <Field label="Full name" value={value.name} onChangeText={set('name')} placeholder="e.g. Maya Chen" />
-      {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
+      <View style={styles.photoRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={value.banner_image ? 'Change banner image' : 'Add banner image'}
+          onPress={pickBanner}
+          style={[styles.bannerBtn, value.banner_image && styles.photoBtnPicked]}
+        >
+          {value.banner_image && !bannerBroken ? (
+            <Image
+              source={{ uri: value.banner_image }}
+              style={styles.bannerImg}
+              onError={() => setBannerBroken(true)}
+            />
+          ) : (
+            <CameraIcon />
+          )}
+        </Pressable>
+        <View style={styles.photoText}>
+          <Text style={styles.photoLabel}>
+            {value.banner_image ? 'Change banner' : 'Add banner image'}
+          </Text>
+          <Text style={styles.photoSub}>
+            Wide works best. Shown behind your client home card.
+          </Text>
+        </View>
+      </View>
+      {bannerError ? <Text style={styles.photoError}>{bannerError}</Text> : null}
       <Field
         label="About"
         value={value.about}
@@ -193,10 +263,10 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         placeholder="e.g. 12"
       />
       <Field
-        label="Deals closed"
-        value={value.dealsClosed}
-        onChangeText={set('dealsClosed')}
-        placeholder="e.g. 240"
+        label="Avg days to close"
+        value={value.avgDaysToClose}
+        onChangeText={set('avgDaysToClose')}
+        placeholder="e.g. 21"
       />
       <Field
         label="Areas served"
@@ -252,6 +322,23 @@ const styles = StyleSheet.create({
     width: 84,
     height: 84,
     borderRadius: 42,
+  },
+  bannerBtn: {
+    width: 112,
+    height: 64,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderStyle: 'dashed',
+    borderColor: colors.photoBorder,
+    backgroundColor: colors.inputBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  bannerImg: {
+    width: 112,
+    height: 64,
+    borderRadius: 10,
   },
   photoText: {
     flex: 1,

@@ -1,17 +1,24 @@
 #!/usr/bin/env python3
-"""Clear to Close — client top-card render test (reworked top card, Sept 26).
+"""Clear to Close — client top-card render test (branded top card, Sept 26).
 
 Drives the REAL built output at 390x844 (deep-linked client views with a
-seeded device link) and asserts the visible outcomes of the reworked client
-top card (mockup 01, devices 4/5/11/14):
-  - top row: bold "Hi {name}" + "Your purchase"/"Your sale" + non-bold
-    address, with the realtor photo button top-right AT THE GREETING LEVEL
-    (48px tap target -> opens the realtor profile).
-  - centered below: "N of N steps" above the bigger 96px ring, then the
+seeded device link) and asserts the visible outcomes of the branded client
+top card (approved mockup):
+  - greeting row: bold "Hi {name}" + "Your purchase"/"Your sale" + non-bold
+    address, with the realtor avatar button AT THE GREETING LEVEL (48px
+    tap target -> opens the Call/Text contact menu).
+  - centered below: "N of N steps" above the 208px ring, then the
     single centered days line: "days left: N" / "due today" / red
     "overdue by N day(s)" (singular handled).
-  - completion banner "Congratulations, your checklist is complete" when
-    every step is checked (and absent otherwise).
+  - GUIDED BY strip: realtor photo, name, tagline, Call/Text/Profile
+    buttons; Profile opens the client realtor profile page.
+  - completion banner when every step is checked: the ahead-of-schedule
+    rule ("Checklist complete with N days to spare..." when 5+ days out,
+    "Congratulations, your checklist is complete" under 5 days). The full
+    100% triumph state is guarded by tests/rendered/client_triumph.py.
+  - no JUST NOW markers anywhere (tags, banners, recency logic removed).
+  - the rest of the client home unchanged: single ordered list in the
+    realtor's order, UP NEXT, read-only rows, no Custom tag, profile flow.
   - no JUST NOW markers anywhere (tags, banners, recency logic removed).
   - the rest of the client home unchanged: single ordered list in the
     realtor's order, UP NEXT, read-only rows, no Custom tag, profile flow.
@@ -140,6 +147,7 @@ def rpc_payload(role, done_count=3, close_delta_days=91):
             "id": escrow["id"],
             "address": escrow["address"],
             "city": escrow["city"],
+            "open_date": escrow["openDate"],
             "close_date": escrow["closeDate"],
         },
         "profile": {
@@ -179,9 +187,9 @@ ORDER_JS = """(TITLES) => {
   return sorted.map(e => TITLES[pos.get(e)]);
 }"""
 
-# Geometry of the reworked top card: photo button (top-right at the greeting
-# level), the "N of N steps" caption above the 96px ring, and the centered
-# days line.
+# Geometry of the branded top card: avatar button (greeting level, opens the
+# Call/Text menu), the "N of N steps" caption above the 208px ring, and the
+# centered days line.
 TOPCARD_JS = """(EXPECTED) => {
   const deepest = (t) => {
     const cands = [...document.querySelectorAll('*')].filter(e =>
@@ -193,7 +201,7 @@ TOPCARD_JS = """(EXPECTED) => {
     return cands[0];
   };
   const out = {};
-  const photoBtn = document.querySelector('[aria-label^="View your realtor"]');
+  const photoBtn = document.querySelector('[aria-label^="Contact your realtor"]');
   out.photoBtn = !!photoBtn;
   if (photoBtn) {
     const r = photoBtn.getBoundingClientRect();
@@ -338,8 +346,8 @@ def main():
             check(f"{role}: photo beside greeting (flex row, above ring)",
                   tc.get("photoParentRow") and tc.get("photoTop", 1e9) < tc.get("ringTop", 0),
                   f"row={tc.get('photoParentRow')} photoTop={tc.get('photoTop')} ringTop={tc.get('ringTop')}")
-            check(f"{role}: ring present and 96px",
-                  tc["ring"] and tc.get("ringW") == 96 and tc.get("ringH") == 96,
+            check(f"{role}: ring present and 208px",
+                  tc["ring"] and tc.get("ringW") == 208 and tc.get("ringH") == 208,
                   f"w={tc.get('ringW')} h={tc.get('ringH')}")
             check(f"{role}: 'N of N steps' caption above ring",
                   tc["caption"] and tc.get("captionAboveRing"),
@@ -399,10 +407,24 @@ def main():
             check(f"{role}: last step reachable", tail)
             pg.screenshot(path=f"{OUT}/{role}-home-bottom.png")
 
-            # Photo -> realtor profile.
+            # Avatar -> the Call/Text contact menu (mockup: avatar opens contact
+            # options, not the profile).
             pg.evaluate("window.scrollTo(0, 0)")
             pg.wait_for_timeout(400)
-            pg.locator('[aria-label^="View your realtor"]').first.click()
+            pg.locator('[aria-label^="Contact your realtor"]').first.click()
+            pg.wait_for_timeout(600)
+            menu_body = pg.inner_text("body")
+            check(f"{role}: contact menu opens with Call/Text",
+                  "Call Maya" in menu_body and "Text Maya" in menu_body,
+                  menu_body[:200].replace("\n", " "))
+            # The scrim covers the avatar while the menu is open, so the real
+            # close path is the outside tap (same as the branding suite) —
+            # Playwright will not click a covered element.
+            pg.get_by_test_id("menu-scrim").click()
+            pg.wait_for_timeout(400)
+
+            # GUIDED BY -> Profile opens the realtor profile page.
+            pg.get_by_test_id("guided-profile").click()
             pg.wait_for_timeout(1200)
             pbody = pg.inner_text("body")
             check(f"{role}: profile opens", "Maya Chen" in pbody)
@@ -419,28 +441,46 @@ def main():
             check(f"{role}: back returns to escrow home", "Hi Priya Nair" in back_body)
             pg.close()
 
-        # --- completion banner: all steps checked ---
+        # --- 100%: triumph card + ahead-of-schedule completion banner ---
+        # (Deep triumph coverage — confetti, collapsed checklist, review and
+        # share buttons, both pill variants — lives in
+        # tests/rendered/client_triumph.py; this case guards the transition.)
         pg = load_page(browser, errors, "buyer", done_count=13, close_delta_days=91)
         tc = pg.evaluate(TOPCARD_JS, {"caption": "13 of 13 steps"})
-        check("complete: ring caption '13 of 13 steps'", "13 of 13 steps" in pg.inner_text("body"))
+        cbody = pg.inner_text("body")
+        check("complete: triumph card renders", "Just closed!" in cbody)
+        check("complete: triumph text",
+              "Maya Chen completed all 13 steps and got you home." in cbody)
+        check("complete: 100% ring is 150px (mockup screen 10)",
+              tc["ring"] and tc.get("ringW") == 150,
+              f"w={tc.get('ringW')}")
         check("complete: banner present", tc["banner"])
-        check("complete: banner copy",
-              tc.get("bannerText") == "Congratulations, your checklist is complete",
+        check("complete: spare banner copy (91 days out)",
+              tc.get("bannerText") ==
+              "Checklist complete with 91 days to spare. Maya has you ahead of schedule.",
               f"text={tc.get('bannerText')!r}")
-        check("complete: no UP NEXT when all done", "UP NEXT" not in pg.inner_text("body"))
+        check("complete: no UP NEXT when all done", "UP NEXT" not in cbody)
         pg.screenshot(path=f"{OUT}/buyer-complete.png")
         pg.close()
 
         # --- overdue states ---
-        RED = "rgb(178, 59, 59)"  # theme colors.red #B23B3B
-        for delta, expected in ((0, "due today"), (-1, "overdue by 1 day"), (-3, "overdue by 3 days")):
+        # Dark-banner palette (branding redesign): "due today" is white bold;
+        # "overdue by N" is light red #F0A0A0 (readable on the dark scrim —
+        # the old light-theme red #B23B3B is intentionally not used here).
+        WHITE = "rgb(255, 255, 255)"
+        OVERDUE_RED = "rgb(240, 160, 160)"
+        for delta, expected, color in (
+            (0, "due today", WHITE),
+            (-1, "overdue by 1 day", OVERDUE_RED),
+            (-3, "overdue by 3 days", OVERDUE_RED),
+        ):
             pg = load_page(browser, errors, "buyer", done_count=3, close_delta_days=delta)
             tc = pg.evaluate(TOPCARD_JS, {"caption": "3 of 13 steps"})
             check(f"overdue({delta}): days line '{expected}'",
                   tc["days"] and tc.get("daysText") == expected,
                   f"text={tc.get('daysText')!r}")
-            check(f"overdue({delta}): days line red",
-                  tc.get("daysColor") == RED, f"color={tc.get('daysColor')}")
+            check(f"overdue({delta}): days line color",
+                  tc.get("daysColor") == color, f"color={tc.get('daysColor')}")
             check(f"overdue({delta}): no banner", not tc["banner"])
             pg.screenshot(path=f"{OUT}/buyer-overdue-{delta}.png")
             pg.close()

@@ -18,11 +18,16 @@ import { store } from '../src/lib/store-instance';
 import { BackChevron, Kicker, PrimaryButton } from '../src/components/ui';
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
+import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
 export default function ProfileUpdate() {
   const router = useRouter();
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
+  // Reviews live on the profile but are edited only via the review RPCs —
+  // keep the loaded ones so saving the form never wipes them.
+  const [keptReviews, setKeptReviews] = useState<RealtorProfile['reviews']>([]);
+  const [keptRating, setKeptRating] = useState<RealtorProfile['rating']>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -54,13 +59,17 @@ export default function ProfileUpdate() {
           setDraft({
             name: p.name ?? '',
             photoUri: p.photoUri ?? null,
+            banner_image: p.banner_image ?? null,
             about: p.about ?? '',
             yearsExperience: p.yearsExperience ?? '',
-            dealsClosed: p.dealsClosed ?? '',
+            avgDaysToClose: p.avgDaysToClose ?? '',
             areasServed: p.areasServed ?? '',
             phone: p.phone ?? '',
             dreLicense: p.dreLicense ?? '',
+            realty_group: p.realty_group ?? '',
           });
+          setKeptReviews(p.reviews ?? []);
+          setKeptRating(p.rating ?? null);
           setNameError(null);
         })
         .catch(() => {});
@@ -80,12 +89,16 @@ export default function ProfileUpdate() {
       await store.saveProfile({
         name: draft.name.trim(),
         photoUri: draft.photoUri,
+        banner_image: draft.banner_image,
         about: draft.about,
         yearsExperience: draft.yearsExperience,
-        dealsClosed: draft.dealsClosed,
+        avgDaysToClose: draft.avgDaysToClose,
         areasServed: draft.areasServed,
         phone: draft.phone,
         dreLicense: draft.dreLicense,
+        realty_group: draft.realty_group,
+        reviews: keptReviews,
+        rating: keptRating,
       });
       // A completed profile clears the onboarding "complete your profile" nudge.
       await auth.setProfileSkipped(false);

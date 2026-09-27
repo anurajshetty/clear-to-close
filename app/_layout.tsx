@@ -16,21 +16,27 @@
 // approved copy. Our own sign-out navigates to /role directly.
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { auth, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
+import { PushGate } from '../src/components/PushGate';
 import { colors } from '../src/theme';
 
 export default function RootLayout() {
   const router = useRouter();
+  const pathname = usePathname();
   const [booted, setBooted] = useState(false);
 
   useEffect(() => {
     let active = true;
     (async () => {
       try {
+        // The public realtor profile (/realtor/<id>, Sept 2026) opens for
+        // anyone with no login: never redirect away from it on boot. Same
+        // for the branded invite deep link (/invite/<code>).
+        if (pathname.startsWith('/realtor/') || pathname.startsWith('/invite/')) return;
         const isWeb = auth.isWeb();
         const [role, clientLink, hasAccount] = await Promise.all([
           auth.getRole(),
@@ -128,7 +134,11 @@ export default function RootLayout() {
         <Stack.Screen name="client/buyer/[id]" />
         <Stack.Screen name="client/seller/[id]" />
         <Stack.Screen name="client/profile" />
+        <Stack.Screen name="realtor/[id]" />
+        <Stack.Screen name="invite/[code]" />
       </Stack>
+      {/* Client push: permission pre-prompt, token refresh, tap routing. */}
+      <PushGate />
     </>
   );
 }

@@ -16,8 +16,10 @@ import type {
   CreateEscrowInput,
   Escrow,
   Invite,
+  InviteRealtor,
   RealtorProfile,
   RedeemResult,
+  ResolveInviteError,
   StepT,
   UpdateEscrowInput,
 } from './types';
@@ -91,6 +93,14 @@ export interface Store {
   mergeInviteStates(rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[]): Promise<void>;
   listInvites(escrowId: string): Promise<Invite[]>;
   redeemInvite(code: string, name: string, deviceId?: string): Promise<RedeemResult>;
+  /**
+   * Resolve an invite code to the inviting realtor's public branding for the
+   * branded invite welcome (Sept 2026). Mirrors redeem_invite validation;
+   * never redeems. Local path resolves against the local invite + profile.
+   */
+  resolveInviteRealtor(
+    code: string,
+  ): Promise<{ ok: true; realtor: InviteRealtor } | { ok: false; error: ResolveInviteError }>;
   /**
    * Regenerate an invite code (share-sheet "Regenerate code").
    * Atomically: old invite revoked + old device link killed + fresh
@@ -211,6 +221,35 @@ export function createStore(kv: KV): Store {
       if (typeof (data.profile as { dreLicense?: unknown }).dreLicense !== 'string') {
         data.profile.dreLicense = '';
       }
+      // Backfill for profiles saved before the realty-group field existed
+      // (Sept 2026): starts empty, fillable from account settings.
+      if (typeof (data.profile as { realty_group?: unknown }).realty_group !== 'string') {
+        data.profile.realty_group = '';
+      }
+      // Backfill for profiles saved before the banner image existed
+      // (Sept 2026): null means no banner (the top card renders its
+      // gradient fallback).
+      if (typeof (data.profile as { banner_image?: unknown }).banner_image !== 'string') {
+        data.profile.banner_image = null;
+      }
+      // Backfill for profiles saved before avg-days-to-close existed
+      // (Sept 2026): free text, editable in profile settings.
+      if (typeof (data.profile as { avgDaysToClose?: unknown }).avgDaysToClose !== 'string') {
+        data.profile.avgDaysToClose = '';
+      }
+      // Backfill for profiles saved before reviews existed (Sept 2026).
+      if (!Array.isArray((data.profile as { reviews?: unknown }).reviews)) {
+        data.profile.reviews = [];
+      }
+      if (
+        typeof (data.profile as { rating?: unknown }).rating !== 'number' &&
+        (data.profile as { rating?: unknown }).rating !== null
+      ) {
+        data.profile.rating = null;
+      }
+      // Deals-closed was removed from the profile (Anuraj, Sept 2026): drop
+      // the stale key so it can never resurface on a display.
+      delete (data.profile as { dealsClosed?: unknown }).dealsClosed;
     }
     data.escrows = e ? (JSON.parse(e) as Escrow[]) : [];
     // Backfill for escrows saved before the per-side close dates existed
@@ -281,6 +320,12 @@ export function createStore(kv: KV): Store {
       total: steps.length,
       steps,
       upNext,
+      // Local-only path: no cloud reviews, so no own review.
+      myReviewId: null,
+      openDate: e.openDate,
+      closeDate: e.closeDate,
+      lastAction: e.lastAction ?? null,
+      openedAt: e.createdAt,
     };
   }
 
@@ -386,7 +431,16 @@ export function createStore(kv: KV): Store {
       const step = roleSteps(e, role).find((s) => s.id === stepId);
       if (!step) throw new Error(`Step not found: ${stepId}`);
       step.done = !step.done;
-      step.completedAt = step.done ? new Date().toISOString() : null;
+      const nowISO = new Date().toISOString();
+      step.completedAt = step.done ? nowISO : null;
+      // The client home's "LATEST FROM" card shows the single most recent
+      // realtor action — forward AND backward moves. An uncheck leaves no
+      // completedAt behind, so the action is stamped explicitly here.
+      e.lastAction = {
+        kind: step.done ? 'checked' : 'reopened',
+        stepTitle: step.title,
+        at: nowISO,
+      };
       if (!step.done) {
         // Unchecking any step in a closed side moves that side back to
         // Active (approved escrow lifecycle, Sept 2026). Only that side
@@ -640,6 +694,29 @@ export function createStore(kv: KV): Store {
       await persist();
       // Role comes from the invite, never from caller input.
       return { ok: true, escrowId: inv.escrowId, role: inv.role, partyName: inv.partyName, linkId: link.id };
+    },
+
+    async resolveInviteRealtor(
+      code: string,
+    ): Promise<{ ok: true; realtor: InviteRealtor } | { ok: false; error: ResolveInviteError }> {
+      await ensureLoaded();
+      const normalized = code.trim().toUpperCase();
+      const inv = data.invites.find((i) => i.code === normalized);
+      if (!inv) return { ok: false, error: 'invalid' };
+      if (inv.revokedAt) return { ok: false, error: 'revoked' };
+      if (inv.redeemedAt) return { ok: false, error: 'already_used' };
+      const p = data.profile;
+      if (!p) return { ok: false, error: 'unknown' };
+      return {
+        ok: true,
+        realtor: {
+          name: p.name,
+          photoUrl: p.photoUri,
+          realtyGroup: p.realty_group,
+          dreLicense: p.dreLicense,
+          realtorId: '',
+        },
+      };
     },
 
     async regenerateInvite(

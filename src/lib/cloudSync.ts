@@ -27,8 +27,12 @@ import type {
   ClientView,
   Escrow,
   Invite,
+  InviteRealtor,
+  RealtorAction,
   RealtorProfile,
   RedeemResult,
+  ResolveInviteError,
+  Review,
   StepT,
 } from './types';
 import type { KV } from './store';
@@ -88,6 +92,9 @@ export function toEscrowRow(userId: string, e: Escrow): Record<string, unknown> 
     // Per-side close dates (migration 0007). Null until the side closes.
     buyer_closed_at: e.buyerClosedAt,
     seller_closed_at: e.sellerClosedAt,
+    // "LATEST FROM" card (migration 0009): the most recent realtor
+    // check/uncheck as JSONB. Null until the first toggle.
+    last_action: e.lastAction ?? null,
     created_at: e.createdAt,
   };
 }
@@ -112,20 +119,69 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
   // Device-local web captures (data:/blob:) never sync: photos stay
   // device-local (Anuraj, Sept 2026). Pushing a megabyte data URI on every
   // profile push would be pure waste. file:// passes through as before.
+  // The banner follows the exact same rule.
   const uri = p?.photoUri ?? null;
   const syncable =
     uri !== null && (uri.startsWith('data:') || uri.startsWith('blob:')) ? null : uri;
+  const bannerUri = p?.banner_image ?? null;
+  const syncableBanner =
+    bannerUri !== null && (bannerUri.startsWith('data:') || bannerUri.startsWith('blob:'))
+      ? null
+      : bannerUri;
+  // NOTE: reviews / rating are deliberately NOT in this payload. They are
+  // written by clients through the upsert_review / delete_review RPCs; the
+  // realtor's full-row upsert must never clobber them with a stale local
+  // copy. Columns absent from the payload keep their server values.
   return {
     user_id: userId,
     name: p?.name ?? null,
     photo_url: syncable,
     about: p?.about ?? null,
     years_experience: p?.yearsExperience ?? null,
-    deals_closed: p?.dealsClosed ?? null,
+    avg_days_to_close: p?.avgDaysToClose ?? null,
     areas_served: p?.areasServed ?? null,
     phone: p?.phone ?? null,
     dre_license: p?.dreLicense ?? null,
+    realty_group: p?.realty_group ?? null,
+    banner_image: syncableBanner,
   };
+}
+
+/**
+ * Average of review stars, null when there are no reviews (Sept 2026).
+ * Exported for tests and for any surface that builds a profile object
+ * without going through fromProfileRow.
+ */
+export function computeRating(reviews: { stars: number }[] | null | undefined): number | null {
+  if (!reviews || reviews.length === 0) return null;
+  const sum = reviews.reduce((n, r) => n + (typeof r.stars === 'number' ? r.stars : 0), 0);
+  return sum / reviews.length;
+}
+
+/** Parse the reviews JSONB column into Review[] (tolerates text or null). */
+function parseReviews(v: unknown): Review[] {
+  let arr: unknown = v;
+  if (typeof arr === 'string') {
+    try {
+      arr = JSON.parse(arr);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((r): r is Record<string, unknown> => !!r && typeof r === 'object')
+    .map((r) => ({
+      id: typeof r.id === 'string' ? r.id : '',
+      clientName: typeof r.clientName === 'string' ? r.clientName : '',
+      stars:
+        typeof r.stars === 'number' && r.stars >= 1 && r.stars <= 5
+          ? Math.round(r.stars)
+          : 5,
+      text: typeof r.text === 'string' ? r.text : '',
+      createdAt: typeof r.createdAt === 'string' ? r.createdAt : '',
+    }))
+    .filter((r) => r.id.length > 0);
 }
 
 /** Map a realtor_profiles row back onto a RealtorProfile.
@@ -136,15 +192,25 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
 export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
   const s = (v: unknown): string => (typeof v === 'string' ? v : '');
   const photoUrl = typeof row.photo_url === 'string' ? (row.photo_url as string) : null;
+  const bannerUrl = typeof row.banner_image === 'string' ? (row.banner_image as string) : null;
+  const reviews = parseReviews(row.reviews);
+  const rating =
+    typeof row.rating === 'number' && Number.isFinite(row.rating)
+      ? row.rating
+      : computeRating(reviews);
   return {
     name: s(row.name),
     photoUri: photoUrl !== null && photoUrl.startsWith('blob:') ? null : photoUrl,
+    banner_image: bannerUrl !== null && bannerUrl.startsWith('blob:') ? null : bannerUrl,
     about: s(row.about),
     yearsExperience: s(row.years_experience),
-    dealsClosed: s(row.deals_closed),
+    avgDaysToClose: s(row.avg_days_to_close),
     areasServed: s(row.areas_served),
     phone: s(row.phone),
     dreLicense: s(row.dre_license),
+    realty_group: s(row.realty_group),
+    reviews,
+    rating,
   };
 }
 
@@ -155,18 +221,38 @@ export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
  * round-trip), or on any failure. A row with ANY saved field counts as an
  * existing profile even when its name is NULL/empty — the name alone must
  * never discard the realtor's saved data. Never throws.
+ *
+ * The realty_group / banner_image columns (migration 0010, Sept 2026) may
+ * not exist yet on databases whose dashboard migration hasn't been applied:
+ * on an undefined-column error the select retries with the pre-0008 column
+ * list so the profile still loads (both fields stay local-only until
+ * applied).
  */
 export async function pullProfileNow(
   client: Cloud,
   userId: string,
 ): Promise<RealtorProfile | null> {
+  const COLUMNS =
+    'name, photo_url, about, years_experience, avg_days_to_close, areas_served, phone, dre_license, realty_group, banner_image, rating';
+  const COLUMNS_0008 =
+    'name, photo_url, about, years_experience, areas_served, phone, dre_license, realty_group, banner_image';
+  const LEGACY_COLUMNS =
+    'name, photo_url, about, years_experience, areas_served, phone, dre_license';
+  const fetchRow = async (columns: string) =>
+    client.from('realtor_profiles').select(columns).eq('user_id', userId).limit(1);
   try {
     if (!client) return null;
-    const { data, error } = await client
-      .from('realtor_profiles')
-      .select('name, photo_url, about, years_experience, deals_closed, areas_served, phone, dre_license')
-      .eq('user_id', userId)
-      .limit(1);
+    let { data, error } = await fetchRow(COLUMNS);
+    if (error && isMissingColumnError(error)) {
+      // Migration 0009 not applied yet on this database: fall back to the
+      // 0008 column list (no avg_days_to_close / reviews / rating).
+      ({ data, error } = await fetchRow(COLUMNS_0008));
+    }
+    if (error && isMissingColumnError(error)) {
+      // Migration 0008 not applied yet either: fall back to the
+      // pre-migration column list.
+      ({ data, error } = await fetchRow(LEGACY_COLUMNS));
+    }
     if (error || !data || data.length === 0) return null;
     const row = data[0] as Record<string, unknown>;
     const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -175,10 +261,12 @@ export async function pullProfileNow(
       isStr(row.photo_url) ||
       isStr(row.about) ||
       isStr(row.years_experience) ||
-      isStr(row.deals_closed) ||
+      isStr(row.avg_days_to_close) ||
       isStr(row.areas_served) ||
       isStr(row.phone) ||
-      isStr(row.dre_license);
+      isStr(row.dre_license) ||
+      isStr(row.realty_group) ||
+      isStr(row.banner_image);
     if (!hasAnyField) return null;
     return fromProfileRow(row);
   } catch {
@@ -361,18 +449,11 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
   const steps = rawSteps.map(mapRpcStep).sort((a, b) => a.order - b.order);
   const done = steps.filter((s) => s.done).length;
   const p = d.profile as Record<string, unknown> | null;
-  const profile: RealtorProfile | null = p
-    ? {
-        name: String(p.name ?? ''),
-        photoUri: (p.photo_url as string) ?? null,
-        about: String(p.about ?? ''),
-        yearsExperience: String(p.years_experience ?? ''),
-        dealsClosed: String(p.deals_closed ?? ''),
-        areasServed: String(p.areas_served ?? ''),
-        phone: String(p.phone ?? ''),
-        dreLicense: String(p.dre_license ?? ''),
-      }
-    : null;
+  const profile: RealtorProfile | null = p ? fromProfileRow(p) : null;
+  // The id of this link's own review, if it has posted one (Sept 2026) —
+  // used by the client home to open the review sheet in edit mode.
+  const myReviewId =
+    typeof d.my_review_id === 'string' && d.my_review_id.length > 0 ? d.my_review_id : null;
   const closeDate = String(e.close_date);
   const view: ClientView = {
     escrowId: String(e.id),
@@ -384,8 +465,175 @@ export function mapClientViewRpc(data: unknown): CloudViewResult {
     total: steps.length,
     steps,
     upNext: steps.find((s) => !s.done) ?? null,
+    myReviewId,
+    openDate: typeof e.open_date === 'string' ? e.open_date : undefined,
+    closeDate: typeof e.close_date === 'string' ? e.close_date : undefined,
+    // The escrow row's user_id is the realtor behind this escrow — the
+    // <realtor-id> in the public profile URL contract.
+    realtorId: typeof e.user_id === 'string' ? e.user_id : undefined,
+    // "LATEST FROM" card (escrow last_action migration): the most recent
+    // realtor check/uncheck, read defensively — absent/unshaped values map
+    // to undefined and the card derives from completed_at instead.
+    lastAction: parseRealtorAction(e.last_action),
+    openedAt: typeof e.created_at === 'string' ? e.created_at : undefined,
   };
   return { ok: true, view, profile };
+}
+
+// ------------------------------------------------- public profile + reviews --
+
+/**
+ * Fetch a realtor's public profile for the /realtor/<id> page (Sept 2026).
+ * PUBLIC: works with the anon key, no session required. Returns null when
+ * the id is unknown or the database is unreachable / unconfigured.
+ */
+export async function getPublicProfile(
+  client: Cloud,
+  realtorId: string,
+): Promise<{ profile: RealtorProfile; realtorId: string } | null> {
+  try {
+    if (!client || !realtorId) return null;
+    const { data, error } = await client.rpc('get_public_profile', {
+      p_realtor_id: realtorId,
+    });
+    if (error || !data) return null;
+    const d = data as Record<string, unknown>;
+    if (d.ok !== true || !d.profile) return null;
+    return {
+      profile: fromProfileRow(d.profile as Record<string, unknown>),
+      realtorId,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve an invite code to the inviting realtor's public branding for the
+ * branded invite welcome (Sept 2026). PUBLIC: works with the anon key, no
+ * login or device link required — the client hasn't redeemed yet.
+ * Returns the specific redeem_invite-style error when the code isn't live.
+ */
+export async function resolveInviteRealtor(
+  client: Cloud,
+  code: string,
+): Promise<{ ok: true; realtor: InviteRealtor } | { ok: false; error: ResolveInviteError }> {
+  try {
+    if (!client || !code.trim()) return { ok: false, error: 'invalid' };
+    const { data, error } = await client.rpc('resolve_invite_realtor', {
+      p_code: code.trim().toUpperCase(),
+    });
+    if (error || !data) return { ok: false, error: 'network' };
+    const d = data as Record<string, unknown>;
+    if (d.ok !== true) {
+      const e = d.error;
+      return {
+        ok: false,
+        error:
+          e === 'already_used' || e === 'revoked' || e === 'unknown' ? e : 'invalid',
+      };
+    }
+    const r = d.realtor as Record<string, unknown>;
+    const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    return {
+      ok: true,
+      realtor: {
+        name: str(r.name),
+        photoUrl: typeof r.photo_url === 'string' ? (r.photo_url as string) : null,
+        realtyGroup: str(r.realty_group),
+        dreLicense: str(r.dre_license),
+        realtorId: str(r.realtor_id),
+      },
+    };
+  } catch {
+    return { ok: false, error: 'network' };
+  }
+}
+
+export interface ReviewResult {
+  ok: boolean;
+  error?: string;
+  reviews: Review[];
+  rating: number | null;
+  /** The review's id (for a new review, or the edited one). */
+  reviewId?: string;
+}
+
+const MAX_REVIEW_TEXT = 280;
+
+/**
+ * Save a client's review of their realtor (Sept 2026). When reviewId is
+ * omitted a new review is created; when given, the client's own review is
+ * edited. Identity comes from the client's link id: the upsert_review RPC
+ * only touches reviews authored by that link. Returns the updated review
+ * list + rating so the client can refresh its cached profile.
+ */
+export async function saveReview(
+  client: Cloud,
+  args: { linkId: string; stars: number; text: string; reviewId?: string },
+): Promise<ReviewResult> {
+  const empty: ReviewResult = { ok: false, reviews: [], rating: null };
+  try {
+    if (!client || !args.linkId) return { ...empty, error: 'invalid' };
+    const stars = Math.round(args.stars);
+    if (stars < 1 || stars > 5) return { ...empty, error: 'stars' };
+    const text = args.text.trim().slice(0, MAX_REVIEW_TEXT);
+    const { data, error } = await client.rpc('upsert_review', {
+      p_link_id: args.linkId,
+      p_stars: stars,
+      p_text: text,
+      p_review_id: args.reviewId ?? null,
+    });
+    if (error || !data) return { ...empty, error: 'network' };
+    const d = data as Record<string, unknown>;
+    if (d.ok !== true) return { ...empty, error: String(d.error ?? 'invalid') };
+    const reviews = parseReviews(d.reviews);
+    return {
+      ok: true,
+      reviews,
+      rating: computeRating(reviews),
+      reviewId: typeof d.review_id === 'string' ? d.review_id : undefined,
+    };
+  } catch {
+    return { ...empty, error: 'network' };
+  }
+}
+
+/**
+ * Delete the client's own review (Sept 2026). The delete_review RPC only
+ * removes a review authored by the caller's link.
+ */
+export async function deleteReview(
+  client: Cloud,
+  args: { linkId: string; reviewId: string },
+): Promise<ReviewResult> {
+  const empty: ReviewResult = { ok: false, reviews: [], rating: null };
+  try {
+    if (!client || !args.linkId || !args.reviewId) return { ...empty, error: 'invalid' };
+    const { data, error } = await client.rpc('delete_review', {
+      p_link_id: args.linkId,
+      p_review_id: args.reviewId,
+    });
+    if (error || !data) return { ...empty, error: 'network' };
+    const d = data as Record<string, unknown>;
+    if (d.ok !== true) return { ...empty, error: String(d.error ?? 'invalid') };
+    const reviews = parseReviews(d.reviews);
+    return { ok: true, reviews, rating: computeRating(reviews) };
+  } catch {
+    return { ...empty, error: 'network' };
+  }
+}
+
+/**
+ * Defensive read of the escrow row's last_action JSONB.
+ * Anything unshaped maps to undefined — never a crash, never a wrong card.
+ */
+function parseRealtorAction(v: unknown): RealtorAction | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (o.kind !== 'checked' && o.kind !== 'reopened') return undefined;
+  if (typeof o.stepTitle !== 'string' || typeof o.at !== 'string') return undefined;
+  return { kind: o.kind, stepTitle: o.stepTitle, at: o.at };
 }
 
 // ------------------------------------------------------------------ session --
@@ -459,12 +707,13 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     await upsertAll(client, 'escrows', [row], 'id');
   } catch (e) {
     if (!isMissingColumnError(e)) throw e;
-    // Migration 0007 not applied yet on this database: retry without the
-    // per-side close columns so the push still lands (close dates stay
-    // local-only until the migration is applied).
+    // Migration 0007/0008 not applied yet on this database: retry without
+    // the newer columns so the push still lands (per-side close dates and
+    // the last-action stamp stay local-only until the migration is applied).
     const legacy = { ...row };
     delete legacy.buyer_closed_at;
     delete legacy.seller_closed_at;
+    delete legacy.last_action;
     await upsertAll(client, 'escrows', [legacy], 'id');
   }
   const steps = [
@@ -477,19 +726,51 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
 }
 
 /**
- * True when a PostgREST error means the per-side close-date columns
- * (migration 0007) don't exist yet on this database.
+ * True when a PostgREST error means a not-yet-applied migration's columns
+ * don't exist yet on this database (per-side close dates, last-action,
+ * realty group / banner / reviews columns).
  */
 export function isMissingColumnError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const e = error as { code?: string; message?: string };
   if (e.code === '42703') return true; // PostgreSQL undefined_column
+  // PostgREST schema-cache miss: the column (e.g. from a not-yet-applied
+  // migration) isn't in the schema cache.
+  if (e.code === 'PGRST204') return true;
   const msg = e.message ?? '';
-  return msg.includes('buyer_closed_at') || msg.includes('seller_closed_at');
+  return (
+    msg.includes('buyer_closed_at') ||
+    msg.includes('seller_closed_at') ||
+    msg.includes('last_action') ||
+    msg.includes('realty_group') ||
+    msg.includes('banner_image') ||
+    msg.includes('avg_days_to_close') ||
+    msg.includes('reviews') ||
+    msg.includes('rating')
+  );
 }
 
 export async function pushProfileNow(client: Cloud, userId: string, profile: RealtorProfile): Promise<void> {
-  await upsertAll(client, 'realtor_profiles', [toProfileRow(userId, profile)], 'user_id');
+  const row = toProfileRow(userId, profile);
+  try {
+    await upsertAll(client, 'realtor_profiles', [row], 'user_id');
+  } catch (e) {
+    if (!isMissingColumnError(e)) throw e;
+    // Migration 0009 (avg_days_to_close) not applied yet: retry without it
+    // so the push still lands.
+    const retry = { ...row } as Record<string, unknown>;
+    delete retry.avg_days_to_close;
+    try {
+      await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
+    } catch (e2) {
+      if (!isMissingColumnError(e2)) throw e2;
+      // Migration 0008 (realty_group / banner_image) not applied yet either:
+      // retry with the pre-migration column set.
+      delete retry.realty_group;
+      delete retry.banner_image;
+      await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
+    }
+  }
 }
 
 /**

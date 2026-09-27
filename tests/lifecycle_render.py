@@ -419,6 +419,12 @@ def main():
                 "partyName": "Priya Nair", "deviceId": "test-device"}
         pg3.add_init_script(
             seed_js()
+            # The 100% triumph card has no GUIDED BY strip; uncheck the last
+            # step so the mid-escrow card (the profile entry point) renders.
+            + "(()=>{const es=JSON.parse(localStorage.getItem('ctc:escrows'));"
+              "const a=es.find(e=>e.id==='seed-a');"
+              "a.buyerSteps[a.buyerSteps.length-1].done=false;"
+              "localStorage.setItem('ctc:escrows',JSON.stringify(es));})();"
             + "localStorage.setItem('ctc:clientlink', '"
             + json.dumps(link).replace("'", "\\'") + "');")
         # The client view validates its link via get_client_view; stub it as
@@ -433,8 +439,8 @@ def main():
         pg3.route("**/rest/v1/steps*", fulfill_empty_table)
         pg3.goto(BASE)
         pg3.get_by_text("Hi Priya").wait_for(timeout=12000)
-        # Realtor photo circle -> profile.
-        pg3.get_by_label("View your realtor Rita Realtor's full profile").click()
+        # GUIDED BY strip -> Profile opens the realtor profile page.
+        pg3.get_by_test_id("guided-profile").click()
         pg3.get_by_text("Back to my escrow").wait_for(timeout=8000)
         check("profile: name", pg3.get_by_text("Rita Realtor").count() > 0)
         check("profile: license line (entered)",

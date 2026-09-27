@@ -58,12 +58,16 @@ export default function ProfileCreate() {
         await store.saveProfile({
           name: draft.name.trim(),
           photoUri: draft.photoUri,
+        banner_image: draft.banner_image,
           about: draft.about,
           yearsExperience: draft.yearsExperience,
-          dealsClosed: draft.dealsClosed,
+          avgDaysToClose: draft.avgDaysToClose,
           areasServed: draft.areasServed,
           phone: draft.phone,
           dreLicense: draft.dreLicense,
+        realty_group: draft.realty_group,
+          reviews: [],
+          rating: null,
         });
       }
       await auth.setProfileSkipped(skipped);

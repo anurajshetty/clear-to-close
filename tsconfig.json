@@ -2,5 +2,11 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  "exclude": [
+    // Deno Edge Functions: URL imports (deno.land, esm.sh) are resolved by
+    // the Supabase runtime, not by tsc. push.ts (pure logic, no imports)
+    // is still typechecked + unit-tested via tests/run.sh.
+    "supabase/functions"
+  ]
 }

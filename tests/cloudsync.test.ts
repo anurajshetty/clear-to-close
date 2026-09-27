@@ -130,6 +130,10 @@ async function main(): Promise<void> {
   // Missing-column detection (pre-migration databases).
   assert(isMissingColumnError({ code: '42703', message: 'x' }), '42703 -> missing column');
   assert(isMissingColumnError({ code: 'PGRST204', message: "Could not find the 'buyer_closed_at' column" }), 'schema-cache message -> missing column');
+  // Migration 0008 (Sept 2026): the realty_group / banner_image columns must
+  // also trip the pre-migration fallback, via code or message.
+  assert(isMissingColumnError({ code: 'PGRST204', message: "Could not find the 'realty_group' column of 'realtor_profiles' in the schema cache" }), 'PGRST204 realty_group -> missing column');
+  assert(isMissingColumnError({ message: "Could not find the 'banner_image' column of 'realtor_profiles' in the schema cache" }), 'banner_image message -> missing column');
   assert(!isMissingColumnError({ code: '42501', message: 'rls blocked' }), 'RLS error is not a missing column');
   assert(!isMissingColumnError(null), 'null error is not a missing column');
 
@@ -162,8 +166,12 @@ async function main(): Promise<void> {
 
   const prow = toProfileRow(UID, {
     name: 'Rita', photoUri: 'file://x.jpg', about: 'Hi',
-    yearsExperience: '5', dealsClosed: '20', areasServed: 'SCV', phone: '555',
+    yearsExperience: '5', avgDaysToClose: '21', areasServed: 'SCV', phone: '555',
     dreLicense: '01998877',
+  realty_group: '',
+  banner_image: null,
+  reviews: [],
+  rating: null,
   });
   assert(prow.user_id === UID && prow.photo_url === 'file://x.jpg', 'profile row maps photoUri -> photo_url');
   assert(prow.dre_license === '01998877', 'profile row maps dreLicense -> dre_license');
@@ -239,6 +247,7 @@ async function main(): Promise<void> {
   assert(cv.view!.upNext !== null && cv.view!.upNext.id === 's2', 'upNext is first not-done');
   assert(typeof cv.view!.daysToClose === 'number', 'daysToClose computed');
   assert(cv.profile!.name === 'Rita', 'profile mapped');
+  assert(!('dealsClosed' in cv.profile!), 'deals_closed never surfaces on the client profile');
   const cvBad = mapClientViewRpc({ ok: false, error: 'invalid' });
   assert(cvBad.ok === false, 'bad client view maps to not-ok');
 

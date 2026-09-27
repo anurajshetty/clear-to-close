@@ -27,8 +27,14 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/bootRoute.ts" \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/dates.ts" \
+  "$ROOT/src/lib/pace.ts" \
+  "$ROOT/src/lib/shareCopy.ts" \
+  "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
+  "$ROOT/src/lib/profile.ts" \
+  "$ROOT/src/lib/push.ts" \
+  "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
   "$ROOT/tests/sync.test.ts" \
@@ -38,11 +44,18 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/editcancel.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
   "$ROOT/tests/dates.test.ts" \
+  "$ROOT/tests/pace.test.ts" \
+  "$ROOT/tests/sharecopy.test.ts" \
+  "$ROOT/tests/latest.test.ts" \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
+  "$ROOT/tests/push.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
   "$ROOT/tests/profilepull.test.ts" \
+  "$ROOT/tests/realtygroup.test.ts" \
+  "$ROOT/tests/reviews.test.ts" \
+  "$ROOT/tests/invite_resolve.test.ts" \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   --outDir "$OUT" \
@@ -64,14 +77,31 @@ node "$OUT/tests/editcancel.test.js"
 node "$OUT/tests/persistence.test.js"
 # Pinned TZ so the DST-crossing day-count regression is deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
+node "$OUT/tests/pace.test.js"
+node "$OUT/tests/sharecopy.test.js"
+# Pinned TZ so the calendar-day relative-time buckets are deterministic.
+TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"
+node "$OUT/tests/push.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/profilepull.test.js"
+node "$OUT/tests/realtygroup.test.js"
+node "$OUT/tests/reviews.test.js"
+node "$OUT/tests/invite_resolve.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
 
 # Em/en-dash sweep (Sept 2026): user-facing copy must read professional and
 # human — no em dashes (—) or en dashes (–) outside code comments.
 python3 "$ROOT/tests/em_dash_sweep.py"
+
+# Migration 0011 additive/rollback guard (Sept 2026): the reviews migration
+# must stay additive-only so pre-release code keeps working against the
+# migrated DB; no public exposure of the reviews link_id.
+python3 "$ROOT/tests/migration_0011_guard.py"
+
+# Push migration self-check: forward-only trigger guards, kill switch,
+# RPCs, additive-only shape (SQL, not runnable in node).
+python3 "$ROOT/tests/push_migration.py"

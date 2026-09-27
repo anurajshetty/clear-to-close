@@ -5,7 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { store } from '../lib/store-instance';
 import type { ClientRole } from '../lib/types';
-import { Field, Kicker, PrimaryButton, Sheet } from './ui';
+import { Field, Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
 import { colors } from '../theme';
 
 export function InviteSheet({
@@ -74,6 +74,20 @@ export function InviteSheet({
     handleClose();
   };
 
+  // Branded invite deep link (Sept 2026): the shareable URL carries the code
+  // and opens the branded welcome (realtor identity) before name entry.
+  // Exact format: https://anurajshetty.github.io/clear-to-close/invite/<CODE>
+  const copyLink = async () => {
+    try {
+      await Clipboard.setStringAsync(
+        `https://anurajshetty.github.io/clear-to-close/invite/${code}`,
+      );
+    } catch (err) {
+      console.warn('clipboard failed', err);
+    }
+    handleClose();
+  };
+
   return (
     <Sheet visible={visible} onClose={handleClose}>
       {phase === 'name' ? (
@@ -109,10 +123,14 @@ export function InviteSheet({
           </Kicker>
           <Text style={styles.bigCode}>{code}</Text>
           <Text style={styles.hintCenter}>
-            Share this code with them. It works once.
+            Share this code with them. It works once. Or send the invite link.
+            It shows your name and brokerage before they enter theirs.
           </Text>
           <View style={styles.btnWrap}>
-            <PrimaryButton title="Copy" onPress={copy} />
+            <PrimaryButton title="Copy invite link" onPress={copyLink} />
+          </View>
+          <View style={styles.btnWrap}>
+            <SecondaryButton title="Copy code only" onPress={copy} />
           </View>
         </View>
       )}

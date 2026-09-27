@@ -65,14 +65,21 @@ central user; the buyers and sellers they represent are the other parties.
   - Dual-agency escrows get independent **Buyer | Seller** tabs — the two
     checklists are fully separate, each with its own ring, reorder, and
     custom steps; rows carry Buyer/Seller tags.
-- **Realtor profile** — photo, about/bio, experience, areas served, optional  DRE/license number (shown on the client-facing profile only if entered),
+- **Realtor profile** — photo, about/bio, experience, **average days to
+  close** (the realtor's own number, shown as the "Avg days to close" stat),
+  areas served, optional
+  **realty group** (e.g. "Compass Realty", shown on the branded client
+  surfaces as "Compass Realty · DRE #01998877") and optional DRE/license
+  number (shown on the client-facing profile only if entered),
   and an optional **phone number** (syncs to the cloud profile). Profile
   photos are auto-downscaled at pick time (long edge ≤ 1024px, JPEG ~0.8,
   target ≤ ~1MB) and stored as a single managed file — one fixed filename
   in the app's document directory, overwritten on every pick (one
   localStorage key on web) — so old photo files never pile up and the OS
   can't purge the photo. Device-local photos never sync to the cloud.
-  Editable
+  An optional **banner image** (wide, shown behind the client home top
+  card) follows the identical single-file pattern under its own fixed
+  filename/key, synced like the photo. Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current
@@ -92,7 +99,11 @@ central user; the buyers and sellers they represent are the other parties.
   **Regenerate** issues a fresh code while atomically killing the old code
   *and* its device link — the old device lands on a clear "this code no
   longer works" state. **Revoke** kills the invite *and* its linked client
-  access; the revoked row disappears from the list.
+  access; the revoked row disappears from the list. **Copy invite link**
+  copies a branded deep link
+  (`https://anurajshetty.github.io/clear-to-close/invite/<CODE>`): opening
+  it shows the realtor's branded welcome (name, photo, realty group, DRE)
+  before name entry, so the client knows who invited them.
 - **Onboarding / auth** — first launch shows a role picker
   ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
   with email + password in two steps: account creation, then profile creation
@@ -104,30 +115,99 @@ central user; the buyers and sellers they represent are the other parties.
 
 **For buyers / sellers (clients)**
 
-- No account — redeem with **name + invite code**. The confirmation screen is
-  headlined **"Hooray! Your escrow is open."** Redemption binds access to
-  the device; reopening the app goes straight back into the escrow.
+- No account — redeem with your **invite code first**: the code validates,
+  then a branded welcome shows your realtor's name, photo, realty group,
+  and DRE before you enter the name on the invite. A branded invite link
+  opens the same welcome directly. The confirmation screen is a
+  brand-teal **celebration card**: gold "WELCOME ABOARD" kicker, "Your escrow
+  is open!" headline, the realtor's photo (initials avatar when none),
+  "<realtor name> has got this.", reassuring body copy, and the
+  "<name> / <realty group> · DRE #<number>" byline (name and DRE only when no
+  group is set; hidden when neither is present). Confetti falls once on mount and
+  settles — skipped when the OS reduced-motion setting is on. Below the card:
+  "View my escrow" and "Not your escrow? Start over". Redemption binds
+  access to the device; reopening the app goes straight back into the escrow.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
   circles, short connector segments, subtitles, UP NEXT tag) but with no tap
   targets, no drag grips, and no "Custom" tag. One single list in the
   realtor's order — checked steps stay in place. No recency markers of any
   kind.
-- **Client home top card** — bold "Hi {name}" headline, "Your purchase" /
-  "Your sale" plus the address in non-bold below, with the realtor's photo as
-  a circle top-right at the greeting level (tap → realtor profile). Centered
-  below: "N of N steps" above a bigger progress ring, then the days line —
+- **Client home top card (branded)** — the realtor's **banner photo** bleeds
+  behind the whole card under a dark scrim (brand-teal gradient fallback when
+  no banner is uploaded). Bold "Hi {name}" headline beside the realtor's
+  avatar (48px tap target, opens a Call / Text contact menu), "Your purchase"
+  / "Your sale" plus the address in non-bold below. Centered below: "N of N
+  steps" above the **208px gold progress ring**, then the days line —
   "days left: N", "due today" on the target date, red "overdue by N day(s)"
-  past it. When every step is checked, the banner slot shows
-  "Congratulations, your checklist is complete".
+  past it.
+  - **GUIDED BY strip** — the same banner photo behind a dark scrim with a
+    thin gold border; realtor photo, "GUIDED BY" kicker, "Name / Realty group
+    · DRE #..." (missing pieces drop with no dangling separators), tagline in
+    quotes (omitted when empty), and **Call / Text / Profile** buttons.
+    Profile opens the realtor profile page.
+  - **Ahead-of-pace rule** (`src/lib/pace.ts`) — when the escrow is 15+
+    percentage points ahead of its timeline, a gold pill reads "Ahead of
+    pace. {FirstName} has you {N} days ahead of schedule." Never at 100%,
+    never on a degenerate timeline.
+  - **"LATEST FROM {NAME}" card** — directly below the top card, above the
+    checklist, always visible. Shows the single most recent realtor action:
+    "Checked off {step} · {relative time}" with a green check, or the honest,
+    neutral "Reopened {step} · {relative time}" when a step is unchecked, or
+    "{FirstName} opened your escrow · {relative time}" when nothing is
+    checked off yet. Relative time: just now (<5 min), Xm ago, Xh ago,
+    Yesterday, Xd ago, then "Mar 3" style dates. The action is stamped on
+    every toggle (`Escrow.lastAction`, additive migration
+    `supabase/migrations/0009_escrow_last_action.sql`); escrows that predate
+    the stamp derive the latest checkoff from `completedAt`.
+  - **100% triumph card** — a teal-and-gold celebration with a short confetti
+    burst (reduced-motion aware): "CLEAR TO CLOSE" kicker, "Just closed!",
+    realtor photo, "{Name} completed all {N} steps and got you home.", the
+    property address, and a 150px 100% gold ring. The completion pill follows
+    the ahead-of-schedule rule: "Checklist complete with {N} days to spare.
+    {FirstName} has you ahead of schedule." when 5+ days out, otherwise the
+    unchanged "Congratulations, your checklist is complete".
+- **Below the triumph card (100% only)** — the checklist collapses to one
+  tappable row ("{N} of {N} steps complete") that expands inline; a gold
+  **"Leave {FirstName} a review"** button (opens the review sheet; the wiring
+  point is `ClientTriumphSection.onLeaveReviewPress` in
+  `src/components/ClientTriumph.tsx`, connected by the merge lead once the
+  profile branch's review sheet lands), a **"Share {FirstName}'s profile"**
+  button, and the referral line "Know someone buying or selling? Send them
+  your realtor." Sharing uses the native share sheet where available,
+  `navigator.share` on web, and clipboard copy as the graceful fallback, with
+  the approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
+  URL `https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id>`.
+  Share copy never uses gendered pronouns, never uses em dashes, and never
+  mentions a deals-closed count.
 - **Realtor profile (client view)** — hero card with the 96px photo, name,
-  the license line (only when the realtor entered one), and a **tap-to-call
+  the branded brokerage/license line ("Compass Realty · DRE #01998877";
+  realty group and license each shown only when entered, no dangling
+  separators), and a **tap-to-call
   phone row** (PHONE label, opens the dialer); About / stats / areas cards
   evenly spaced; the "One profile — shown across all escrows" footer note.
   A prominent "Back to my escrow" button returns to the client's home
   screen. No Call / Message actions.
+- **Public realtor profile** — a shareable page
+  (`/realtor/<id>`, opens with no login) with the banner, photo, name,
+  branded subline, About, and the public stats: **Years in**, **Avg days to
+  close**, **Client rating** (the average of that realtor's client reviews,
+  shown only when reviews exist).
+- **Client reviews** — after the escrow completes, the client can leave a
+  review: a star rating plus one line of text. Reviews are per-realtor and
+  keyed to the client's link, so each client can leave (and later edit or
+  delete) exactly one review. The public profile lists them newest first.
 - **Live updates** — every realtor checkoff updates the client home and
   progress bar. Custom steps render like any other step (no "Custom" tag on
   client views).
+- **Push notifications (iOS native only)** — after redeeming, the client is
+  asked once whether to allow notifications ("Stay in the loop": "Get
+  notified the moment {first name} checks off a step — you'll never have to
+  keep checking"). **Forward progress only**: a push fires when the realtor
+  checks off a step, adds a custom step, or moves the target close date;
+  **unchecking a step never sends a push**. Tapping a notification opens the
+  client's escrow home. While the app is open, no banner appears (the Latest
+  card shows the update). Web is out of push scope — no prompt, no tokens.
+  Requires a fresh iOS binary (new native module) — see "iOS release".
 - Buyer access can never expose seller data and vice versa.
 
 **Sync** — Supabase-backed cloud sync activates under the realtor's
@@ -190,6 +270,34 @@ Run the migrations in the Supabase dashboard SQL editor, in order:
 - `supabase/migrations/0007_per_side_close_dates.sql` — adds
   `buyer_closed_at` / `seller_closed_at` date columns on `escrows` for the
   per-side close lifecycle (dual agency closes buyer/seller independently)
+- `supabase/migrations/0008_push_tokens.sql` — client push notifications:
+  `push_tokens` table (one live Expo token per device), `push_config`
+  kill-switch flag, `register_push_token` / `unregister_push_token` RPCs
+  (granted to `anon`; clients have no login), and the forward-only DB
+  triggers (`steps` checkoff/custom insert, `escrows` target-close-date
+  change) that call the `send-client-push` Edge Function via `pg_net`.
+  **Additive only** — no existing tables/columns are altered or dropped, so
+  the pre-push app keeps working against the migrated DB.
+- `supabase/migrations/0009_escrow_last_action.sql` — adds the nullable
+  `last_action` JSONB column on `escrows`: the durable "true last action"
+  stamp (`{"kind":"checked"|"reopened","stepTitle","at"}`) behind the client
+  home's "LATEST FROM" card. Additive-only (`ADD COLUMN IF NOT EXISTS`);
+  the app syncs the column defensively and works when it is absent.
+- `supabase/migrations/0010_realty_group.sql` — adds the nullable
+  `realty_group` and `banner_image` text columns on `realtor_profiles` for
+  the realtor's brokerage and banner image (both field names are
+  contractual: other surfaces read them by name). Until applied, the app
+  still runs: profile upserts/pulls fall back to the pre-migration column
+  set (both fields stay local-only) instead of failing.
+- `supabase/migrations/0011_public_profile.sql` — adds the nullable
+  `avg_days_to_close` (text) and `rating` (numeric) columns plus the
+  server-side `reviews` table (one review per client link, keyed by the
+  client link id, never publicly readable). Maintains `rating` with a
+  trigger on review writes; exposes `get_public_profile` (public realtor
+  page), `resolve_invite_realtor` (branded invite welcome, callable by
+  anonymous clients), and the `upsert_review` / `delete_review` RPCs
+  (client-link ownership enforced server-side). Additive-only: pre-release
+  code keeps working against the migrated DB.
 
 ## Scripts
 
@@ -201,6 +309,48 @@ npx expo export --platform ios   # iOS export must stay green
 python3 scripts/deploy_gh_pages.py   # deploy web to gh-pages
 ```
 
+## Push notifications (dashboard steps, Anuraj's)
+
+After the app change ships, pushes need three server-side steps in the
+Supabase dashboard (one-time):
+
+1. Run `supabase/migrations/0008_push_tokens.sql` in the SQL editor
+   (`pg_net` must be enabled: Database → Extensions). The migration mints a
+   trigger shared secret into Vault and prints it once as
+   `PUSH_TRIGGER_SECRET` — copy it.
+2. Deploy the `send-client-push` Edge Function from the generated single
+   file `~/workspace/your_files/send-client-push-single.ts` (regenerate with
+   `python3 tools/make_send_client_push_single.py` after any source change —
+   never hand-edit the generated file). Set its secrets:
+   `PUSH_TRIGGER_SECRET` (from step 1), `EXPO_ACCESS_TOKEN` (expo.dev →
+   Access Tokens).
+3. Confirm Apple Push credentials for the EAS project, then build + submit
+   a fresh iOS binary (`eas build --platform ios` / `eas submit --platform
+   ios`) — the `expo-notifications` native module is compiled into the app,
+   so pushes cannot work on the currently installed build. Also run
+   `eas init` (or add `extra.eas.projectId`) if the project isn't linked:
+   without a project ID the client can't mint an Expo push token.
+
+Kill switch (no code deploy needed): pause all pushes with
+
+```sql
+update push_config set value = 'false' where key = 'push_enabled';
+```
+
+(re-enable with `'true'`), or disable the triggers outright:
+
+```sql
+alter table steps   disable trigger trg_steps_push_notify;
+alter table escrows disable trigger trg_escrows_push_notify;
+```
+
+Physical-iPhone checks (can't be automated): redeem a client code → allow
+notifications → background/kill the app → check off a step as the realtor
+from another device → push arrives and taps through to the client home; no
+banner while the client app is foreground; unchecking sends nothing;
+custom-step and target-date pushes arrive; denied permission never re-prompts
+(turn it back on in iOS Settings).
+
 ## iOS release (Anuraj's step)
 
 ```sh
@@ -211,6 +361,10 @@ eas submit --platform ios
 This release adds the `@react-native-community/datetimepicker` native module
 (inline date picker on New/Edit escrow) — the installed iPhone app needs a
 fresh `eas build` to pick it up; the web deploy alone won't include it.
+
+The push release also adds the `expo-notifications` native module and its
+Expo config plugin — it rides the same fresh binary (pushes never work on
+the currently installed build).
 
 Every web feature/fix ships identically on iOS — the two must never drift.
 

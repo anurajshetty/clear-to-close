@@ -9,7 +9,9 @@ import { Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { store } from '../../src/lib/store-instance';
 import { auth } from '../../src/lib/auth';
+import { getPushPermission } from '../../src/lib/push';
 import type { ClientRole, RealtorProfile } from '../../src/lib/types';
+import { realtorSubline } from '../../src/lib/profile';
 import { Card, Kicker, initialsOf } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 
@@ -36,6 +38,9 @@ export default function ClientRealtorProfile() {
   const [homeRoute, setHomeRoute] = useState<{ role: ClientRole; escrowId: string } | null>(
     null,
   );
+  // Quiet push hint: shown only when this device denied notification
+  // permission (never nags; the ask-once pre-prompt lives in PushGate).
+  const [pushOff, setPushOff] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -61,6 +66,14 @@ export default function ClientRealtorProfile() {
           }
         })
         .catch(() => {});
+      // Quiet push hint state (native only; web is out of push scope).
+      if (Platform.OS !== 'web') {
+        getPushPermission()
+          .then((p) => {
+            if (active) setPushOff(p === 'denied');
+          })
+          .catch(() => {});
+      }
       return () => {
         active = false;
       };
@@ -110,8 +123,8 @@ export default function ClientRealtorProfile() {
               </View>
             )}
             <Text style={styles.name}>{profile.name}</Text>
-            {profile.dreLicense.trim().length > 0 && (
-              <Text style={styles.dre}>DRE / license number: {profile.dreLicense.trim()}</Text>
+            {realtorSubline(profile) && (
+              <Text style={styles.dre}>{realtorSubline(profile)}</Text>
             )}
             {profile.phone.trim().length > 0 && (
               Platform.OS === 'web' ? (
@@ -154,7 +167,6 @@ export default function ClientRealtorProfile() {
           <Card style={styles.blockCard}>
             <View style={styles.stats}>
               <Stat value={profile.yearsExperience} label="Years experience" />
-              <Stat value={profile.dealsClosed} label="Deals closed" />
             </View>
           </Card>
 
@@ -170,6 +182,20 @@ export default function ClientRealtorProfile() {
               ? `One profile, shown across all of ${firstName}'s escrows.\nRead-only for clients.`
               : `One profile, shown across every escrow.\nRead-only for clients.`}
           </Text>
+          {pushOff && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open Settings to turn notifications on"
+              onPress={() => {
+                if (Platform.OS !== 'web') Linking.openSettings().catch(() => {});
+              }}
+              style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.note}>
+                Notifications are off. Turn them on in Settings to get step updates.
+              </Text>
+            </Pressable>
+          )}
         </>
       )}
     </ScrollView>

@@ -8,17 +8,25 @@ const R = 30;
 
 export function ProgressRing({
   done, total, size = 72, radius, strokeWidth, labelSize,
+  trackStroke, progressStroke, labelColor, testID,
 }: {
   done: number;
   total: number;
   size?: number;
   // Optional explicit geometry overrides. When omitted, radius/stroke/label
   // scale from the canonical 72px ring (r=30, stroke=7, label=16) — the
-  // client top card (Sept 2026 polish) passes the mockup's 96px geometry
-  // (r=42, stroke=9, label=20) instead of a uniform scale.
+  // client home top card (branding redesign, Sept 2026) passes the mockup's
+  // 208px geometry (r=88, stroke=24, label=32) instead of a uniform scale.
   radius?: number;
   strokeWidth?: number;
   labelSize?: number;
+  // Optional color overrides. Default to the theme tokens; the client home
+  // top card (branding redesign, Sept 2026) renders a gold ring on the dark
+  // banner, so it passes its own track/progress/label colors.
+  trackStroke?: string;
+  progressStroke?: string;
+  labelColor?: string;
+  testID?: string;
 }) {
   const frac = total > 0 ? Math.min(Math.max(done / total, 0), 1) : 0;
   const pct = Math.round(frac * 100);
@@ -39,17 +47,18 @@ export function ProgressRing({
       style={{ width: size, height: size }}
       accessibilityRole="image"
       accessibilityLabel={`${pct}% complete`}
+      testID={testID}
     >
       <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
         <Circle cx={center} cy={center} r={r} fill="none"
-          stroke={colors.line} strokeWidth={stroke} />
+          stroke={trackStroke ?? colors.line} strokeWidth={stroke} />
         <Circle cx={center} cy={center} r={r} fill="none"
-          stroke={colors.accent} strokeWidth={stroke} strokeLinecap="round"
+          stroke={progressStroke ?? colors.accent} strokeWidth={stroke} strokeLinecap="round"
           strokeDasharray={String(circumference)} strokeDashoffset={offset}
           transform={`rotate(-90 ${center} ${center})`} />
       </Svg>
       <View style={styles.labelWrap} pointerEvents="none">
-        <Text style={[styles.label, { fontSize: labelSize ?? Math.round(size * 0.222) }]}>
+        <Text style={[styles.label, { fontSize: labelSize ?? Math.round(size * 0.222), color: labelColor ?? colors.ink }]}>
           {pct}%
         </Text>
       </View>

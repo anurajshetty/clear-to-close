@@ -122,7 +122,7 @@ async function main(): Promise<void> {
     assert(pulled !== null, 'name-NULL row with saved fields is returned, not discarded');
     assert(pulled !== null && pulled.about === 'About Rita', 'saved fields hydrate the profile');
     assert(pulled !== null && pulled.yearsExperience === '10', 'years_experience hydrates');
-    assert(pulled !== null && pulled.dealsClosed === '30', 'deals_closed hydrates');
+    assert(pulled !== null && !('dealsClosed' in pulled), 'deals_closed never surfaces on the profile');
     assert(pulled !== null && pulled.areasServed === 'Santa Clarita', 'areas_served hydrates');
     assert(pulled !== null && pulled.phone === '555-0100', 'phone hydrates through the shared mapper');
     assert(pulled !== null && pulled.dreLicense === 'DRE-123', 'dre_license hydrates');
@@ -184,10 +184,14 @@ async function main(): Promise<void> {
       photoUri: null,
       about: '',
       yearsExperience: '',
-      dealsClosed: '',
+      avgDaysToClose: '',
       areasServed: '',
       phone: '',
       dreLicense: '',
+    realty_group: '',
+    banner_image: null,
+      reviews: [],
+      rating: null,
     });
     const pulled = await store.pullProfileFromCloud();
     assert(pulled !== null && pulled.name === 'Local Rita', 'existing local profile is returned as-is');
