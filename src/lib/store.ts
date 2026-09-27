@@ -357,6 +357,10 @@ export function createStore(kv: KV): Store {
       closeDate: e.closeDate,
       lastAction: e.lastAction ?? null,
       openedAt: e.createdAt,
+      // Escrow lifecycle status (Sept 2026, Anuraj's rule): feeds the review
+      // gate — a client can leave a review only at 100% on a non-cancelled
+      // escrow.
+      status: e.status,
     };
   }
 

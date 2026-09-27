@@ -88,7 +88,7 @@ export default function Redeem() {
   const [name, setName] = useState(prefillName ?? '');
   const [realtor, setRealtor] = useState<InviteRealtor | null>(null);
   const [redeemError, setRedeemError] = useState<RedeemError | null>(null);
-  const [linked, setLinked] = useState<{ escrowId: string; role: ClientRole } | null>(null);
+  const [linked, setLinked] = useState<{ escrowId: string; role: ClientRole; partyName: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
   // A code arriving via ?code= resolves the realtor branding for the form.
@@ -129,7 +129,7 @@ export default function Redeem() {
         deviceId,
       });
       await auth.setRole('client');
-      setLinked({ escrowId: res.escrowId, role: res.role });
+      setLinked({ escrowId: res.escrowId, role: res.role, partyName: res.partyName });
     } finally {
       setBusy(false);
     }
@@ -148,6 +148,7 @@ export default function Redeem() {
           <RedeemCelebration
             escrowId={linked.escrowId}
             role={linked.role}
+            clientName={linked.partyName}
             onViewEscrow={() => router.replace(`/client/${linked.role}/${linked.escrowId}`)}
             onStartOver={onStartOver}
           />

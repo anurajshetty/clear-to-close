@@ -450,7 +450,7 @@ def main():
         cbody = pg.inner_text("body")
         check("complete: triumph card renders", "Just closed!" in cbody)
         check("complete: triumph text",
-              "Maya Chen completed all 13 steps and got you home." in cbody)
+              "Congratulations, checklist done. The property is yours." in cbody)
         check("complete: 100% ring is 150px (mockup screen 10)",
               tc["ring"] and tc.get("ringW") == 150,
               f"w={tc.get('ringW')}")

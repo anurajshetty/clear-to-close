@@ -26,6 +26,7 @@ import { SecondaryButton } from '../../../src/components/ui';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
+import { canLeaveReview } from '../../../src/lib/clientView';
 import { ReviewSheet } from '../../../src/components/ReviewSheet';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
@@ -49,27 +50,28 @@ export default function BuyerView() {
       if (id) {
         store
           .getBuyerView(id)
-          .then((v) => {
+          .then(async (v) => {
             if (active) setView(v);
+            // The fresh cloud view carries the linked realtor profile — pick
+            // it up after the view lands so the top card always shows the
+            // latest synced photo (Sept 2026: the old two-call pattern below
+            // let the fast local getProfile() (null on client devices)
+            // overwrite the linked profile in a race).
+            try {
+              const linked = await store.getLinkedProfile(id);
+              if (active && linked) setProfile(linked);
+            } catch {}
           })
           .catch(() => {});
       }
+      // Linked-first, local fallback — a single call, no race (the same
+      // pattern the redeem celebration screen uses).
       store
-        .getProfile()
+        .getClientProfile(id || null)
         .then((p) => {
-          if (active) setProfile(p);
+          if (active && p) setProfile(p);
         })
         .catch(() => {});
-      // Cloud-linked realtor profile when this view came through an invite;
-      // falls back to the local realtor profile.
-      if (id) {
-        store
-          .getLinkedProfile(id)
-          .then((linked) => {
-            if (active && linked) setProfile(linked);
-          })
-          .catch(() => {});
-      }
       // The greeting uses the name from this device's link (what the buyer
       // entered at redeem).
       auth
@@ -85,9 +87,11 @@ export default function BuyerView() {
   );
 
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
-  // 100%: the top card becomes the realtor triumph and the body below it
-  // becomes the collapsed checklist + review/share section (screen 10).
-  const isComplete = view != null && view.total > 0 && view.done >= view.total;
+  // Review gate (Anuraj's rule, Sept 2026): the triumph review/share section
+  // shows only at 100% on a non-cancelled escrow — a cancelled escrow never
+  // shows the review button, even if its checklist is complete. (The top
+  // card computes its own 100% state from done/total.)
+  const showTriumphActions = view != null && canLeaveReview(view);
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -132,7 +136,7 @@ export default function BuyerView() {
             openDate={view.openDate}
           />
 
-          {isComplete ? (
+          {showTriumphActions ? (
             <ClientTriumphSection
               steps={view.steps}
               profile={profile}

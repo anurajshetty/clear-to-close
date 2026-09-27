@@ -138,3 +138,11 @@ export function buildShareEmail(i: ShareCopyInput): { subject: string; body: str
   }
   return { subject, body: lines.join('\n') };
 }
+
+/** Redeem celebration card kicker (Anuraj's call, Sept 2026): personalized
+ *  "Congratulations, {client name}" using the redeemed invite's party name.
+ *  Falls back to a bare congratulations when the name is somehow empty. */
+export function celebrationKicker(clientName: string | null | undefined): string {
+  const n = (clientName ?? '').trim();
+  return n ? `Congratulations, ${n}` : 'Congratulations!';
+}

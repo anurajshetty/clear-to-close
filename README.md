@@ -82,9 +82,12 @@ central user; the buyers and sellers they represent are the other parties.
   (paths `<user_id>/photo.jpg` and `<user_id>/banner.jpg`, single overwrite
   files), so client devices see them on the branded surfaces; the local
   managed files remain the offline source and display fallback, and a failed
-  upload quietly keeps the profile local-only. An optional **banner image** (wide, shown behind the client home top
-  card) follows the identical single-file pattern under its own fixed
-  filename/key, synced like the photo. Editable
+  upload quietly keeps the profile local-only. An optional **banner image**
+  follows the identical single-file pattern under its own fixed
+  filename/key, synced like the photo. The banner upload shows a recommended
+  size computed from the GUIDED BY strip's actual dimensions
+  (`src/lib/bannerSize.ts`, about 2.5 : 1 — e.g. 1024 × 417 px) so the
+  cover-cropped banner fills that strip with the least cropping. Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current
@@ -138,12 +141,16 @@ central user; the buyers and sellers they represent are the other parties.
   (`/invite/<CODE>?name=<PARTY>`) pre-fills both fields (editable) and shows
   the realtor's branded welcome (name, photo, realty group, DRE) on the same
   form. The confirmation screen is a
-  brand-teal **celebration card**: gold "WELCOME ABOARD" kicker, "Your escrow
+  brand-teal **celebration card**: gold "Congratulations, {client name}" kicker
+  (the redeemed invite's party name), "Your escrow
   is open!" headline, the realtor's photo (initials avatar when none),
   "<realtor name> has got this.", reassuring body copy, and the
   "<name> / <realty group> · DRE #<number>" byline (name and DRE only when no
   group is set; hidden when neither is present). Confetti falls once on mount and
-  settles — skipped when the OS reduced-motion setting is on. Below the card:
+  a confetti burst pops up from the bottom edge of the card — both skipped
+  when the OS reduced-motion setting is on. Both animations are the shared
+  `ConfettiLayer` / `ConfettiBurst` from `src/components/Confetti.tsx` — one
+  confetti implementation reused everywhere in the app. Below the card:
   "View my escrow" and "Not your escrow? Start over". Redemption binds
   access to the device; reopening the app goes straight back into the escrow.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
@@ -154,7 +161,7 @@ central user; the buyers and sellers they represent are the other parties.
 - **Client home top card (branded)** — the realtor's **banner photo** bleeds
   behind the whole card under a dark scrim (brand-teal gradient fallback when
   no banner is uploaded). Bold "Hi {name}" headline beside the realtor's
-  avatar (48px tap target, opens a Call / Text contact menu), "Your purchase"
+  avatar (48px tap target, opens the realtor profile), "Your purchase"
   / "Your sale" plus the address in non-bold below. Centered below: "N of N
   steps" above the **208px gold progress ring**, then the days line —
   "days left: N", "due today" on the target date, red "overdue by N day(s)"
@@ -162,8 +169,7 @@ central user; the buyers and sellers they represent are the other parties.
   - **GUIDED BY strip** — the same banner photo behind a dark scrim with a
     thin gold border; realtor photo, "GUIDED BY" kicker, "Name / Realty group
     · DRE #..." (missing pieces drop with no dangling separators), tagline in
-    quotes (omitted when empty), and **Call / Text / Profile** buttons.
-    Profile opens the realtor profile page.
+    quotes (omitted when empty), and **Call / Text** buttons.
   - **Ahead-of-pace rule** (`src/lib/pace.ts`) — when the escrow is 15+
     percentage points ahead of its timeline, a gold pill reads "Ahead of
     pace. {FirstName} has you {N} days ahead of schedule." Never at 100%,
@@ -178,14 +184,15 @@ central user; the buyers and sellers they represent are the other parties.
     every toggle (`Escrow.lastAction`, additive migration
     `supabase/migrations/0009_escrow_last_action.sql`); escrows that predate
     the stamp derive the latest checkoff from `completedAt`.
-  - **100% triumph card** — a teal-and-gold celebration with a short confetti
-    burst (reduced-motion aware): "CLEAR TO CLOSE" kicker, "Just closed!",
-    realtor photo, "{Name} completed all {N} steps and got you home.", the
+  - **100% triumph card** — a teal-and-gold celebration with falling confetti
+    (the shared `ConfettiLayer`, reduced-motion aware): the realtor's name as
+    the gold kicker, "Just closed!", realtor photo,
+    "Congratulations, checklist done. The property is yours.", the
     property address, and a 150px 100% gold ring. The completion pill follows
     the ahead-of-schedule rule: "Checklist complete with {N} days to spare.
     {FirstName} has you ahead of schedule." when 5+ days out, otherwise the
     unchanged "Congratulations, your checklist is complete".
-- **Below the triumph card (100% only)** — the checklist collapses to one
+- **Below the triumph card (100% and not cancelled)** — the checklist collapses to one
   tappable row ("{N} of {N} steps complete") that expands inline; a gold
   **"Leave {FirstName} a review"** button (opens the review sheet; the wiring
   point is `ClientTriumphSection.onLeaveReviewPress` in
@@ -211,8 +218,9 @@ central user; the buyers and sellers they represent are the other parties.
   branded subline, About, and the public stats: **Years in**, **Avg days to
   close**, **Client rating** (the average of that realtor's client reviews,
   shown only when reviews exist).
-- **Client reviews** — after the escrow completes, the client can leave a
-  review: a star rating plus one line of text. Reviews are per-realtor and
+- **Client reviews** — after the escrow completes (and only if it was not
+  cancelled), the client can leave a review: a star rating plus one line of
+  text. Reviews are per-realtor and
   keyed to the client's link, so each client can leave (and later edit or
   delete) exactly one review. The public profile lists them newest first.
 - **Live updates** — every realtor checkoff updates the client home and

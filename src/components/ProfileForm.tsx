@@ -12,6 +12,7 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { deleteLegacyPhotoFile, saveManagedBanner, saveManagedPhoto } from '../lib/photoFile';
+import { bannerSizeHint } from '../lib/bannerSize';
 import { Field } from './ui';
 import { initialsOf } from './ui';
 import { colors } from '../theme';
@@ -243,9 +244,7 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
           <Text style={styles.photoLabel}>
             {value.banner_image ? 'Change banner' : 'Add banner image'}
           </Text>
-          <Text style={styles.photoSub}>
-            Wide works best. Shown behind your client home card.
-          </Text>
+          <Text style={styles.photoSub}>{bannerSizeHint()}</Text>
         </View>
       </View>
       {bannerError ? <Text style={styles.photoError}>{bannerError}</Text> : null}

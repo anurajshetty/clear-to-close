@@ -32,9 +32,12 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
+  "$ROOT/src/lib/confetti.ts" \
+  "$ROOT/src/lib/bannerSize.ts" \
   "$ROOT/src/lib/mediaUpload.ts" \
   "$ROOT/src/lib/profile.ts" \
   "$ROOT/src/lib/push.ts" \
+  "$ROOT/src/lib/clientView.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/invite.test.ts" \
@@ -63,6 +66,11 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
   "$ROOT/tests/invite_cap_sync.test.ts" \
+  "$ROOT/tests/celebration_kicker.test.ts" \
+  "$ROOT/tests/confetti.test.ts" \
+  "$ROOT/tests/banner_size.test.ts" \
+  "$ROOT/tests/topcard_photo.test.ts" \
+  "$ROOT/tests/review_gate.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -98,6 +106,11 @@ node "$OUT/tests/reviews.test.js"
 node "$OUT/tests/invite_resolve.test.js"
 node "$OUT/tests/invite_sync.test.js"
 node "$OUT/tests/invite_cap_sync.test.js"
+node "$OUT/tests/celebration_kicker.test.js"
+node "$OUT/tests/confetti.test.js"
+node "$OUT/tests/banner_size.test.js"
+node "$OUT/tests/topcard_photo.test.js"
+node "$OUT/tests/review_gate.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"

@@ -2,22 +2,23 @@
 // realtor-branding mockup v1 · Sept 26, 2026).
 //
 // A brand-teal celebration card shown right after a client redeems their
-// invite code: gold "WELCOME ABOARD" kicker, "Your escrow is open!" headline,
+// invite code: gold "Congratulations, {client name}" kicker, "Your escrow is open!" headline,
 // the realtor's photo (initials avatar when none), "<name> has got this.",
 // reassuring body copy, and the "<name> / <realty group> · DRE #<number>"
 // byline (name and DRE only when no group is set; hidden when neither is
-// present). Confetti falls once on mount (~2.5s, ease-out) and settles; the animation
-// is skipped when the OS reduced-motion setting is on. Pure React Native +
+// present). Confetti falls once on mount (~2.5s, ease-out) and a confetti
+// burst pops up from the bottom edge of the card when the celebration
+// appears (Anuraj's call, Sept 2026); both animations are skipped when the
+// OS reduced-motion setting is on. Both animations are the shared
+// ConfettiLayer / ConfettiBurst from src/components/Confetti.tsx (one
+// implementation reused everywhere — no local copies). Pure React Native +
 // react-native-svg (already linked everywhere) — identical on iOS and web,
 // no new native modules.
 //
 // Copy rules: the realtor is referred to by name only (no gendered pronouns);
 // no em dashes in user-facing copy.
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  AccessibilityInfo,
-  Animated,
-  Easing,
   Image,
   StyleSheet,
   Text,
@@ -26,6 +27,8 @@ import {
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { store } from '../lib/store-instance';
 import type { ClientRole, RealtorProfile } from '../lib/types';
+import { celebrationKicker } from '../lib/shareCopy';
+import { ConfettiBurst, ConfettiLayer } from './Confetti';
 import { PrimaryButton, TextLink, initialsOf } from './ui';
 
 // Brand-teal gradient from the approved mockup (160deg).
@@ -34,151 +37,20 @@ const TEAL_MID = '#0F443C';
 const TEAL_TO = '#0B332D';
 const GOLD = '#F5C66B';
 
-const CONFETTI_COUNT = 16;
-const CONFETTI_COLORS = ['#F5C66B', '#FFFFFF', '#5FBFAE', '#D9E8E2', '#E8A93D'];
-// Ease-out fall, about 2.5s per the approved animation spec.
-const CONFETTI_FALL_MS = 2500;
-
-type ConfettiPiece = {
-  /** Fraction of the card width (0..1) where the piece falls. */
-  left: number;
-  /** Fraction of the card height (0..1) where the piece settles. */
-  finalY: number;
-  size: number;
-  color: string;
-  circle: boolean;
-  /** ms before this piece starts falling. */
-  delay: number;
-  /** degrees of rotation over the fall. */
-  spin: number;
-};
-
-/** Deterministic pseudo-random so the layout is stable across renders. */
-function mulberry32(seed: number) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function makePieces(): ConfettiPiece[] {
-  const rand = mulberry32(20260926);
-  return Array.from({ length: CONFETTI_COUNT }, (_, i) => ({
-    left: 0.04 + rand() * 0.92,
-    finalY: 0.08 + rand() * 0.84,
-    size: 6 + Math.round(rand() * 4),
-    color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-    circle: rand() > 0.5,
-    delay: Math.round(rand() * 500),
-    spin: Math.round((rand() - 0.5) * 240),
-  }));
-}
-
-/**
- * Confetti that falls from the top of the card once and settles.
- * When the OS reduced-motion setting is on, pieces render in their settled
- * positions with no animation at all.
- */
-function ConfettiLayer({ cardHeight }: { cardHeight: number }) {
-  const pieces = useMemo(makePieces, []);
-  const anims = useRef<Animated.Value[] | null>(null);
-  if (anims.current === null) {
-    anims.current = pieces.map(() => new Animated.Value(0));
-  }
-  const [reduced, setReduced] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((v) => {
-        if (!active) return;
-        const r = !!v;
-        setReduced(r);
-        if (r && anims.current) {
-          // Skip the fall entirely: snap pieces to their settled positions.
-          anims.current.forEach((a) => {
-            a.stopAnimation();
-            a.setValue(1);
-          });
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (reduced || cardHeight <= 0 || !anims.current) return;
-    const timers = anims.current.map((a, i) =>
-      Animated.timing(a, {
-        toValue: 1,
-        duration: CONFETTI_FALL_MS,
-        delay: pieces[i].delay,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-    );
-    const all = Animated.parallel(timers);
-    all.start();
-    return () => {
-      all.stop();
-    };
-  }, [reduced, cardHeight, pieces]);
-
-  if (cardHeight <= 0) return null;
-
-  return (
-    <View style={styles.confetti} pointerEvents="none" testID="redeem-confetti">
-      {pieces.map((p, i) => {
-        const a = (anims.current as Animated.Value[])[i];
-        const translateY = a.interpolate({
-          inputRange: [0, 1],
-          outputRange: [-30, p.finalY * cardHeight],
-        });
-        const rotate = a.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['0deg', `${p.spin}deg`],
-        });
-        return (
-          <Animated.View
-            key={i}
-            testID="confetti-piece"
-            style={[
-              styles.piece,
-              {
-                left: `${Math.round(p.left * 100)}%`,
-                width: p.size,
-                height: p.size,
-                backgroundColor: p.color,
-                borderRadius: p.circle ? p.size / 2 : 2,
-                opacity: a.interpolate({ inputRange: [0, 1], outputRange: [0, 0.95] }),
-                transform: [{ translateY }, { rotate }],
-              },
-            ]}
-          />
-        );
-      })}
-    </View>
-  );
-}
-
 function CelebrationCard({
+  clientName,
   name,
   photoUri,
   realtyGroup,
   dreLicense,
 }: {
+  clientName: string;
   name: string;
   photoUri: string | null;
   realtyGroup: string;
   dreLicense: string;
 }) {
-  const [cardHeight, setCardHeight] = useState(0);
+  const [cardSize, setCardSize] = useState({ w: 0, h: 0 });
   // "<name> / <realty group> · DRE #<number>"; name and DRE only when there
   // is no group set — never a dangling separator. Hidden entirely when
   // neither group nor DRE is present (the name already shows above).
@@ -191,7 +63,10 @@ function CelebrationCard({
     <View
       style={styles.card}
       testID="redeem-celebration-card"
-      onLayout={(e) => setCardHeight(e.nativeEvent.layout.height)}
+      onLayout={(e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setCardSize({ w: width, h: height });
+      }}
     >
       {/* Brand-teal gradient backdrop (react-native-svg is already linked). */}
       <Svg style={StyleSheet.absoluteFill} width="100%" height="100%">
@@ -204,9 +79,10 @@ function CelebrationCard({
         </Defs>
         <Rect x="0" y="0" width="100%" height="100%" fill="url(#redeemCelebrate)" rx="22" />
       </Svg>
-      <ConfettiLayer cardHeight={cardHeight} />
+      <ConfettiLayer cardHeight={cardSize.h} testID="redeem-confetti" />
+      <ConfettiBurst cardWidth={cardSize.w} cardHeight={cardSize.h} testID="redeem-confetti-burst" />
       <View style={styles.cardContent}>
-        <Text style={styles.kicker}>WELCOME ABOARD</Text>
+        <Text style={styles.kicker}>{celebrationKicker(clientName)}</Text>
         <Text style={styles.headline}>
           Your escrow{'\n'}is open!
         </Text>
@@ -242,11 +118,14 @@ function CelebrationCard({
 export function RedeemCelebration({
   escrowId,
   role,
+  clientName,
   onViewEscrow,
   onStartOver,
 }: {
   escrowId: string;
   role: ClientRole;
+  /** The redeemed invite's party name (server-validated at redeem time). */
+  clientName: string;
   onViewEscrow: () => void;
   onStartOver: () => void;
 }) {
@@ -310,6 +189,7 @@ export function RedeemCelebration({
   return (
     <>
       <CelebrationCard
+        clientName={clientName}
         name={name}
         photoUri={profile?.photoUri ?? null}
         realtyGroup={realtyGroup}
@@ -326,8 +206,6 @@ export function RedeemCelebration({
 const styles = StyleSheet.create({
   loading: { fontSize: 15, color: '#8A8175', textAlign: 'center', marginTop: 40 },
   card: { marginTop: 6, borderRadius: 22, overflow: 'hidden' },
-  confetti: StyleSheet.absoluteFill,
-  piece: { position: 'absolute', top: 0 },
   cardContent: {
     paddingVertical: 26,
     paddingHorizontal: 20,

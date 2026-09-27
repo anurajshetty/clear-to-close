@@ -3,7 +3,7 @@
 
 Approved design "Redeem celebration B" (realtor-branding mockup v1):
 the plain redeem-success screen is now a brand-teal celebration card with a
-gold "WELCOME ABOARD" kicker, "Your escrow is open!" headline, the realtor's
+gold personalized "Congratulations, {client name}" kicker, "Your escrow is open!" headline, the realtor's
 photo (initials avatar fallback), "<name> has got this.", reassuring body
 copy, and the DRE line — followed by "View my escrow" and
 "Not your escrow? Start over".
@@ -240,7 +240,7 @@ def redeem_to_celebration(pg):
     pg.locator("[placeholder='e.g. Jordan Lee']").fill("Alice Buyer")
     pg.wait_for_timeout(400)
     pg.get_by_role("button", name="Join your escrow").click()
-    pg.get_by_text("WELCOME ABOARD", exact=True).wait_for(timeout=15000)
+    pg.get_by_text("Congratulations, Alice Buyer", exact=True).wait_for(timeout=15000)
 
 
 def piece_boxes(pg):
@@ -293,8 +293,8 @@ def main():
             ) if len(t0) == len(t1) == 16 else False
             check("confetti falls on mount (pieces move)", moved)
 
-            check("kicker is WELCOME ABOARD",
-                  pg.get_by_text("WELCOME ABOARD", exact=True).count() > 0)
+            check("kicker is personalized congratulations",
+                  pg.get_by_text("Congratulations, Alice Buyer", exact=True).count() > 0)
             check("headline is the new copy",
                   pg.get_by_text("Your escrow is open!").count() > 0)
             check("realtor name reassures",

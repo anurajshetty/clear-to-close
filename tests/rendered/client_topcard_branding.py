@@ -8,12 +8,13 @@ Guards (real rendered component, 390x844, client buyer view):
   - Full-bleed banner: realtor banner photo behind everything with a dark
     scrim; brand-teal gradient fallback when no banner is uploaded.
   - "GUIDED BY" strip: photo, "GUIDED BY" kicker, "{Name} · {Realty group}",
-    tagline in quotes (omitted when empty), Call / Text / Profile buttons.
+    tagline in quotes (omitted when empty), Call / Text buttons.
     The strip itself uses the banner as its background (teal fallback) with
     a thin gold border.
   - Empty realty group -> "Name · DRE #..." (no dangling separator); empty
     group AND empty DRE -> name only.
-  - Greeting avatar opens a Call/Text menu; the menu closes on toggle.
+  - Greeting avatar opens the realtor profile (tapping it navigates to the
+    client-facing realtor profile page).
   - Status pills: ahead-of-pace gold pill shown when 15+ points ahead
     ("Ahead of pace. Maya has you 32 days ahead of schedule."); hidden below
     the threshold; NEVER at 100%; hidden on a degenerate timeline.
@@ -186,26 +187,17 @@ def main():
             check("guided-by tagline quoted", '"I answer my phone."' in guided.get("text", ""), guided.get("text", ""))
             check("guided-by Call button", pg.get_by_text("Call", exact=True).count() >= 1)
             check("guided-by Text button", pg.get_by_text("Text", exact=True).count() >= 1)
-            check("guided-by Profile button", pg.get_by_text("Profile", exact=True).count() == 1)
+            check("guided-by no Profile button", pg.get_by_text("Profile", exact=True).count() == 0)
             check("guided-by uses teal fallback", guided.get("hasGradient") and not guided.get("hasBanner"), str(guided))
             check("guided-by thin gold border",
                   "245, 198, 107" in guided.get("borderColor", "") and guided.get("borderWidth") == "1px",
                   f"{guided.get('borderColor')} / {guided.get('borderWidth')}")
             check("no pace pill below threshold", pg.query_selector('[data-testid="pace-pill"]') is None)
             check("no completion banner in progress", pg.query_selector('[data-testid="completion-banner"]') is None)
-            # Greeting avatar -> Call/Text menu.
+            # Greeting avatar -> the client-facing realtor profile page.
             pg.get_by_test_id("greeting-avatar").click()
-            pg.wait_for_timeout(400)
-            check("contact menu opens", pg.get_by_test_id("contact-menu").is_visible())
-            check("menu has Call Maya", pg.get_by_text("Call Maya", exact=True).count() == 1)
-            check("menu has Text Maya", pg.get_by_text("Text Maya", exact=True).count() == 1)
-            pg.get_by_test_id("menu-scrim").click()
-            pg.wait_for_timeout(400)
-            check("contact menu closes on outside tap", pg.query_selector('[data-testid="contact-menu"]') is None)
-            # Profile button reaches the client-facing realtor profile page.
-            pg.get_by_test_id("guided-profile").click()
             pg.get_by_text("Back to my escrow", exact=True).wait_for(timeout=8000)
-            check("Profile button opens client realtor profile", True)
+            check("greeting avatar opens realtor profile", True)
             pg.screenshot(path=os.path.join(OUT, "topcard-branding.png"))
             check("case 1: zero JS errors", not errs, "; ".join(errs[:3]))
             pg.close()

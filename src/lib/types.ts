@@ -240,6 +240,14 @@ export interface ClientView {
    * "{Name} opened your escrow · {relative time}".
    */
   openedAt?: string;
+  /**
+   * Escrow lifecycle status (Sept 2026, Anuraj's rule): feeds the review
+   * gate — a client can leave a review only at 100% on a non-cancelled
+   * escrow. Optional: older cached cloud views may omit it; an absent
+   * status fails open (the gate only ever hides on an explicit
+   * 'cancelled').
+   */
+  status?: 'open' | 'closed' | 'cancelled';
 }
 
 /**

@@ -4,8 +4,8 @@
 
 Guards (real rendered component, 390x844, client buyer view at 10/10):
   - The top card becomes the realtor triumph: confetti layer (16 pieces),
-    "CLEAR TO CLOSE" gold kicker, "Just closed!" headline, realtor photo,
-    "{Name} completed all {N} steps and got you home.", property address,
+    the realtor's name as the gold kicker, "Just closed!" headline, realtor photo,
+    "Congratulations, checklist done. The property is yours.", property address,
     the 100% gold ring (150px display), teal gradient + gold glows, and the
     ahead-of-schedule pill per the 100% rule. No greeting, no guided-by
     strip, no pace pill.
@@ -145,9 +145,9 @@ def main():
             pg, errs = load(browser, seed(10, 27))
             body = pg.inner_text("body")
             check("triumph headline", "Just closed!" in body)
-            check("triumph kicker", "CLEAR TO CLOSE" in body)
+            check("triumph kicker", "Maya Sharma" in body)
             check("triumph text",
-                  "Maya Sharma completed all 10 steps and got you home." in body)
+                  "Congratulations, checklist done. The property is yours." in body)
             check("triumph address", "26207 Benito Ct, Santa Clarita" in body)
             check("triumph gradient bg", pg.query_selector('[data-testid="triumph-gradient"]') is not None)
             check("triumph gold glows", pg.query_selector('[data-testid="triumph-glows"]') is not None)

@@ -7,7 +7,7 @@
 //    scrim so white text stays legible; brand-teal gradient fallback (drawn
 //    with react-native-svg, no new native module) when no banner is set.
 //  - header: "Hi {name}", "YOUR PURCHASE"/"YOUR SALE" kicker, address lines,
-//    and the realtor avatar top-right opening a Call/Text menu.
+//    and the realtor avatar top-right opening the realtor profile.
 //  - centered: "N of N steps" above the 208px gold progress ring, then the
 //    days line ("days left: N" / "due today" / "overdue by N day(s)").
 //  - status pill (see src/lib/pace.ts): 100% + 5 or more days left ->
@@ -18,11 +18,12 @@
 //  - "GUIDED BY" strip: the realtor's banner as the strip's own background
 //    (teal gradient fallback) with a dark scrim and thin gold border;
 //    realtor photo, name + realty group (or name + DRE when no group is set),
-//    tagline, and Call / Text / Profile buttons.
+//    tagline, and Call / Text buttons (Anuraj's call, Sept 2026: the Profile
+//    button was removed).
 //  - 100% (APPROVED mockup screen 10 "Home at 100% · realtor triumph"): the
 //    card becomes the realtor triumph — confetti (reduced-motion respected),
-//    "CLEAR TO CLOSE" gold kicker, "Just closed!", realtor photo,
-//    "{Name} completed all {N} steps and got you home.", property address,
+//    the realtor's name as the gold kicker, "Just closed!", realtor photo,
+//    "Congratulations, checklist done. The property is yours.", property address,
 //    the 100% gold ring, and the ahead-of-schedule pill per the 100% rule.
 // The step list below the card is untouched. No JUST NOW markers anywhere.
 import React, { useState } from 'react';
@@ -32,6 +33,8 @@ import { initialsOf } from './ui';
 import { ProgressRing } from './ProgressRing';
 import { ConfettiLayer } from './Confetti';
 import { aheadOfPace, completionPill, firstNameOf } from '../lib/pace';
+import { GUIDED_BY_STRIP } from '../lib/bannerSize';
+import { displayBannerUri, displayPhotoUri } from '../lib/profile';
 import type { RealtorProfile } from '../lib/types';
 
 const GOLD = '#F5C66B';
@@ -54,7 +57,12 @@ export type ClientTopCardProps = {
   openDate?: string;
   closeDate?: string;
   profile: RealtorProfile | null;
-  onProfilePress: () => void;
+  /**
+   * Tapping the realtor avatar (top-right) opens the realtor profile
+   * (Anuraj, Sept 2026): this is the way into the profile now that the
+   * GUIDED BY "Profile" button was removed.
+   */
+  onProfilePress?: () => void;
   /**
    * Completion banner copy (Sept 2026, TC view). Defaults to the approved
    * client-home copy; the TC screen passes its own line.
@@ -147,9 +155,9 @@ function GoldGlows() {
 
 // Screen 10 (APPROVED mockup "Home at 100% · realtor triumph", Sept 26): at
 // 100% the top card becomes the realtor triumph — confetti (reduced-motion
-// respected, see ConfettiLayer), "CLEAR TO CLOSE" gold kicker, "Just
-// closed!", the realtor's photo, "{Name} completed all {N} steps and got you
-// home.", the property address, the 100% gold ring (150px display, same
+// respected, see ConfettiLayer), the realtor's name as the gold kicker, "Just
+// closed!", the realtor's photo, "Congratulations, checklist done. The
+// property is yours.", the property address, the 100% gold ring (150px display, same
 // r=88/stroke=24 geometry as the 208px ring), and the ahead-of-schedule
 // pill per the existing 100% rule. The card keeps the brand-teal gradient
 // with gold glows (mockup), not the banner photo.
@@ -187,7 +195,7 @@ function TriumphCard({
       <GoldGlows />
       <ConfettiLayer cardHeight={cardHeight} testID="triumph-confetti" />
       <View style={styles.triumphContent}>
-        <Text style={styles.triumphKicker}>CLEAR TO CLOSE</Text>
+        <Text style={styles.triumphKicker}>{name}</Text>
         <Text style={styles.triumphHeadline}>Just closed!</Text>
         <View style={styles.triumphPhotoWrap}>
           <View style={styles.triumphPhoto}>
@@ -199,8 +207,7 @@ function TriumphCard({
           </View>
         </View>
         <Text style={styles.triumphText} testID="triumph-text">
-          <Text style={styles.triumphTextBold}>{name}</Text>
-          {` completed all ${total} steps and got you home.`}
+          Congratulations, checklist done. The property is yours.
         </Text>
         <Text style={styles.triumphAddr} testID="triumph-address">
           {city ? `${address}, ${city}` : address}
@@ -246,12 +253,11 @@ export function ClientTopCard({
   // Absent (buyer/seller) the approved client copy renders unchanged.
   completionText,
 }: ClientTopCardProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const branded = profile;
   const name = (branded?.name ?? '').trim();
   const first = firstNameOf(name) || 'your realtor';
   const phone = (branded?.phone ?? '').trim();
-  const bannerUri = (branded?.banner_image ?? '').trim() || null;
+  const bannerUri = displayBannerUri(branded);
   const realtyGroup = (branded?.realty_group ?? '').trim();
   const dre = (branded?.dreLicense ?? '').trim();
   const tagline = (branded?.about ?? '').trim();
@@ -273,7 +279,7 @@ export function ClientTopCard({
     return (
       <TriumphCard
         name={name}
-        photoUri={branded?.photoUri ?? null}
+        photoUri={displayPhotoUri(branded)}
         address={address}
         city={city}
         daysToClose={daysToClose}
@@ -290,10 +296,11 @@ export function ClientTopCard({
     if (phone) Linking.openURL(`sms:${phone}`);
   };
 
+  const avatarPhoto = displayPhotoUri(branded);
   const avatar = (
     <View style={styles.avatarCircle}>
-      {branded?.photoUri ? (
-        <Image source={{ uri: branded.photoUri }} style={styles.avatarImg} />
+      {avatarPhoto ? (
+        <Image source={{ uri: avatarPhoto }} style={styles.avatarImg} />
       ) : (
         <Text style={styles.avatarInitials}>{initialsOf(name)}</Text>
       )}
@@ -327,11 +334,11 @@ export function ClientTopCard({
               {city}
             </Text>
           </View>
-          {phone ? (
+          {onProfilePress ? (
             <Pressable
-              onPress={() => setMenuOpen((v) => !v)}
+              onPress={onProfilePress}
               accessibilityRole="button"
-              accessibilityLabel={`Contact your realtor ${name}`}
+              accessibilityLabel={`View ${name}'s profile`}
               style={styles.avatarBtn}
               testID="greeting-avatar"
             >
@@ -386,8 +393,8 @@ export function ClientTopCard({
           <View style={styles.guidedScrim} />
           <View style={styles.guidedRow}>
             <View style={styles.guidedAvatar}>
-              {branded?.photoUri ? (
-                <Image source={{ uri: branded.photoUri }} style={styles.guidedAvatarImg} />
+              {avatarPhoto ? (
+                <Image source={{ uri: avatarPhoto }} style={styles.guidedAvatarImg} />
               ) : (
                 <Text style={styles.guidedAvatarInitials}>{initialsOf(name)}</Text>
               )}
@@ -398,8 +405,8 @@ export function ClientTopCard({
               {tagline ? <Text style={styles.tagline}>{`"${tagline}"`}</Text> : null}
             </View>
           </View>
-          <View style={styles.btnRow}>
-            {phone ? (
+          {phone ? (
+            <View style={styles.btnRow}>
               <Pressable
                 onPress={call}
                 accessibilityRole="button"
@@ -409,8 +416,6 @@ export function ClientTopCard({
               >
                 <Text style={styles.callBtnText}>Call</Text>
               </Pressable>
-            ) : null}
-            {phone ? (
               <Pressable
                 onPress={text}
                 accessibilityRole="button"
@@ -420,56 +425,11 @@ export function ClientTopCard({
               >
                 <Text style={styles.ghostBtnText}>Text</Text>
               </Pressable>
-            ) : null}
-            <Pressable
-              onPress={onProfilePress}
-              accessibilityRole="button"
-              accessibilityLabel={`View ${name}'s full profile`}
-              style={styles.ghostBtn}
-              testID="guided-profile"
-            >
-              <Text style={styles.ghostBtnText}>Profile</Text>
-            </Pressable>
-          </View>
+            </View>
+          ) : null}
         </View>
       </View>
 
-      {menuOpen && phone ? (
-        <>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setMenuOpen(false)}
-            testID="menu-scrim"
-          />
-          <View style={styles.menu} testID="contact-menu">
-            <Pressable
-              onPress={() => {
-                setMenuOpen(false);
-                call();
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Call ${name} at ${phone}`}
-              style={styles.menuRow}
-              testID="menu-call"
-            >
-              <Text style={styles.menuText}>Call {first}</Text>
-            </Pressable>
-            <View style={styles.menuDivider} />
-            <Pressable
-              onPress={() => {
-                setMenuOpen(false);
-                text();
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Text ${name} at ${phone}`}
-              style={styles.menuRow}
-              testID="menu-text"
-            >
-              <Text style={styles.menuText}>Text {first}</Text>
-            </Pressable>
-          </View>
-        </>
-      ) : null}
     </View>
   );
 }
@@ -527,7 +487,8 @@ const styles = StyleSheet.create({
     color: CREAM,
     lineHeight: 20,
   },
-  // Realtor avatar: 48px tap target at the greeting level -> Call/Text menu.
+  // Realtor avatar: 48px tap target at the greeting level -> the realtor
+  // profile (Anuraj, Sept 2026).
   avatarBtn: {
     minWidth: 48,
     minHeight: 48,
@@ -554,37 +515,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '800',
     fontSize: 17,
-  },
-  // Contact menu under the greeting avatar.
-  menu: {
-    position: 'absolute',
-    top: 78,
-    right: 20,
-    zIndex: 5,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    minWidth: 168,
-    paddingVertical: 4,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 5,
-  },
-  menuRow: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: 'rgba(231,224,211,0.8)',
-    marginHorizontal: 14,
-  },
-  menuText: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#211D17',
   },
   // Centered stack: steps count above the 208px gold ring, days line below.
   center: {
@@ -684,7 +614,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(245,198,107,0.7)',
-    padding: 13,
+    padding: GUIDED_BY_STRIP.stripPadding,
     marginTop: 12,
   },
   guidedScrim: {
@@ -701,9 +631,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   guidedAvatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
+    width: GUIDED_BY_STRIP.avatarSize,
+    height: GUIDED_BY_STRIP.avatarSize,
+    borderRadius: GUIDED_BY_STRIP.avatarSize / 2,
     backgroundColor: 'rgba(255,255,255,0.16)',
     borderWidth: 2,
     borderColor: '#FFFFFF',
@@ -747,11 +677,11 @@ const styles = StyleSheet.create({
   btnRow: {
     flexDirection: 'row',
     gap: 10,
-    marginTop: 12,
+    marginTop: GUIDED_BY_STRIP.buttonGap,
   },
   callBtn: {
     flex: 1,
-    minHeight: 44,
+    minHeight: GUIDED_BY_STRIP.buttonHeight,
     borderRadius: 12,
     backgroundColor: GOLD,
     alignItems: 'center',
@@ -765,7 +695,7 @@ const styles = StyleSheet.create({
   },
   ghostBtn: {
     flex: 1,
-    minHeight: 44,
+    minHeight: GUIDED_BY_STRIP.buttonHeight,
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
@@ -829,9 +759,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     textAlign: 'center',
     marginTop: 10,
-  },
-  triumphTextBold: {
-    fontWeight: '800',
   },
   triumphAddr: {
     fontSize: 13,

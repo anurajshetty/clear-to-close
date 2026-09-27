@@ -45,27 +45,28 @@ export default function TcView() {
       if (id) {
         store
           .getTcView(id)
-          .then((v) => {
+          .then(async (v) => {
             if (active) setView(v);
+            // The fresh cloud view carries the linked realtor profile — pick
+            // it up after the view lands so the top card always shows the
+            // latest synced photo (Sept 2026: the old two-call pattern below
+            // let the fast local getProfile() (null on client devices)
+            // overwrite the linked profile in a race).
+            try {
+              const linked = await store.getLinkedProfile(id);
+              if (active && linked) setProfile(linked);
+            } catch {}
           })
           .catch(() => {});
       }
+      // Linked-first, local fallback — a single call, no race (the same
+      // pattern the redeem celebration screen uses).
       store
-        .getProfile()
+        .getClientProfile(id || null)
         .then((p) => {
-          if (active) setProfile(p);
+          if (active && p) setProfile(p);
         })
         .catch(() => {});
-      // Cloud-linked realtor profile when this view came through an invite;
-      // falls back to the local realtor profile.
-      if (id) {
-        store
-          .getLinkedProfile(id)
-          .then((linked) => {
-            if (active && linked) setProfile(linked);
-          })
-          .catch(() => {});
-      }
       // The greeting uses the name from this device's link (what the
       // coordinator entered at redeem).
       auth

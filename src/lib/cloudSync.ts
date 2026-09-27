@@ -537,6 +537,13 @@ function buildRpcClientView(
     // to undefined and the card derives from completed_at instead.
     lastAction: parseRealtorAction(e.last_action),
     openedAt: typeof e.created_at === 'string' ? e.created_at : undefined,
+    // Escrow lifecycle status (Sept 2026, Anuraj's rule): feeds the review
+    // gate — carried explicitly by get_client_view (migration 0015). Absent
+    // on older payloads; the gate fails open.
+    status:
+      e.status === 'open' || e.status === 'closed' || e.status === 'cancelled'
+        ? e.status
+        : undefined,
   };
 }
 

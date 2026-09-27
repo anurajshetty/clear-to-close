@@ -17,3 +17,28 @@ export function realtorSubline(
   if (dre) return `DRE #${dre}`;
   return null;
 }
+
+/**
+ * Display photo for client surfaces (Sept 2026): prefer the synced Supabase
+ * Storage URL (`photoRemoteUrl`, set on profile save); the device-local
+ * managed file (`photoUri`) is the fallback for offline / pre-sync
+ * profiles. REGRESSION: the client home top card read `photoUri` only and
+ * raced the local profile fetch, so the synced photo showed on the redeem
+ * welcome/celebration screens but not on the top card.
+ */
+export function displayPhotoUri(
+  p: Pick<RealtorProfile, 'photoUri' | 'photoRemoteUrl'> | null,
+): string | null {
+  return p?.photoRemoteUrl ?? p?.photoUri ?? null;
+}
+
+/**
+ * Display banner for client surfaces (Sept 2026): same remote-first
+ * contract as displayPhotoUri. Returns null when neither source is set.
+ */
+export function displayBannerUri(
+  p: Pick<RealtorProfile, 'banner_image' | 'bannerRemoteUrl'> | null,
+): string | null {
+  const u = (p?.bannerRemoteUrl ?? p?.banner_image ?? '').trim();
+  return u || null;
+}
