@@ -119,26 +119,19 @@ export function toStepRows(escrowId: string, role: ClientRole, steps: StepT[]): 
 }
 
 export function toProfileRow(userId: string, p: RealtorProfile | null): Record<string, unknown> {
-  // Device-local web captures (data:/blob:) never sync: photos stay
-  // device-local (Anuraj, Sept 2026). Pushing a megabyte data URI on every
-  // profile push would be pure waste. file:// passes through as before.
-  // The banner follows the exact same rule.
-  const uri = p?.photoUri ?? null;
-  const syncable =
-    uri !== null && (uri.startsWith('data:') || uri.startsWith('blob:')) ? null : uri;
-  const bannerUri = p?.banner_image ?? null;
-  const syncableBanner =
-    bannerUri !== null && (bannerUri.startsWith('data:') || bannerUri.startsWith('blob:'))
-      ? null
-      : bannerUri;
-  // NOTE: reviews / rating are deliberately NOT in this payload. They are
-  // written by clients through the upsert_review / delete_review RPCs; the
-  // realtor's full-row upsert must never clobber them with a stale local
-  // copy. Columns absent from the payload keep their server values.
-  return {
+  // Photo/banner sync (Sept 2026, Anuraj-approved): photo_url / banner_image
+  // now carry the PUBLIC Supabase Storage URLs, uploaded on profile save
+  // (see mediaUpload.ts), so client devices can see them. Previously these
+  // columns carried device-local file:// URIs, which were meaningless on any
+  // other device.
+  //
+  // When no upload has succeeded yet the keys are OMITTED (not nulled): the
+  // upsert then keeps whatever the server already has, so an offline name
+  // edit can never wipe a previously uploaded photo. The local managed files
+  // (photoUri / banner_image) stay the offline source and display fallback.
+  const row: Record<string, unknown> = {
     user_id: userId,
     name: p?.name ?? null,
-    photo_url: syncable,
     about: p?.about ?? null,
     years_experience: p?.yearsExperience ?? null,
     avg_days_to_close: p?.avgDaysToClose ?? null,
@@ -146,8 +139,20 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
     phone: p?.phone ?? null,
     dre_license: p?.dreLicense ?? null,
     realty_group: p?.realty_group ?? null,
-    banner_image: syncableBanner,
   };
+  if (p === null) {
+    // Legacy null-profile push: explicit nulls, as before.
+    row.photo_url = null;
+    row.banner_image = null;
+    return row;
+  }
+  if (p.photoRemoteUrl != null) row.photo_url = p.photoRemoteUrl;
+  if (p.bannerRemoteUrl != null) row.banner_image = p.bannerRemoteUrl;
+  // NOTE: reviews / rating are deliberately NOT in this payload. They are
+  // written by clients through the upsert_review / delete_review RPCs; the
+  // realtor's full-row upsert must never clobber them with a stale local
+  // copy. Columns absent from the payload keep their server values.
+  return row;
 }
 
 /**
@@ -201,9 +206,16 @@ export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
     typeof row.rating === 'number' && Number.isFinite(row.rating)
       ? row.rating
       : computeRating(reviews);
+  // Remote Storage URLs (Sept 2026): an http(s) photo_url / banner_image is
+  // the public bucket URL — record it as the remote source. Anything else
+  // (legacy device-local file:// rows, blob:) is not a reachable remote.
+  const isRemote = (u: string | null): u is string =>
+    u !== null && (u.startsWith('http://') || u.startsWith('https://'));
   return {
     name: s(row.name),
     photoUri: photoUrl !== null && photoUrl.startsWith('blob:') ? null : photoUrl,
+    photoRemoteUrl: isRemote(photoUrl) ? photoUrl : null,
+    bannerRemoteUrl: isRemote(bannerUrl) ? bannerUrl : null,
     banner_image: bannerUrl !== null && bannerUrl.startsWith('blob:') ? null : bannerUrl,
     about: s(row.about),
     yearsExperience: s(row.years_experience),

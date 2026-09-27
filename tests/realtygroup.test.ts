@@ -30,6 +30,8 @@ function fullProfile(): RealtorProfile {
     name: 'Maya Sharma',
     realty_group: 'Compass Realty',
     photoUri: null,
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
     banner_image: 'file:///Documents/profile-banner.jpg',
     about: 'About Maya',
     yearsExperience: '9',
@@ -43,34 +45,54 @@ function fullProfile(): RealtorProfile {
 }
 
 async function main(): Promise<void> {
-  // 1. cloud upsert mapping
-  const row = toProfileRow('uid-1', fullProfile());
+  // 1. cloud upsert mapping — Storage URLs sync; local-only files never sync.
+  const REMOTE_BANNER = 'https://xyz.supabase.co/storage/v1/object/public/realtor-media/uid-1/banner.jpg';
+  const REMOTE_PHOTO = 'https://xyz.supabase.co/storage/v1/object/public/realtor-media/uid-1/photo.jpg';
+  const row = toProfileRow('uid-1', { ...fullProfile(), bannerRemoteUrl: REMOTE_BANNER, photoRemoteUrl: REMOTE_PHOTO });
   assert(row.realty_group === 'Compass Realty', 'toProfileRow maps realty_group -> realty_group');
   assert(
-    row.banner_image === 'file:///Documents/profile-banner.jpg',
-    'toProfileRow maps banner_image -> banner_image (file:// passes)',
+    row.banner_image === REMOTE_BANNER,
+    'toProfileRow maps banner_image -> remote Storage URL',
   );
+  assert(row.photo_url === REMOTE_PHOTO, 'toProfileRow maps photo_url -> remote Storage URL');
   assert(toProfileRow('uid-1', null).realty_group === null, 'null profile maps realty_group to null');
   assert(toProfileRow('uid-1', null).banner_image === null, 'null profile maps banner_image to null');
-  // Device-local web captures never sync (same rule as the photo).
+  assert(toProfileRow('uid-1', null).photo_url === null, 'null profile maps photo_url to null');
+  // No successful upload yet (local file://, web data:, blob:, or null): the
+  // keys are OMITTED so the upsert keeps the server value — an offline edit
+  // must never wipe a previously uploaded image.
+  const localOnly = toProfileRow('uid-1', fullProfile());
+  assert(!('banner_image' in localOnly), 'local-only banner omits banner_image (server value kept)');
+  assert(!('photo_url' in localOnly), 'local-only photo omits photo_url (server value kept)');
   const webOnly = toProfileRow('uid-1', { ...fullProfile(), banner_image: 'data:image/jpeg;base64,AAA' });
-  assert(webOnly.banner_image === null, 'data: banner never syncs');
+  assert(!('banner_image' in webOnly), 'data: banner never syncs (key omitted)');
   const blobOnly = toProfileRow('uid-1', { ...fullProfile(), banner_image: 'blob:https://x/1' });
-  assert(blobOnly.banner_image === null, 'blob: banner never syncs');
+  assert(!('banner_image' in blobOnly), 'blob: banner never syncs (key omitted)');
 
   // 2. cloud pull mapping (legacy rows predate the columns)
   const pulled = fromProfileRow({ ...row, realty_group: 'Compass Realty' });
   assert(pulled.realty_group === 'Compass Realty', 'fromProfileRow maps realty_group -> realty_group');
   assert(
-    pulled.banner_image === 'file:///Documents/profile-banner.jpg',
-    'fromProfileRow maps banner_image -> banner_image',
+    pulled.bannerRemoteUrl === REMOTE_BANNER,
+    'fromProfileRow maps an http(s) banner_image -> bannerRemoteUrl',
+  );
+  assert(
+    pulled.photoRemoteUrl === REMOTE_PHOTO,
+    'fromProfileRow maps an http(s) photo_url -> photoRemoteUrl',
   );
   const legacy = fromProfileRow({ name: 'Old' });
   assert(legacy.realty_group === '', 'legacy row without realty_group -> empty string');
   assert(legacy.banner_image === null, 'legacy row without banner_image -> null');
+  assert(legacy.photoRemoteUrl === null, 'legacy row without photo_url -> null photoRemoteUrl');
+  assert(legacy.bannerRemoteUrl === null, 'legacy row without banner_image -> null bannerRemoteUrl');
   assert(
     fromProfileRow({ banner_image: 'blob:https://x/1' }).banner_image === null,
     'blob: banner treated as absent',
+  );
+  const legacyFile = fromProfileRow({ photo_url: 'file:///Documents/profile-photo.jpg' });
+  assert(
+    legacyFile.photoRemoteUrl === null,
+    'legacy file:// photo_url is not a remote URL',
   );
 
   // 3. get_client_view RPC mapping
@@ -121,6 +143,8 @@ async function main(): Promise<void> {
   const p = await store.getProfile();
   assert(p !== null && p.realty_group === '', 'local legacy profile backfills realty_group to empty');
   assert(p !== null && p.banner_image === null, 'local legacy profile backfills banner_image to null');
+  assert(p !== null && p.photoRemoteUrl === null, 'local legacy profile backfills photoRemoteUrl to null');
+  assert(p !== null && p.bannerRemoteUrl === null, 'local legacy profile backfills bannerRemoteUrl to null');
   assert(p !== null && p.avgDaysToClose === '', 'local legacy profile backfills avgDaysToClose to empty');
   assert(
     p !== null && Array.isArray(p.reviews) && p.reviews.length === 0,

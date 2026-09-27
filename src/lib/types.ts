@@ -89,6 +89,19 @@ export interface UpdateEscrowInput {
 export interface RealtorProfile {
   name: string;
   photoUri: string | null;
+  /**
+   * Public Supabase Storage URL of the profile photo (Sept 2026,
+   * Anuraj-approved): uploaded on profile save so client devices can see it.
+   * Null until the first successful upload. `photoUri` (the local managed
+   * file) remains the offline source and the display fallback.
+   */
+  photoRemoteUrl: string | null;
+  /**
+   * Public Supabase Storage URL of the banner image (Sept 2026) — same
+   * upload/fallback contract as photoRemoteUrl. `banner_image` (the local
+   * managed file) remains the offline source and the display fallback.
+   */
+  bannerRemoteUrl: string | null;
   about: string;
   yearsExperience: string;
   /** New (Sept 2026): average days to close — free text, like yearsExperience. */

@@ -254,6 +254,15 @@ export function createStore(kv: KV): Store {
       if (typeof (data.profile as { banner_image?: unknown }).banner_image !== 'string') {
         data.profile.banner_image = null;
       }
+      // Backfill for profiles saved before the remote Storage URLs existed
+      // (Sept 2026): null means no successful upload yet — the local managed
+      // files remain the source until the first upload lands.
+      if (typeof (data.profile as { photoRemoteUrl?: unknown }).photoRemoteUrl !== 'string') {
+        data.profile.photoRemoteUrl = null;
+      }
+      if (typeof (data.profile as { bannerRemoteUrl?: unknown }).bannerRemoteUrl !== 'string') {
+        data.profile.bannerRemoteUrl = null;
+      }
       // Backfill for profiles saved before avg-days-to-close existed
       // (Sept 2026): free text, editable in profile settings.
       if (typeof (data.profile as { avgDaysToClose?: unknown }).avgDaysToClose !== 'string') {
@@ -770,7 +779,10 @@ export function createStore(kv: KV): Store {
         ok: true,
         realtor: {
           name: p.name,
-          photoUrl: p.photoUri,
+          // Remote bucket URL first, local managed file as fallback (Sept
+          // 2026): the local resolve path serves the offline case, where the
+          // local file is the only thing guaranteed to render.
+          photoUrl: p.photoRemoteUrl ?? p.photoUri,
           realtyGroup: p.realty_group,
           dreLicense: p.dreLicense,
           realtorId: '',

@@ -81,6 +81,8 @@ async function main(): Promise<void> {
   // 3. toProfileRow: the realtor's push never carries reviews/rating ---------
   const row = toProfileRow('uid-1', {
     name: 'Maya', photoUri: null, about: '', yearsExperience: '9', avgDaysToClose: '21',
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
     areasServed: '', phone: '', dreLicense: '', realty_group: '', banner_image: null,
     reviews: [review('a', 5)], rating: 5,
   }) as Record<string, unknown>;

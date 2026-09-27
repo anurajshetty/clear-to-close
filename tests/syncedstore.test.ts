@@ -27,6 +27,8 @@ function profileFixture(): RealtorProfile {
   return {
     name: 'Rita Realtor',
     photoUri: null,
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
     about: 'About Rita',
     yearsExperience: '8',
     avgDaysToClose: '21',

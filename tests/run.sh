@@ -32,6 +32,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
+  "$ROOT/src/lib/mediaUpload.ts" \
   "$ROOT/src/lib/profile.ts" \
   "$ROOT/src/lib/push.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
@@ -57,6 +58,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/reviews.test.ts" \
   "$ROOT/tests/invite_resolve.test.ts" \
   "$ROOT/tests/invite_sync.test.ts" \
+  "$ROOT/tests/media_upload.test.ts" \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
@@ -94,6 +96,7 @@ node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"
 node "$OUT/tests/invite_resolve.test.js"
 node "$OUT/tests/invite_sync.test.js"
+node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
 

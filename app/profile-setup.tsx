@@ -22,6 +22,11 @@ export default function ProfileSetup() {
   // keep the loaded ones so saving the form never wipes them.
   const [keptReviews, setKeptReviews] = useState<RealtorProfile['reviews']>([]);
   const [keptRating, setKeptRating] = useState<RealtorProfile['rating']>(null);
+  // Remote Storage URLs live on the profile but are written only by the
+  // upload-on-save flow — keep the loaded ones so saving the form never
+  // drops them (same pattern as reviews/rating).
+  const [keptPhotoRemoteUrl, setKeptPhotoRemoteUrl] = useState<string | null>(null);
+  const [keptBannerRemoteUrl, setKeptBannerRemoteUrl] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -54,6 +59,8 @@ export default function ProfileSetup() {
           });
           setKeptReviews(p.reviews ?? []);
           setKeptRating(p.rating ?? null);
+          setKeptPhotoRemoteUrl(p.photoRemoteUrl ?? null);
+          setKeptBannerRemoteUrl(p.bannerRemoteUrl ?? null);
           setNameError(null);
         })
         .catch(() => {});
@@ -73,6 +80,8 @@ export default function ProfileSetup() {
       await store.saveProfile({
         name: draft.name.trim(),
         photoUri: draft.photoUri,
+        photoRemoteUrl: keptPhotoRemoteUrl,
+        bannerRemoteUrl: keptBannerRemoteUrl,
         banner_image: draft.banner_image,
         about: draft.about,
         yearsExperience: draft.yearsExperience,

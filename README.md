@@ -76,8 +76,12 @@ central user; the buyers and sellers they represent are the other parties.
   target ≤ ~1MB) and stored as a single managed file — one fixed filename
   in the app's document directory, overwritten on every pick (one
   localStorage key on web) — so old photo files never pile up and the OS
-  can't purge the photo. Device-local photos never sync to the cloud.
-  An optional **banner image** (wide, shown behind the client home top
+  can't purge the photo. On every profile save the downscaled photo and
+  banner upload to the public Supabase Storage bucket `realtor-media`
+  (paths `<user_id>/photo.jpg` and `<user_id>/banner.jpg`, single overwrite
+  files), so client devices see them on the branded surfaces; the local
+  managed files remain the offline source and display fallback, and a failed
+  upload quietly keeps the profile local-only. An optional **banner image** (wide, shown behind the client home top
   card) follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**

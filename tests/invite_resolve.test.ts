@@ -23,6 +23,8 @@ function fullProfile(): RealtorProfile {
     name: 'Maya Sharma',
     realty_group: 'Compass Realty',
     photoUri: null,
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
     banner_image: null,
     about: 'About Maya',
     yearsExperience: '9',

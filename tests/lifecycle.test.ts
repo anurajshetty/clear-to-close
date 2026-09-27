@@ -224,6 +224,8 @@ async function main(): Promise<void> {
     await store.saveProfile({
       name: 'Maya Chen',
       photoUri: null,
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
       about: 'Realtor',
       yearsExperience: '12',
       avgDaysToClose: '21',

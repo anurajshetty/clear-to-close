@@ -182,6 +182,8 @@ async function main(): Promise<void> {
     await store.saveProfile({
       name: 'Local Rita',
       photoUri: null,
+    photoRemoteUrl: null,
+    bannerRemoteUrl: null,
       about: '',
       yearsExperience: '',
       avgDaysToClose: '',

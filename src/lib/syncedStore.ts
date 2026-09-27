@@ -16,6 +16,7 @@
 // behaves exactly as the local-only v1 — sync stays dormant.
 
 import { createStore, type KV, type Store } from './store';
+import { uploadProfileMedia } from './mediaUpload';
 import type {
   ClientRole,
   ClientView,
@@ -339,7 +340,34 @@ export function createSyncedStore(
 
     saveProfile: async (p: RealtorProfile): Promise<void> => {
       await local.saveProfile(p);
-      bgPush((c, uid) => pushProfileNow(c, uid, p), { op: 'pushProfile' });
+      bgPush(
+        async (c, uid) => {
+          // Photo/banner Storage upload (Sept 2026, Anuraj-approved): the
+          // managed photo/banner upload to the public realtor-media bucket
+          // so client devices can see them. Best-effort — any failure keeps
+          // the profile local-only, exactly the old behavior. The local
+          // managed files remain the offline source and display fallback.
+          let withRemote = p;
+          try {
+            const [photoUrl, bannerUrl] = await Promise.all([
+              uploadProfileMedia(c, uid, 'photo', p.photoUri),
+              uploadProfileMedia(c, uid, 'banner', p.banner_image),
+            ]);
+            if (photoUrl !== null || bannerUrl !== null) {
+              withRemote = {
+                ...p,
+                photoRemoteUrl: photoUrl ?? p.photoRemoteUrl ?? null,
+                bannerRemoteUrl: bannerUrl ?? p.bannerRemoteUrl ?? null,
+              };
+              await local.saveProfile(withRemote);
+            }
+          } catch {
+            // Keep the local-only profile; the outbox retry covers the push.
+          }
+          await pushProfileNow(c, uid, withRemote);
+        },
+        { op: 'pushProfile' },
+      );
     },
 
     listEscrows: () => local.listEscrows(),

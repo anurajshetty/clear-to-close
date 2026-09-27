@@ -166,6 +166,8 @@ async function main(): Promise<void> {
 
   const prow = toProfileRow(UID, {
     name: 'Rita', photoUri: 'file://x.jpg', about: 'Hi',
+    photoRemoteUrl: 'https://cdn.test/realtor-media/uid-1/photo.jpg',
+    bannerRemoteUrl: null,
     yearsExperience: '5', avgDaysToClose: '21', areasServed: 'SCV', phone: '555',
     dreLicense: '01998877',
   realty_group: '',
@@ -173,7 +175,10 @@ async function main(): Promise<void> {
   reviews: [],
   rating: null,
   });
-  assert(prow.user_id === UID && prow.photo_url === 'file://x.jpg', 'profile row maps photoUri -> photo_url');
+  assert(
+    prow.user_id === UID && prow.photo_url === 'https://cdn.test/realtor-media/uid-1/photo.jpg',
+    'profile row maps photoRemoteUrl -> photo_url (Storage URL syncs)',
+  );
   assert(prow.dre_license === '01998877', 'profile row maps dreLicense -> dre_license');
   assert(toProfileRow(UID, null).name === null, 'null profile maps to nulls');
 

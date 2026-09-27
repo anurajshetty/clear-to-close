@@ -58,6 +58,8 @@ export default function ProfileCreate() {
         await store.saveProfile({
           name: draft.name.trim(),
           photoUri: draft.photoUri,
+          photoRemoteUrl: null,
+          bannerRemoteUrl: null,
         banner_image: draft.banner_image,
           about: draft.about,
           yearsExperience: draft.yearsExperience,
