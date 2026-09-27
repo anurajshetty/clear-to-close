@@ -35,7 +35,7 @@ function fullProfile(): RealtorProfile {
     banner_image: 'file:///Documents/profile-banner.jpg',
     about: 'About Maya',
     yearsExperience: '9',
-    avgDaysToClose: '21',
+    email: 'maya@compass.com',
     areasServed: 'Santa Clarita',
     phone: '555-0100',
     dreLicense: '01998877',
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
   assert(p !== null && p.banner_image === null, 'local legacy profile backfills banner_image to null');
   assert(p !== null && p.photoRemoteUrl === null, 'local legacy profile backfills photoRemoteUrl to null');
   assert(p !== null && p.bannerRemoteUrl === null, 'local legacy profile backfills bannerRemoteUrl to null');
-  assert(p !== null && p.avgDaysToClose === '', 'local legacy profile backfills avgDaysToClose to empty');
+  assert(p !== null && p.email === '', 'local legacy profile backfills email to empty');
   assert(
     p !== null && Array.isArray(p.reviews) && p.reviews.length === 0,
     'local legacy profile backfills reviews to []',

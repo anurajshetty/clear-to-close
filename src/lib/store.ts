@@ -285,11 +285,14 @@ export function createStore(kv: KV): Store {
       if (typeof (data.profile as { bannerRemoteUrl?: unknown }).bannerRemoteUrl !== 'string') {
         data.profile.bannerRemoteUrl = null;
       }
-      // Backfill for profiles saved before avg-days-to-close existed
+      // Backfill for profiles saved before the email field existed
       // (Sept 2026): free text, editable in profile settings.
-      if (typeof (data.profile as { avgDaysToClose?: unknown }).avgDaysToClose !== 'string') {
-        data.profile.avgDaysToClose = '';
+      if (typeof (data.profile as { email?: unknown }).email !== 'string') {
+        data.profile.email = '';
       }
+      // Avg days to close was removed from the profile (Anuraj, Sept 2026):
+      // drop the stale key so it can never resurface on a display.
+      delete (data.profile as { avgDaysToClose?: unknown }).avgDaysToClose;
       // Backfill for profiles saved before reviews existed (Sept 2026).
       if (!Array.isArray((data.profile as { reviews?: unknown }).reviews)) {
         data.profile.reviews = [];

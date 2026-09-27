@@ -63,7 +63,7 @@ export default function ProfileCreate() {
         banner_image: draft.banner_image,
           about: draft.about,
           yearsExperience: draft.yearsExperience,
-          avgDaysToClose: draft.avgDaysToClose,
+          email: draft.email,
           areasServed: draft.areasServed,
           phone: draft.phone,
           dreLicense: draft.dreLicense,

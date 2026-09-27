@@ -104,8 +104,8 @@ export interface RealtorProfile {
   bannerRemoteUrl: string | null;
   about: string;
   yearsExperience: string;
-  /** New (Sept 2026): average days to close — free text, like yearsExperience. */
-  avgDaysToClose: string;
+  /** Optional email (Sept 2026) — kept on the realtor side only. */
+  email: string;
   areasServed: string;
   phone: string;
   /** Optional DRE / license number — shown on the client profile only if entered. */

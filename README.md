@@ -73,13 +73,14 @@ central user; the buyers and sellers they represent are the other parties.
   - Dual-agency escrows get independent **Buyer | Seller** tabs — the two
     checklists are fully separate, each with its own ring, reorder, and
     custom steps; rows carry Buyer/Seller tags.
-- **Realtor profile** — photo, about/bio, experience, **average days to
-  close** (the realtor's own number, shown as the "Avg days to close" stat),
-  areas served, optional
-  **realty group** (e.g. "Compass Realty", shown on the branded client
-  surfaces as "Compass Realty · DRE #01998877") and optional DRE/license
-  number (shown on the client-facing profile only if entered),
-  and an optional **phone number** (syncs to the cloud profile). Profile
+- **Realtor profile** — fields in this order: profile pic, banner image,
+  full name, email (optional), phone (optional), **broker** (optional, e.g.
+  "Compass Realty", shown on the branded client
+  surfaces as "Compass Realty · DRE #01998877"), about/bio, years of
+  experience, areas served, and optional license number (shown on the
+  client-facing profile only if entered). The phone number powers the
+  **Call** and **Text** buttons on the client-facing profile (dialer /
+  SMS); email stays on the realtor side. Profile
   photos are auto-downscaled at pick time (long edge ≤ 1024px, JPEG ~0.8,
   target ≤ ~1MB) and stored as a single managed file — one fixed filename
   in the app's document directory, overwritten on every pick (one
@@ -242,8 +243,8 @@ central user; the buyers and sellers they represent are the other parties.
   screen. No Call / Message actions.
 - **Public realtor profile** — a shareable page
   (`/realtor/<id>`, opens with no login) with the banner, photo, name,
-  branded subline, About, and the public stats: **Years in**, **Avg days to
-  close**, **Client rating** (the average of that realtor's client reviews,
+  branded subline, About, and the public stats: **Years in** and
+  **Client rating** (the average of that realtor's client reviews,
   shown only when reviews exist).
 - **In-app realtor profile** (`/realtor-profile`, approved v3, Sept 2026) —
   opened by tapping the realtor's photo on the redeem celebration AND on the

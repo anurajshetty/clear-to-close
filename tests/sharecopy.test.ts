@@ -22,7 +22,6 @@ const FULL: ShareCopyInput = {
   realtyGroup: 'Compass Realty',
   dreLicense: '01998877',
   yearsExperience: '9',
-  avgDaysToClose: '21',
   rating: 5,
   tagline: 'I answer my phone.',
   stepCount: 14,
@@ -68,7 +67,7 @@ async function main(): Promise<void> {
           '\n' +
           'Maya Sharma, Compass Realty (DRE #01998877)\n' +
           '"I answer my phone."\n' +
-          '9 years · 21 avg days to close · ★★★★★\n' +
+          '9 years · ★★★★★\n' +
           '\n' +
           'See the profile: https://anurajshetty.github.io/clear-to-close/realtor/realtor-123\n' +
           '\n' +
@@ -89,7 +88,7 @@ async function main(): Promise<void> {
     );
     const { body } = buildShareEmail({ ...FULL, rating: null });
     assert(
-      body.includes('9 years · 21 avg days to close\n'),
+      body.includes('9 years\n'),
       `null rating drops stars from the stats line (got ${JSON.stringify(body)})`,
     );
     assert(!body.includes('★'), 'no stars rendered when rating is null');
@@ -139,7 +138,6 @@ async function main(): Promise<void> {
     const { body } = buildShareEmail({
       ...FULL,
       yearsExperience: '',
-      avgDaysToClose: null,
       rating: null,
       tagline: '',
     });
@@ -166,7 +164,7 @@ async function main(): Promise<void> {
     { ...FULL, rating: null },
     { ...FULL, realtyGroup: '', dreLicense: '' },
     { ...FULL, daysToClose: 2 },
-    { ...FULL, yearsExperience: '', avgDaysToClose: null, tagline: '', profileUrl: '', clientName: '' },
+    { ...FULL, yearsExperience: '', rating: null, tagline: '', profileUrl: '', clientName: '' },
   ];
   for (const b of bases) {
     variants.push(buildShareMessage(b));

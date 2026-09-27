@@ -1,10 +1,11 @@
 // Clear to Close — shared realtor profile form.
 //
 // The single approved profile form, reused by profile setup (01·⑬),
-// onboarding profile creation (㉒), and profile update (㉕): photo, full
-// name, optional realty group, about, years of experience, average days to
-// close, areas served, optional DRE/license, plus phone. Buttons and headers
-// belong to the screens; this component owns the fields only.
+// onboarding profile creation (㉒), and profile update (㉕). Field order
+// (Anuraj, Sept 2026): 1. Profile pic, 2. Banner image, 3. Full name,
+// 4. Email, 5. Phone, 6. Broker, 7. About, 8. Years of experience,
+// 9. Areas served, 10. License number. Buttons and headers belong to the
+// screens; this component owns the fields only.
 
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -19,6 +20,8 @@ import { colors } from '../theme';
 
 export interface ProfileDraft {
   name: string;
+  /** Optional email (Sept 2026) — free text, kept on the realtor side only. */
+  email: string;
   /** Optional realty group / brokerage (Sept 2026) — free text, no validation. */
   realty_group: string;
   photoUri: string | null;
@@ -26,8 +29,6 @@ export interface ProfileDraft {
   banner_image: string | null;
   about: string;
   yearsExperience: string;
-  /** Average days to close (Sept 2026) — free text, no validation. */
-  avgDaysToClose: string;
   areasServed: string;
   phone: string;
   dreLicense: string;
@@ -35,12 +36,12 @@ export interface ProfileDraft {
 
 export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
   name: '',
+  email: '',
   realty_group: '',
   photoUri: null,
   banner_image: null,
   about: '',
   yearsExperience: '',
-  avgDaysToClose: '',
   areasServed: '',
   phone: '',
   dreLicense: '',
@@ -175,14 +176,7 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
 
   return (
     <View>
-      <Field label="Full name" value={value.name} onChangeText={set('name')} placeholder="e.g. Maya Chen" />
-      {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
-      <Field
-        label="Realty group"
-        value={value.realty_group}
-        onChangeText={set('realty_group')}
-        placeholder="e.g. Compass Realty"
-      />
+      {/* 1. Profile pic */}
       <View style={styles.photoRow}>
         <Pressable
           accessibilityRole="button"
@@ -213,6 +207,7 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
       </View>
       {photoError ? <Text style={styles.photoError}>{photoError}</Text> : null}
 
+      {/* 2. Banner image */}
       <View style={styles.photoRow}>
         <Pressable
           accessibilityRole="button"
@@ -238,6 +233,34 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         </View>
       </View>
       {bannerError ? <Text style={styles.photoError}>{bannerError}</Text> : null}
+      {/* 3. Full name */}
+      <Field label="Full name" value={value.name} onChangeText={set('name')} placeholder="e.g. Maya Chen" />
+      {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
+      {/* 4. Email */}
+      <Field
+        label="Email (optional)"
+        value={value.email}
+        onChangeText={set('email')}
+        placeholder="e.g. maya@compass.com"
+        keyboardType="email-address"
+        autoCapitalize="none"
+      />
+      {/* 5. Phone */}
+      <Field
+        label="Phone (optional)"
+        value={value.phone}
+        onChangeText={set('phone')}
+        placeholder="Used by the Call and Text buttons on your client profile"
+        keyboardType="phone-pad"
+      />
+      {/* 6. Broker */}
+      <Field
+        label="Broker (optional)"
+        value={value.realty_group}
+        onChangeText={set('realty_group')}
+        placeholder="e.g. Compass Realty"
+      />
+      {/* 7. About */}
       <Field
         label="About"
         value={value.about}
@@ -245,35 +268,26 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         placeholder="Tell clients about yourself"
         multiline
       />
+      {/* 8. Years of experience */}
       <Field
         label="Years of experience"
         value={value.yearsExperience}
         onChangeText={set('yearsExperience')}
         placeholder="e.g. 12"
       />
-      <Field
-        label="Avg days to close"
-        value={value.avgDaysToClose}
-        onChangeText={set('avgDaysToClose')}
-        placeholder="e.g. 21"
-      />
+      {/* 9. Areas served */}
       <Field
         label="Areas served"
         value={value.areasServed}
         onChangeText={set('areasServed')}
         placeholder="e.g. Santa Clarita, Valencia"
       />
+      {/* 10. License number */}
       <Field
-        label="DRE / license number (optional)"
+        label="License number (optional)"
         value={value.dreLicense}
         onChangeText={set('dreLicense')}
         placeholder="e.g. 01992736"
-      />
-      <Field
-        label="Phone (optional)"
-        value={value.phone}
-        onChangeText={set('phone')}
-        placeholder="Shown as a tap-to-call row on your client profile"
       />
       {cropJob ? (
         <PhotoCropper

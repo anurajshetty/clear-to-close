@@ -15,8 +15,8 @@
 //     Call/Text buttons, and the same profile data wiring as the
 //     celebration.
 //  4. Shared profile content (src/components/RealtorProfileView.tsx):
-//     photo, name, subline, about, Years in / Avg days to close / Client
-//     rating, areas, reviews — the same content as the public profile.
+//     photo, name, subline, about, Years in / Client rating, areas,
+//     reviews — the same content as the public profile.
 //
 // RN components are not importable in the node suite, so parts 2-4 pin the
 // component/route sources statically (repo root via CTC_REPO_ROOT, exported
@@ -201,7 +201,6 @@ for (const field of [
   'testID="realtor-profile-subline"',
   'testID="realtor-profile-about"',
   'Years in',
-  'Avg days to close',
   'Client rating',
   'Areas I serve',
   'What clients say',

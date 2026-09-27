@@ -165,7 +165,6 @@ export function ClientTriumphSection({
       realtyGroup: profile?.realty_group ?? null,
       dreLicense: profile?.dreLicense ?? null,
       yearsExperience: profile?.yearsExperience ?? null,
-      avgDaysToClose: profile?.avgDaysToClose ?? null,
       rating: profile?.rating ?? null,
       tagline: (profile?.about ?? '').trim() || null,
       stepCount: steps.length,

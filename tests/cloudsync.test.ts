@@ -168,7 +168,7 @@ async function main(): Promise<void> {
     name: 'Rita', photoUri: 'file://x.jpg', about: 'Hi',
     photoRemoteUrl: 'https://cdn.test/realtor-media/uid-1/photo.jpg',
     bannerRemoteUrl: null,
-    yearsExperience: '5', avgDaysToClose: '21', areasServed: 'SCV', phone: '555',
+    yearsExperience: '5', email: 'maya@compass.com', areasServed: 'SCV', phone: '555',
     dreLicense: '01998877',
   realty_group: '',
   banner_image: null,

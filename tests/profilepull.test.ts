@@ -186,7 +186,7 @@ async function main(): Promise<void> {
     bannerRemoteUrl: null,
       about: '',
       yearsExperience: '',
-      avgDaysToClose: '',
+      email: '',
       areasServed: '',
       phone: '',
       dreLicense: '',

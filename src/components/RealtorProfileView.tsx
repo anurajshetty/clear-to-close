@@ -3,9 +3,8 @@
 // The profile body shared by the PUBLIC profile page (app/realtor/[id].tsx)
 // and the IN-APP realtor profile (app/realtor-profile.tsx, opened from the
 // redeem celebration): photo, name, branded subline, about, areas served,
-// and — on the public page — the public stats (Years in / Avg days to
-// close / Client rating) and client reviews. The in-app profile (APPROVED
-// v3, Sept 2026) renders the `inApp` variant: big photo overlapping the
+// and — on the public page — the public stats (Years in / Client rating)
+// and client reviews. The in-app profile (APPROVED v3, Sept 2026) renders the `inApp` variant: big photo overlapping the
 // banner strip, stats pared to Years in only, no reviews section. Built
 // ONCE and reused — never a divergent copy.
 //
@@ -72,9 +71,8 @@ export function RealtorProfileView({
   footer?: ReactNode;
   testID?: string;
   /**
-   * 'public' — the full public profile: photo, name, subline, about, all
-   * three stats (Years in / Avg days to close / Client rating), areas, and
-   * client reviews.
+   * 'public' — the full public profile: photo, name, subline, about, the
+   * public stats (Years in / Client rating), areas, and client reviews.
    *
    * 'inApp' — the in-app profile opened from the redeem celebration
    * (APPROVED v3, Sept 2026): the route renders a banner strip above this
@@ -144,7 +142,6 @@ export function RealtorProfileView({
       ) : (
         <View style={styles.statRow} testID="realtor-profile-stats">
           <Stat value={profile.yearsExperience.trim()} label="Years in" />
-          <Stat value={profile.avgDaysToClose.trim()} label="Avg days to close" />
           <Stat value={ratingText} label="Client rating" />
         </View>
       )}

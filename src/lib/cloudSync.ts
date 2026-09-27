@@ -134,7 +134,7 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
     name: p?.name ?? null,
     about: p?.about ?? null,
     years_experience: p?.yearsExperience ?? null,
-    avg_days_to_close: p?.avgDaysToClose ?? null,
+    email: p?.email ?? null,
     areas_served: p?.areasServed ?? null,
     phone: p?.phone ?? null,
     dre_license: p?.dreLicense ?? null,
@@ -219,7 +219,7 @@ export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
     banner_image: bannerUrl !== null && bannerUrl.startsWith('blob:') ? null : bannerUrl,
     about: s(row.about),
     yearsExperience: s(row.years_experience),
-    avgDaysToClose: s(row.avg_days_to_close),
+    email: s(row.email),
     areasServed: s(row.areas_served),
     phone: s(row.phone),
     dreLicense: s(row.dre_license),
@@ -248,7 +248,7 @@ export async function pullProfileNow(
   userId: string,
 ): Promise<RealtorProfile | null> {
   const COLUMNS =
-    'name, photo_url, about, years_experience, avg_days_to_close, areas_served, phone, dre_license, realty_group, banner_image, rating';
+    'name, photo_url, about, years_experience, email, areas_served, phone, dre_license, realty_group, banner_image, rating';
   const COLUMNS_0008 =
     'name, photo_url, about, years_experience, areas_served, phone, dre_license, realty_group, banner_image';
   const LEGACY_COLUMNS =
@@ -259,8 +259,8 @@ export async function pullProfileNow(
     if (!client) return null;
     let { data, error } = await fetchRow(COLUMNS);
     if (error && isMissingColumnError(error)) {
-      // Migration 0009 not applied yet on this database: fall back to the
-      // 0008 column list (no avg_days_to_close / reviews / rating).
+      // Migration 0016 not applied yet on this database: fall back to the
+      // 0008 column list (no email / reviews / rating).
       ({ data, error } = await fetchRow(COLUMNS_0008));
     }
     if (error && isMissingColumnError(error)) {
@@ -276,7 +276,7 @@ export async function pullProfileNow(
       isStr(row.photo_url) ||
       isStr(row.about) ||
       isStr(row.years_experience) ||
-      isStr(row.avg_days_to_close) ||
+      isStr(row.email) ||
       isStr(row.areas_served) ||
       isStr(row.phone) ||
       isStr(row.dre_license) ||
@@ -838,7 +838,7 @@ export function isMissingColumnError(error: unknown): boolean {
     msg.includes('last_action') ||
     msg.includes('realty_group') ||
     msg.includes('banner_image') ||
-    msg.includes('avg_days_to_close') ||
+    msg.includes('email') ||
     msg.includes('reviews') ||
     msg.includes('rating')
   );
@@ -850,10 +850,10 @@ export async function pushProfileNow(client: Cloud, userId: string, profile: Rea
     await upsertAll(client, 'realtor_profiles', [row], 'user_id');
   } catch (e) {
     if (!isMissingColumnError(e)) throw e;
-    // Migration 0009 (avg_days_to_close) not applied yet: retry without it
+    // Migration 0016 (email) not applied yet: retry without it
     // so the push still lands.
     const retry = { ...row } as Record<string, unknown>;
-    delete retry.avg_days_to_close;
+    delete retry.email;
     try {
       await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
     } catch (e2) {

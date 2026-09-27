@@ -28,7 +28,7 @@ function fullProfile(): RealtorProfile {
     banner_image: null,
     about: 'About Maya',
     yearsExperience: '9',
-    avgDaysToClose: '21',
+    email: 'maya@compass.com',
     areasServed: 'Santa Clarita',
     phone: '555-0100',
     dreLicense: '01998877',

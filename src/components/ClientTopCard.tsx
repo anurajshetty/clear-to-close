@@ -56,7 +56,7 @@ const BODY = '#5F574C';
 const LINE = '#E7E0D3';
 const RED = '#B23B3B';
 
-// Branding fields (realty_group, banner_image, rating, avgDaysToClose) ride
+// Branding fields (realty_group, banner_image, rating) ride
 // the canonical RealtorProfile now that the profile workstream has merged.
 type BrandedProfile = RealtorProfile;
 

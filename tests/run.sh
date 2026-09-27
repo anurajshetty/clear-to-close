@@ -81,6 +81,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/triumph_removed.test.ts" \
   "$ROOT/tests/close_revokes_links.test.ts" \
   "$ROOT/tests/photo_cropper.test.ts" \
+  "$ROOT/tests/profile_form_fields.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -136,6 +137,7 @@ node "$OUT/tests/escrowpull.test.js"
 node "$OUT/tests/triumph_removed.test.js"
 node "$OUT/tests/close_revokes_links.test.js"
 node "$OUT/tests/photo_cropper.test.js"
+node "$OUT/tests/profile_form_fields.test.js"
 
 # Top-card redesign structural guard (Sept 2026): guided-by strip removed,
 # escrow status tag present, 100% = same card + burst, the "Just closed!"

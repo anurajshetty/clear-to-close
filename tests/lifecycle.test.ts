@@ -228,7 +228,7 @@ async function main(): Promise<void> {
     bannerRemoteUrl: null,
       about: 'Realtor',
       yearsExperience: '12',
-      avgDaysToClose: '21',
+      email: 'maya@compass.com',
       areasServed: 'Santa Clarita',
       phone: '(555) 234-5678',
       dreLicense: '01998877',

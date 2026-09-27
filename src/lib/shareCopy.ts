@@ -28,8 +28,6 @@ export interface ShareCopyInput {
   dreLicense?: string | null;
   /** Raw profile string (e.g. "9"). Unparseable/empty -> the years segment is dropped. */
   yearsExperience?: string | null;
-  /** Raw profile string (e.g. "30"). Unparseable/empty -> the segment is dropped. */
-  avgDaysToClose?: string | null;
   /** Null when there are no reviews — the rating segment is then dropped. */
   rating?: number | null;
   tagline?: string | null;
@@ -70,10 +68,6 @@ function statsLine(i: ShareCopyInput): string {
   const years = parseInt((i.yearsExperience ?? '').trim(), 10);
   if (Number.isFinite(years) && years > 0) {
     parts.push(`${years} year${years === 1 ? '' : 's'}`);
-  }
-  const days = parseInt((i.avgDaysToClose ?? '').trim(), 10);
-  if (Number.isFinite(days) && days > 0) {
-    parts.push(`${days} avg days to close`);
   }
   const stars = starString(i.rating);
   if (stars) parts.push(stars);

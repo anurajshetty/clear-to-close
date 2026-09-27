@@ -31,7 +31,7 @@ function profileFixture(): RealtorProfile {
     bannerRemoteUrl: null,
     about: 'About Rita',
     yearsExperience: '8',
-    avgDaysToClose: '21',
+    email: 'maya@compass.com',
     areasServed: 'Valencia',
     phone: '555-0100',
     dreLicense: 'DRE-123',

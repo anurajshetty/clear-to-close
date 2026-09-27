@@ -80,14 +80,14 @@ async function main(): Promise<void> {
 
   // 3. toProfileRow: the realtor's push never carries reviews/rating ---------
   const row = toProfileRow('uid-1', {
-    name: 'Maya', photoUri: null, about: '', yearsExperience: '9', avgDaysToClose: '21',
+    name: 'Maya', photoUri: null, about: '', yearsExperience: '9', email: 'maya@compass.com',
     photoRemoteUrl: null,
     bannerRemoteUrl: null,
     areasServed: '', phone: '', dreLicense: '', realty_group: '', banner_image: null,
     reviews: [review('a', 5)], rating: 5,
   }) as Record<string, unknown>;
   assert(!('reviews' in row) && !('rating' in row), 'push payload excludes reviews + rating');
-  assert(row.avg_days_to_close === '21', 'push payload carries avg_days_to_close');
+  assert(row.email === 'maya@compass.com', 'push payload carries email');
 
   // 4. mapClientViewRpc: reviews + my_review_id --------------------------------
   const cv = mapClientViewRpc({
@@ -178,7 +178,7 @@ async function main(): Promise<void> {
   const p = await store.getProfile();
   assert(p !== null && Array.isArray(p.reviews) && p.reviews.length === 0, 'legacy backfills reviews []');
   assert(p !== null && p.rating === null, 'legacy backfills rating null');
-  assert(p !== null && p.avgDaysToClose === '', 'legacy backfills avgDaysToClose');
+  assert(p !== null && p.email === '', 'legacy backfills email');
 
   summary('reviews');
 }
