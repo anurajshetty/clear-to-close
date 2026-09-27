@@ -5,11 +5,13 @@
 //
 // Data comes from the get_public_profile RPC via the anon key. The root
 // layout's boot redirect skips this route (see app/_layout.tsx).
-// Copy: realtor by name only, no gendered pronouns, no em dashes.
+// The profile body is the shared RealtorProfileView
+// (src/components/RealtorProfileView.tsx) — the same content the in-app
+// profile screen shows. Copy: realtor by name only, no gendered pronouns,
+// no em dashes.
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -23,10 +25,9 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { getSupabase } from '../../src/lib/supabase';
 import { getPublicProfile } from '../../src/lib/cloudSync';
-import { realtorSubline } from '../../src/lib/profile';
-import { initialsOf } from '../../src/components/ui';
+import { RealtorProfileView } from '../../src/components/RealtorProfileView';
 import { colors, radius } from '../../src/theme';
-import type { RealtorProfile, Review } from '../../src/lib/types';
+import type { RealtorProfile } from '../../src/lib/types';
 
 const GOLD = '#E8A93D';
 const GOLD_DEEP = '#7A5A1E';
@@ -43,40 +44,6 @@ export function publicProfileUrl(realtorId: string): string | null {
   } catch {
     return null;
   }
-}
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <View style={styles.stat}>
-      <Text style={styles.statValue}>{value || '·'}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function Stars({ stars }: { stars: number }) {
-  const full = Math.max(0, Math.min(5, Math.round(stars)));
-  return (
-    <Text style={styles.stars} accessibilityLabel={`${stars} out of 5 stars`}>
-      {[1, 2, 3, 4, 5].map((n) => (
-        <Text key={n} style={{ color: n <= full ? GOLD : '#D8CFBE' }}>
-          ★
-        </Text>
-      ))}
-    </Text>
-  );
-}
-
-function ReviewCard({ review }: { review: Review }) {
-  return (
-    <View style={styles.reviewCard}>
-      <Stars stars={review.stars} />
-      {review.text.trim().length > 0 ? (
-        <Text style={styles.reviewText}>“{review.text.trim()}”</Text>
-      ) : null}
-      <Text style={styles.reviewWho}>{review.clientName}</Text>
-    </View>
-  );
 }
 
 export default function PublicRealtorProfile() {
@@ -136,15 +103,6 @@ export default function PublicRealtorProfile() {
   }, [router]);
 
   const firstName = (profile?.name ?? '').trim().split(/\s+/)[0] ?? '';
-  const areas = (profile?.areasServed ?? '')
-    .split(',')
-    .map((a) => a.trim())
-    .filter((a) => a.length > 0);
-  const subline = profile ? realtorSubline(profile) : '';
-  const ratingText =
-    profile && profile.rating !== null && Number.isFinite(profile.rating)
-      ? profile.rating.toFixed(1)
-      : '';
   // Narrow phones get tighter horizontal padding; the column caps at 640.
   const narrow = width < 420;
 
@@ -165,77 +123,39 @@ export default function PublicRealtorProfile() {
             </View>
           )
         ) : (
-          <>
-            <View style={styles.hero}>
-              {profile.photoUri ? (
-                <Image source={{ uri: profile.photoUri }} style={styles.photo} />
-              ) : (
-                <View style={[styles.photo, styles.photoFallback]}>
-                  <Text style={styles.initials}>{initialsOf(profile.name)}</Text>
+          <RealtorProfileView
+            profile={profile}
+            footer={
+              <>
+                <View style={styles.btnRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Share profile"
+                    onPress={shareProfile}
+                    style={({ pressed }) => [styles.shareBtn, pressed && { opacity: 0.88 }]}
+                  >
+                    <Text style={styles.shareBtnText}>
+                      {copied ? 'Link copied' : 'Share profile'}
+                    </Text>
+                  </Pressable>
                 </View>
-              )}
-              <Text style={styles.name}>{profile.name}</Text>
-              {subline ? <Text style={styles.meta}>{subline}</Text> : null}
-              {profile.about.trim().length > 0 ? (
-                <Text style={styles.tagline}>“{profile.about.trim()}”</Text>
-              ) : null}
-            </View>
-
-            <View style={styles.statRow}>
-              <Stat value={profile.yearsExperience.trim()} label="Years in" />
-              <Stat value={profile.avgDaysToClose.trim()} label="Avg days to close" />
-              <Stat value={ratingText} label="Client rating" />
-            </View>
-
-            {areas.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Areas I serve</Text>
-                <View style={styles.chips}>
-                  {areas.map((a) => (
-                    <View key={a} style={styles.chip}>
-                      <Text style={styles.chipText}>{a}</Text>
-                    </View>
-                  ))}
+                <View style={styles.btnRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      firstName ? `Start your escrow with ${firstName}` : 'Start your escrow'
+                    }
+                    onPress={startEscrow}
+                    style={({ pressed }) => [styles.startBtn, pressed && { opacity: 0.88 }]}
+                  >
+                    <Text style={styles.startBtnText}>
+                      {firstName ? `Start your escrow with ${firstName}` : 'Start your escrow'}
+                    </Text>
+                  </Pressable>
                 </View>
-              </View>
-            ) : null}
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>What clients say</Text>
-              {profile.reviews.length === 0 ? (
-                <Text style={styles.noReviews}>No reviews yet.</Text>
-              ) : (
-                profile.reviews.map((r) => <ReviewCard key={r.id} review={r} />)
-              )}
-            </View>
-
-            <View style={styles.btnRow}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Share profile"
-                onPress={shareProfile}
-                style={({ pressed }) => [styles.shareBtn, pressed && { opacity: 0.88 }]}
-              >
-                <Text style={styles.shareBtnText}>
-                  {copied ? 'Link copied' : 'Share profile'}
-                </Text>
-              </Pressable>
-            </View>
-            <View style={styles.btnRow}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  firstName ? `Start your escrow with ${firstName}` : 'Start your escrow'
-                }
-                onPress={startEscrow}
-                style={({ pressed }) => [styles.startBtn, pressed && { opacity: 0.88 }]}
-              >
-                <Text style={styles.startBtnText}>
-                  {firstName ? `Start your escrow with ${firstName}` : 'Start your escrow'}
-                </Text>
-              </Pressable>
-            </View>
-          </>
+              </>
+            }
+          />
         )}
       </View>
     </ScrollView>
@@ -255,58 +175,8 @@ const styles = StyleSheet.create({
   column: { width: '100%', maxWidth: 640 },
   columnNarrow: { paddingHorizontal: 0 },
   center: { alignItems: 'center', paddingTop: 60 },
-  hero: { alignItems: 'center', marginBottom: 18 },
-  photo: { width: 96, height: 96, borderRadius: 48, backgroundColor: colors.accentSoft },
-  photoFallback: { alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 32, fontWeight: '800', color: colors.accent },
   name: { fontSize: 21, fontWeight: '800', color: colors.ink, marginTop: 12, textAlign: 'center' },
   meta: { fontSize: 14, color: colors.body, marginTop: 6, textAlign: 'center' },
-  tagline: {
-    fontSize: 15,
-    fontStyle: 'italic',
-    color: colors.body,
-    marginTop: 10,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  statRow: {
-    flexDirection: 'row',
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-    marginBottom: 18,
-  },
-  stat: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
-  statValue: { fontSize: 22, fontWeight: '800', color: colors.ink },
-  statLabel: { fontSize: 11.5, color: colors.muted, marginTop: 4, textAlign: 'center' },
-  section: { marginBottom: 18 },
-  sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
-    color: colors.accent,
-    marginBottom: 10,
-  },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.pill,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  chipText: { fontSize: 13.5, fontWeight: '600', color: colors.accent },
-  reviewCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    padding: 16,
-    marginBottom: 12,
-  },
-  stars: { fontSize: 16, letterSpacing: 2 },
-  reviewText: { fontSize: 14.5, color: colors.ink, lineHeight: 21, marginTop: 8 },
-  reviewWho: { fontSize: 13, color: colors.muted, marginTop: 8 },
-  noReviews: { fontSize: 14, color: colors.muted },
   btnRow: { marginTop: 6, marginBottom: 10 },
   shareBtn: {
     backgroundColor: GOLD,

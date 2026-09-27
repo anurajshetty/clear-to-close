@@ -35,8 +35,15 @@ export default function RootLayout() {
       try {
         // The public realtor profile (/realtor/<id>, Sept 2026) opens for
         // anyone with no login: never redirect away from it on boot. Same
-        // for the branded invite deep link (/invite/<code>).
-        if (pathname.startsWith('/realtor/') || pathname.startsWith('/invite/')) return;
+        // for the branded invite deep link (/invite/<code>) and the in-app
+        // realtor profile opened from the redeem celebration
+        // (/realtor-profile, Sept 2026).
+        if (
+          pathname.startsWith('/realtor/') ||
+          pathname.startsWith('/invite/') ||
+          pathname === '/realtor-profile'
+        )
+          return;
         const isWeb = auth.isWeb();
         const [role, clientLink, hasAccount] = await Promise.all([
           auth.getRole(),

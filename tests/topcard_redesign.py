@@ -14,11 +14,12 @@ check pins the composition contract:
   4. The "Just closed!" triumph card is exported and rendered BELOW the top
      card on the buyer/seller/TC screens, unchanged (realtor-name kicker,
      congratulations copy, review/share section all intact).
-  5. Correction pass (Anuraj's final call, Sept 2026): the banner is a
-     header strip at the very TOP of the card (gradient strip fallback when
-     no banner), the card background is solid dark teal #011E1D, the
-     "days left" number is default/yellow/red by the 7/3-day thresholds, and
-     the mid-card completion/pace pill stays visible at 100%.
+  5. Celebration redesign (Anuraj, Sept 2026): the banner header strip is
+     GONE from the client top card (the banner moved to the redeem
+     celebration card), and all client cards are back on the LIGHT theme:
+     solid white card background, ink "days left" number that is amber at
+     7 or fewer days and red at 3 or fewer days, and the mid-card
+     completion/pace pill stays visible at 100%.
 
 Usage: python3 tests/topcard_redesign.py   (also wired into tests/run.sh)
 Exit 1 with the offending locations on failure.
@@ -79,25 +80,26 @@ for name, src in (("buyer", buyer), ("seller", seller), ("tc", tc)):
 check("Just closed!" in card, "'Just closed!' headline unchanged")
 check("Congratulations, checklist done. The property is yours." in card,
       "triumph congratulations copy unchanged")
+check('testID="triumph-confetti"' in card,
+      "triumph falling confetti preserved on the light theme")
 check('testID="triumph-review"' in triumph, "review button preserved")
 check('testID="triumph-share"' in triumph, "share button preserved")
 check("<ClientTriumphSection" in buyer, "buyer review/share section preserved")
 check("<ClientTriumphSection" in seller, "seller review/share section preserved")
 check("onLeaveReviewPress" in buyer, "buyer review sheet wiring preserved")
 
-# 5. Correction pass (Anuraj, Sept 2026): banner header strip at the very
-#    top of the card, solid dark teal card background, days-left number
-#    colors, and the mid-card pill staying visible at 100%.
-check('testID="topcard-banner-header"' in card, "banner header strip rendered at the top of the card")
-check(card.index('testID="topcard-banner-header"') < card.index('styles.content'),
-      "banner header strip sits above all card content")
-check('testID="topcard-banner"' in card, "banner image testID present in the header strip")
-check("TOPCARD_BANNER_HEADER" in card, "strip height driven by the TOPCARD_BANNER_HEADER constant")
-check('testID="topcard-gradient"' in card, "brand-teal gradient fallback kept for the no-banner strip")
-check("scrim" not in card,
-      "full-bleed dark scrim removed (banner is only the header strip now)")
+# 5. Celebration redesign (Anuraj, Sept 2026): the banner header strip is
+#    GONE from the client top card (the banner moved to the redeem
+#    celebration card), and ALL client cards are back on the LIGHT theme:
+#    solid white card, ink "days left" number that is amber at 7 or fewer
+#    days and red at 3 or fewer, and the mid-card completion/pace pill stays
+#    visible at 100%.
+check('testID="topcard-banner-header"' not in card, "banner header strip removed from the top card")
+check("TOPCARD_BANNER_HEADER" not in card, "old banner strip constants no longer used by the top card")
+check("topcard-gradient" not in card, "dark-teal banner gradient removed from the top card")
+check("011E1D" not in card, "no dark teal in the top card")
 check("CLIENT_TOPCARD_BG" in card, "card background uses the CLIENT_TOPCARD_BG token")
-check("backgroundColor: CLIENT_TOPCARD_BG" in card, "dark teal #011E1D set as the hero background")
+check("backgroundColor: CLIENT_TOPCARD_BG" in card, "white light theme set as the hero background")
 check("daysLeftTone" in card, "days-line number colored by daysLeftTone")
 check("DAYS_LEFT_COLORS" in card, "days-left palette imported for the number colors")
 check("topCardPill" in card, "mid-card pill driven by topCardPill")

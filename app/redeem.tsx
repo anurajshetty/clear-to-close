@@ -151,6 +151,14 @@ export default function Redeem() {
             clientName={linked.partyName}
             onViewEscrow={() => router.replace(`/client/${linked.role}/${linked.escrowId}`)}
             onStartOver={onStartOver}
+            // In-app navigation push to the realtor profile (never a
+            // browser tab); the profile's back chevron returns here.
+            onProfilePress={() =>
+              router.push({
+                pathname: '/realtor-profile',
+                params: { escrowId: linked.escrowId },
+              })
+            }
           />
         </ScrollView>
       </SafeAreaView>

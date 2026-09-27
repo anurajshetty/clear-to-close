@@ -74,6 +74,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/review_gate.test.ts" \
   "$ROOT/tests/topcard_status.test.ts" \
   "$ROOT/tests/topcard_colors.test.ts" \
+  "$ROOT/tests/celebration_redesign.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -83,6 +84,10 @@ npx tsc --ignoreConfig \
 # NODE_PATH lets the compiled tests resolve @supabase/supabase-js for the
 # platform-storage tests (they run from /tmp, outside the repo tree).
 export NODE_PATH="$ROOT/node_modules"
+
+# CTC_REPO_ROOT lets the structural regression tests read component/route
+# sources (RN components are not importable in the node suite).
+export CTC_REPO_ROOT="$ROOT"
 
 node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
@@ -116,6 +121,7 @@ node "$OUT/tests/topcard_photo.test.js"
 node "$OUT/tests/review_gate.test.js"
 node "$OUT/tests/topcard_status.test.js"
 node "$OUT/tests/topcard_colors.test.js"
+node "$OUT/tests/celebration_redesign.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"

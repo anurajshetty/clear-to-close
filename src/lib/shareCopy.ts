@@ -146,3 +146,31 @@ export function celebrationKicker(clientName: string | null | undefined): string
   const n = (clientName ?? '').trim();
   return n ? `Congratulations, ${n}` : 'Congratulations!';
 }
+
+/**
+ * Redeem celebration card headline (celebration redesign, Anuraj's call,
+ * Sept 2026): "Your escrow is open!", rendered on two lines. The line break
+ * is part of the copy so every surface renders the same two-line headline.
+ */
+export function celebrationHeadline(): string {
+  return 'Your escrow\nis open!';
+}
+
+/**
+ * Celebration card checklist line (celebration redesign, Sept 2026):
+ * "<realtor name> has your checklist ready." Takes the resolved display
+ * name (already fallen back to "Your realtor" by the caller).
+ */
+export function celebrationChecklistReady(name: string): string {
+  return `${name.trim()} has your checklist ready.`;
+}
+
+/** Celebration card follow line (celebration redesign, Sept 2026). */
+export function celebrationFollowProgress(): string {
+  return 'Follow your progress right here.';
+}
+
+/** "YOUR REALTOR" label above the tappable realtor photo (Sept 2026). */
+export function celebrationRealtorLabel(): string {
+  return 'Your realtor';
+}

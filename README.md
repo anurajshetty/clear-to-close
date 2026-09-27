@@ -85,9 +85,8 @@ central user; the buyers and sellers they represent are the other parties.
   upload quietly keeps the profile local-only. An optional **banner image**
   follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. The banner upload shows a recommended
-  size computed from the client top card banner header strip's actual
-  dimensions
-  (`src/lib/bannerSize.ts`, about 2.8 : 1 — e.g. 1024 × 370 px) so the
+  size computed from the celebration card banner strip's actual dimensions
+  (`src/lib/bannerSize.ts`, about 2.7 : 1, e.g. 1024 x 386 px) so the
   cover-cropped banner fills the strip with the least cropping. Editable
   anytime via the avatar in the deal-list header. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
@@ -141,39 +140,40 @@ central user; the buyers and sellers they represent are the other parties.
   and a single **Join your escrow** button. A branded invite link
   (`/invite/<CODE>?name=<PARTY>`) pre-fills both fields (editable) and shows
   the realtor's branded welcome (name, photo, realty group, DRE) on the same
-  form. The confirmation screen is a
-  brand-teal **celebration card**: gold "Congratulations, {client name}" kicker
-  (the redeemed invite's party name), "Your escrow
-  is open!" headline, the realtor's photo (initials avatar when none),
-  "<realtor name> has got this.", reassuring body copy, and the
-  "<name> / <realty group> · DRE #<number>" byline (name and DRE only when no
-  group is set; hidden when neither is present). Confetti falls once on mount and
-  a confetti burst pops up from the bottom edge of the card — both skipped
-  when the OS reduced-motion setting is on. Both animations are the shared
-  `ConfettiLayer` / `ConfettiBurst` from `src/components/Confetti.tsx` — one
-  confetti implementation reused everywhere in the app. Below the card:
-  "View my escrow" and "Not your escrow? Start over". Redemption binds
+  form. The confirmation screen is a light **celebration card** (approved
+  redesign, Sept 2026): a white card with a subtle border and 24pt radius,
+  topped by a 132px banner strip showing the realtor's synced banner
+  (cover-cropped; brand-teal gradient fallback when no banner is uploaded).
+  No profile photo on the banner. Below the strip: the amber uppercase
+  "Congratulations, {client name}" kicker (the redeemed invite's party
+  name), the "Your escrow is open!" headline, "{realtor name} has your
+  checklist ready." and "Follow your progress right here." A confetti burst
+  pops up from below the card on mount (the shared `ConfettiBurst`, skipped
+  when the OS reduced-motion setting is on). Below the card: "View my
+  escrow" and "Not your escrow? Start over". At the bottom of the screen a
+  "YOUR REALTOR" footer shows the realtor's photo (124px, synced with the
+  device-local fallback); tapping it opens the realtor's profile **in-app**
+  (never a browser tab). Redemption binds
   access to the device; reopening the app goes straight back into the escrow.
 - **Read-only checklist** styled exactly like the realtor's stepper (check
   circles, short connector segments, subtitles, UP NEXT tag) but with no tap
   targets, no drag grips, and no "Custom" tag. One single list in the
   realtor's order — checked steps stay in place. No recency markers of any
   kind.
-- **Client home top card (branded)** — solid dark teal (#011E1D) card. The
-  realtor's **banner photo** is a header strip at the very top of the card
-  (brand-teal gradient strip fallback when no banner is uploaded); all
-  content sits below it. Bold "Hi {name}" headline beside the realtor's
+- **Client home top card** — light theme (approved redesign, Sept 2026):
+  solid white card with a subtle border; no banner header, no dark teal.
+  Bold "Hi {name}" headline beside the realtor's
   avatar (48px tap target, opens the realtor profile), "Your purchase"
   / "Your sale" plus the address in non-bold below. Centered below: "N of N
-  steps" above the **208px gold progress ring**, then the days line —
-  "days left: N" (the number is white normally, yellow at 7 or fewer days,
-  red at 3 or fewer days), "due today" on the target date, red "overdue by
-  N day(s)" past it.
+  steps" above the **208px progress ring** (light track, ink label), then the
+  days line — "days left: N" (the number is ink normally, amber at 7 or fewer
+  days, red at 3 or fewer days), "due today" on the target date, red
+  "overdue by N day(s)" past it.
   - **Escrow status tag** — next to the "Your purchase" / "Your sale" kicker,
     a small tag reads **"In progress"** or **"Completed"** (mirrors the
     `get_client_view` escrow status, migration 0015; "Completed" once the
-    checklist is 100% done or the escrow is closed). "Completed" fills gold;
-    "In progress" is a gold outline.
+    checklist is 100% done or the escrow is closed). "Completed" fills teal;
+    "In progress" is an amber outline.
   - **Ahead-of-pace rule** (`src/lib/pace.ts`) — when the escrow is 15+
     percentage points ahead of its timeline, a gold pill reads "Ahead of
     pace. {FirstName} has you {N} days ahead of schedule." Never at 100%
@@ -194,9 +194,10 @@ central user; the buyers and sellers they represent are the other parties.
   - **100%** — the top card stays the same card: the status tag flips to
     "Completed" and the unified confetti **burst** pops up from below the
     card (the shared `ConfettiBurst`, reduced-motion aware). Directly below
-    it renders the **triumph card**, unchanged: a teal-and-gold celebration
-    with falling confetti (the shared `ConfettiLayer`, reduced-motion aware):
-    the realtor's name as the gold kicker, "Just closed!", realtor photo,
+    it renders the **triumph card** on the light theme too (white card,
+    approved redesign, Sept 2026): falling confetti (the shared
+    `ConfettiLayer`, reduced-motion aware), the realtor's name as the gold
+    kicker, "Just closed!", realtor photo,
     "Congratulations, checklist done. The property is yours.", the
     property address, and a 150px 100% gold ring. The completion pill follows
     the ahead-of-schedule rule: "Checklist complete with {N} days to spare.
@@ -228,6 +229,17 @@ central user; the buyers and sellers they represent are the other parties.
   branded subline, About, and the public stats: **Years in**, **Avg days to
   close**, **Client rating** (the average of that realtor's client reviews,
   shown only when reviews exist).
+- **In-app realtor profile** (`/realtor-profile`, approved v3, Sept 2026) —
+  opened by tapping the realtor's photo on the redeem celebration, as an
+  in-app push (never a browser tab). A 150px teal-gradient banner strip on
+  top with the back chevron overlaid (no title text; the chevron returns
+  straight to the celebration), the big 140px profile photo overlapping
+  below the banner, then the shared profile content pared down: name,
+  branded subline, About, **Years in** only, and Areas I serve — no "What
+  clients say" reviews section. **Call** and **Text** buttons below (dialer /
+  SMS). The profile body is the shared `RealtorProfileView`
+  (`src/components/RealtorProfileView.tsx`) in its `inApp` variant, the same
+  component the public page uses, so the content cannot drift.
 - **Client reviews** — after the escrow completes (and only if it was not
   cancelled), the client can leave a review: a star rating plus one line of
   text. Reviews are per-realtor and

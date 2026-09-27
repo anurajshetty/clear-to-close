@@ -1,30 +1,29 @@
 // Clear to Close — client top-card visual tokens + composition helpers
-// (pure, unit-tested). Correction pass (Anuraj's call, Sept 2026):
+// (pure, unit-tested). Celebration redesign (Anuraj's call, Sept 2026):
 //
-//  - The top card sits on a solid dark teal background; the realtor's banner
-//    image is a header strip at the very TOP of the card (brand-teal
-//    gradient strip fallback when no banner is uploaded), with all content
-//    below it.
-//  - The "days left" number on the card is the default (white) color
-//    normally, yellow at 7 or fewer days, red at 3 or fewer days. Overdue
-//    and "due today" states keep their own treatments.
+//  - All client cards are back on the LIGHT theme: the paper screen, white
+//    cards. The top card is a white card with a subtle border; the dark
+//    teal is gone.
+//  - The escrow status tag ("In progress" / "Completed") and the days-left
+//    color rule stay, restyled to read on the light background: the number
+//    is ink normally, amber at 7 or fewer days, red at 3 or fewer days.
+//    Overdue and "due today" keep their own treatments.
 //  - At 100% the mid-card completion/pace pill stays visible: the ONLY
-//    per-status changes on the top card are the escrow status tag flipping
-//    to "Completed" and the shared confetti burst popping from below the
-//    card.
+//    per-status changes on the top card are the status tag flip and the
+//    confetti burst popping from below the card.
 import { aheadOfPace, completionPill } from './pace';
 
-/** Solid background of the client top card (dark teal). */
-export const CLIENT_TOPCARD_BG = '#011E1D';
+/** Solid background of the client top card (white, on the paper screen). */
+export const CLIENT_TOPCARD_BG = '#FFFFFF';
 
-/** "days left" number colors on the dark teal card. */
+/** "days left" number colors on the light top card. */
 export const DAYS_LEFT_COLORS = {
-  /** Default number color. */
-  default: '#FFFFFF',
-  /** 7 or fewer days left. */
-  warn: '#F2C94C',
-  /** 3 or fewer days left. */
-  alert: '#F06A5E',
+  /** Default number color (ink). */
+  default: '#211D17',
+  /** 7 or fewer days left (amber, readable on white). */
+  warn: '#A86A12',
+  /** 3 or fewer days left (red). */
+  alert: '#B23B3B',
 } as const;
 
 /** Which color band the "days left" number falls in. */
@@ -32,9 +31,9 @@ export type DaysLeftTone = 'default' | 'warn' | 'alert';
 
 /**
  * Days-left color threshold (Sept 2026, Anuraj's call): the number is the
- * default color normally, yellow at 7 or fewer days, red at 3 or fewer days.
- * Callers apply it to the positive "days left" state only; "due today" and
- * overdue keep their own treatments.
+ * default (ink) color normally, amber at 7 or fewer days, red at 3 or fewer
+ * days. Callers apply it to the positive "days left" state only; "due today"
+ * and overdue keep their own treatments.
  */
 export function daysLeftTone(daysToClose: number): DaysLeftTone {
   if (daysToClose <= 3) return 'alert';
