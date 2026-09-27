@@ -299,7 +299,6 @@ export function ClientList({
         <InviteSheet
           visible
           side={side}
-          address={address}
           escrowId={escrowId}
           onClose={() => setSheetOpen(false)}
           onCreated={refresh}

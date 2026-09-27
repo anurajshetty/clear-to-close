@@ -416,7 +416,6 @@ export default function TransactionDetail() {
         <InviteSheet
           visible
           side={sheetSide}
-          address={escrow.address}
           escrowId={escrow.id}
           onClose={() => setSheetSide(null)}
           onCreated={refreshInvites}

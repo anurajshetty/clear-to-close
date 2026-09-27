@@ -11,14 +11,12 @@ import { colors } from '../theme';
 export function InviteSheet({
   visible,
   side,
-  address,
   escrowId,
   onClose,
   onCreated,
 }: {
   visible: boolean;
   side: ClientRole;
-  address: string;
   escrowId: string;
   onClose: () => void;
   onCreated: () => void;
@@ -95,13 +93,8 @@ export function InviteSheet({
     <Sheet visible={visible} onClose={handleClose}>
       {phase === 'name' ? (
         <View>
-          <Kicker>
-            {label} invite · {address}
-          </Kicker>
+          <Kicker>{label} invite</Kicker>
           <Text style={styles.h3}>Invite the {noun}</Text>
-          <Text style={styles.hint}>
-            Name the invite first. Their name becomes part of the code.
-          </Text>
           <Field
             label={
               label === 'Buyer'
@@ -127,9 +120,7 @@ export function InviteSheet({
         </View>
       ) : (
         <View>
-          <Kicker>
-            {label} invite · {address}
-          </Kicker>
+          <Kicker>{label} invite</Kicker>
           <Text style={styles.bigCode}>{code}</Text>
           <Text style={styles.hintCenter}>
             Share this code with them. It works once. Or send the invite link.

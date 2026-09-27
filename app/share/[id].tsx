@@ -338,7 +338,6 @@ export default function ShareEscrow() {
         <InviteSheet
           visible
           side={sheetSide}
-          address={escrow.address}
           escrowId={escrow.id}
           onClose={() => setSheetSide(null)}
           onCreated={refreshInvites}
