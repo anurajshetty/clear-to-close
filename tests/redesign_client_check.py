@@ -4,7 +4,7 @@
 Drives the REAL built output at 390x844 (deep-linked client views with a
 seeded device link) and asserts the visible outcomes of the branded client
 top card (approved mockup):
-  - greeting row: bold "Hi {name}" + "Your purchase"/"Your sale" + non-bold
+  - greeting row: bold "Hi {name}" + "Your transaction" + non-bold
     address, with the realtor avatar button AT THE GREETING LEVEL (48px
     tap target -> opens the Call/Text contact menu).
   - centered below: "N of N steps" above the 208px ring, then the
@@ -319,7 +319,7 @@ def main():
         browser = p.chromium.launch()
 
         # --- base pages: full top-card + checklist + profile assertions ---
-        for role, kicker in (("buyer", "YOUR PURCHASE"), ("seller", "YOUR SALE")):
+        for role, kicker in (("buyer", "YOUR TRANSACTION"), ("seller", "YOUR TRANSACTION")):
             pg = load_page(browser, errors, role, done_count=3, close_delta_days=91)
             body = pg.inner_text("body")
             check(f"{role}: greeting headline", "Hi Priya Nair" in body)

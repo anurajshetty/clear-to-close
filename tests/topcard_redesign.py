@@ -8,7 +8,7 @@ check pins the composition contract:
   1. The GUIDED BY strip is gone from the top card (no guided-by markup,
      styles, or Call/Text buttons remain in ClientTopCard.tsx).
   2. The escrow status tag ("In progress" / "Completed") renders next to
-     the "YOUR PURCHASE"/"YOUR SALE" kicker, driven by escrowStatusLabel.
+     the "YOUR TRANSACTION" kicker, driven by escrowStatusLabel.
   3. At 100% the top card stays the same card: the unified ConfettiBurst
      pops up from below the top card (no ConfettiLayer-as-top-card swap).
   4. The "Just closed!" triumph card is exported and rendered BELOW the top

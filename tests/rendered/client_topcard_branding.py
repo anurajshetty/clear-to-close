@@ -170,7 +170,7 @@ def main():
             pg, errs = load(browser, seed(3, 10, -10, 50))
             body = pg.inner_text("body")
             check("greeting headline", "Hi Priya Nair" in body)
-            check("kicker uppercased", "YOUR PURCHASE" in body)
+            check("kicker uppercased", "YOUR TRANSACTION" in body)
             ring = pg.evaluate(RING_JS)
             check("ring svg is 208x208", ring.get("svgW") == "208" and ring.get("svgH") == "208", str(ring))
             check("ring progress stroke is gold", (ring.get("progress") or "").lower() == "#f5c66b", str(ring.get("progress")))

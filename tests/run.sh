@@ -76,6 +76,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/topcard_colors.test.ts" \
   "$ROOT/tests/topcard_responsive.test.ts" \
   "$ROOT/tests/celebration_redesign.test.ts" \
+  "$ROOT/tests/profile_view_fixes.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -124,6 +125,7 @@ node "$OUT/tests/topcard_status.test.js"
 node "$OUT/tests/topcard_colors.test.js"
 node "$OUT/tests/topcard_responsive.test.js"
 node "$OUT/tests/celebration_redesign.test.js"
+node "$OUT/tests/profile_view_fixes.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"

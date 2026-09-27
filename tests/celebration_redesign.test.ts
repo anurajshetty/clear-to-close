@@ -214,8 +214,11 @@ assert(shared.includes("variant = 'public'"), 'public is the default variant');
 assert(shared.includes('photoLarge'), 'inApp variant has the big photo style');
 assert(shared.includes('width: 140'), 'in-app photo is 140px');
 assert(shared.includes('marginTop: -52'), 'in-app photo overlaps below the banner');
-// In-app variant: stats pared to Years in only.
-assert(shared.includes('statSingle'), 'inApp variant has the single-stat card');
+// In-app variant: stats pared to Years in only — styled exactly like
+// "Areas I serve" (section title + chip, no white card; Sept 2026 fix for
+// the white box Anuraj caught on the live profile).
+assert(shared.includes('>Years of experience</Text>'), 'inApp variant titles the years section "Years of experience"');
+assert(!shared.includes('statSingle'), 'inApp variant has no white-box single-stat card');
 // In-app variant: the "What clients say" reviews section is removed.
 assert(shared.includes('{!inApp && ('), 'reviews section only renders for the public variant');
 // The public page renders the same shared content (no divergent copy) in

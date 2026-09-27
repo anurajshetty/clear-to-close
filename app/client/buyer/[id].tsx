@@ -3,7 +3,7 @@
 // reworked Sept 26 (branding): the client top card (see ClientTopCard) is a
 // full-bleed banner — the realtor's banner photo behind everything (brand-teal
 // gradient fallback) with a dark scrim; bold "Hi {name}" greeting,
-// "Your purchase" kicker + non-bold address, the realtor's avatar circle
+// "Your transaction" kicker + non-bold address, the realtor's avatar circle
 // top-right at the greeting level (tap -> Call/Text menu); centered below:
 // "N of N steps" above the 208px gold progress ring, then the days-left line
 // ("days left: N" / "due today" / "overdue by N day(s)"). Status tag next to
@@ -116,7 +116,7 @@ export default function BuyerView() {
         <>
           <ClientTopCard
             greeting={greeting}
-            kicker="Your purchase"
+            kicker="Your transaction"
             address={view.address}
             city={view.city}
             daysToClose={view.daysToClose}
@@ -124,10 +124,12 @@ export default function BuyerView() {
             total={view.total}
             profile={profile}
             status={view.status}
+            // The banner photo opens the IN-APP realtor profile (never the
+            // public /realtor/<id> page) — the shared celebration wiring via
+            // the escrow id. (Sept 2026: photo taps were misrouted to the
+            // public page, which is how the old three-stat white box showed.)
             onProfilePress={() =>
-              view?.realtorId
-                ? router.push(`/realtor/${view.realtorId}`)
-                : router.push({ pathname: '/client/profile', params: { escrowId: id } })
+              router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
           />
 

@@ -1,8 +1,8 @@
 // topcard_status.test.ts — REGRESSION: client top-card escrow status tag
 // (Anuraj's call, Sept 2026).
 //
-// The top card shows the escrow status next to the "YOUR PURCHASE" /
-// "YOUR SALE" kicker: "In progress" or "Completed". The label mirrors the
+// The top card shows the escrow status next to the "YOUR TRANSACTION"
+// kicker: "In progress" or "Completed". The label mirrors the
 // get_client_view status semantics (migration 0015): "Completed" once the
 // checklist is 100% done or the escrow row itself is closed; anything else
 // (including an absent status on older cached views) is "In progress".

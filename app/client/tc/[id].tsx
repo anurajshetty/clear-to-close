@@ -115,8 +115,12 @@ export default function TcView() {
             total={total}
             profile={profile}
             status={view.buyer?.status ?? view.seller?.status}
+            // The banner photo opens the IN-APP realtor profile (never the
+            // public /realtor/<id> page) — the shared celebration wiring via
+            // the escrow id. (Sept 2026: photo taps were misrouted to the
+            // public page, which is how the old three-stat white box showed.)
             onProfilePress={() =>
-              router.push({ pathname: '/client/profile', params: { escrowId: id } })
+              router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
           />
 

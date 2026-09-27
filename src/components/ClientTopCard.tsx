@@ -16,7 +16,8 @@
 //    Small phones scale the banner, photo, type, spacing, and ring down so
 //    nothing clips or overflows; large screens keep the full-size layout.
 //  - Card body, all left-aligned except the centered steps/ring/days stack:
-//    "Hi {name}" (30/25px ink 800), the "YOUR PURCHASE"/"YOUR SALE" kicker
+//    "Hi {name}" (30/25px ink 800), the "YOUR TRANSACTION" kicker (buyer
+//    and seller share one kicker, Sept 2026)
 //    (amber) + the escrow status tag ("In progress" amber outline,
 //    "Completed" filled amber), the address lines, then centered "N of N
 //    steps", the progress ring (210/160px, amber-gold #E3B95C on the #E7E0D3
@@ -79,7 +80,7 @@ export type ClientTopCardProps = {
   onProfilePress?: () => void;
   /**
    * Escrow lifecycle status (Sept 2026, Anuraj's call): shown next to the
-   * "YOUR PURCHASE"/"YOUR SALE" kicker as "In progress" or "Completed"
+   * "YOUR TRANSACTION" kicker as "In progress" or "Completed"
    * (see escrowStatusLabel). Rides in the client view since migration 0015;
    * absent (older cached views) defaults to "In progress".
    */

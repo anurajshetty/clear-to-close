@@ -133,10 +133,12 @@ export function RealtorProfileView({
       </View>
 
       {inApp ? (
-        <View style={styles.statSingleRow} testID="realtor-profile-stats">
-          <View style={styles.statSingle}>
-            <Text style={styles.statSingleValue}>{profile.yearsExperience.trim() || '·'}</Text>
-            <Text style={styles.statSingleLabel}>Years in</Text>
+        <View style={styles.section} testID="realtor-profile-stats">
+          <Text style={styles.sectionTitle}>Years of experience</Text>
+          <View style={styles.chips}>
+            <View style={styles.chip}>
+              <Text style={styles.chipText}>{profile.yearsExperience.trim() || '·'}</Text>
+            </View>
           </View>
         </View>
       ) : (
@@ -181,11 +183,21 @@ const styles = StyleSheet.create({
   // In-app profile (v3): the hero pulls up over the banner strip rendered
   // above by the route, and the photo is big (140px).
   heroOverlap: { marginTop: -52, zIndex: 1 },
-  photo: { width: 96, height: 96, borderRadius: 48, backgroundColor: colors.accentSoft },
+  // Clipped inside the circle: borderRadius + overflow hidden on the image
+  // itself (Sept 2026 fix — the photo rendered as a square overflowing its
+  // circular frame without the clip).
+  photo: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    overflow: 'hidden',
+    backgroundColor: colors.accentSoft,
+  },
   photoLarge: {
     width: 140,
     height: 140,
     borderRadius: 70,
+    overflow: 'hidden',
     borderWidth: 4,
     borderColor: colors.paper,
     backgroundColor: colors.accentSoft,
@@ -219,20 +231,6 @@ const styles = StyleSheet.create({
   stat: { flex: 1, alignItems: 'center', paddingHorizontal: 4 },
   statValue: { fontSize: 22, fontWeight: '800', color: colors.ink },
   statLabel: { fontSize: 11.5, color: colors.muted, marginTop: 4, textAlign: 'center' },
-  // In-app profile (v3): stats pared to Years in only — a single centered
-  // white card.
-  statSingleRow: { alignItems: 'center', marginTop: 20, marginBottom: 18 },
-  statSingle: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: colors.line,
-    borderRadius: 18,
-    paddingVertical: 16,
-    paddingHorizontal: 34,
-    alignItems: 'center',
-  },
-  statSingleValue: { fontSize: 19, fontWeight: '800', color: colors.ink },
-  statSingleLabel: { fontSize: 11.5, color: colors.muted, marginTop: 3 },
   section: { marginBottom: 18 },
   sectionTitle: {
     fontSize: 12,

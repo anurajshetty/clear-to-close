@@ -27,7 +27,7 @@ export const REVIEWS_ENABLED = false;
 
 /**
  * Client top-card status label (Anuraj's call, Sept 2026): the escrow status
- * next to "YOUR PURCHASE" / "YOUR SALE". Mirrors the get_client_view status
+ * next to "YOUR TRANSACTION". Mirrors the get_client_view status
  * semantics (migration 0015): the escrow is "Completed" once its checklist
  * is 100% done or the escrow row itself is closed; anything else is
  * "In progress" (the default when the status is absent or anything

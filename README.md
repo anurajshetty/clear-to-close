@@ -165,7 +165,7 @@ central user; the buyers and sellers they represent are the other parties.
   soft shadow. A banner header strip on top shows the realtor's synced
   banner (cover-cropped; brand-teal gradient fallback); the realtor's photo
   sits on the banner's right side (tappable, opens the realtor profile
-  in-app). Bold "Hi {name}" headline, then the "Your purchase" / "Your sale"
+  in-app). Bold "Hi {name}" headline, then the "Your transaction"
   kicker plus the escrow status tag, then the address lines. Centered below:
   "N of N steps" above the progress ring (amber-gold #E3B95C on the light
   track), then the days line — "days left: N" (the number is ink normally,
@@ -175,7 +175,7 @@ central user; the buyers and sellers they represent are the other parties.
   `TOPCARD_TOKENS` table in `src/lib/topCard.ts`), flipping at a 355pt
   breakpoint, so small phones scale the banner, photo, type, spacing, and
   ring down while large screens keep the full-size layout.
-  - **Escrow status tag** — next to the "Your purchase" / "Your sale" kicker,
+  - **Escrow status tag** — next to the "Your transaction" kicker,
     a small tag reads **"In progress"** or **"Completed"** (mirrors the
     `get_client_view` escrow status, migration 0015; "Completed" once the
     checklist is 100% done or the escrow is closed). "Completed" fills amber;
@@ -239,12 +239,22 @@ central user; the buyers and sellers they represent are the other parties.
   close**, **Client rating** (the average of that realtor's client reviews,
   shown only when reviews exist).
 - **In-app realtor profile** (`/realtor-profile`, approved v3, Sept 2026) —
-  opened by tapping the realtor's photo on the redeem celebration, as an
-  in-app push (never a browser tab). A 150px teal-gradient banner strip on
-  top with the back chevron overlaid (no title text; the chevron returns
-  straight to the celebration), the big 140px profile photo overlapping
-  below the banner, then the shared profile content pared down: name,
-  branded subline, About, **Years in** only, and Areas I serve — no "What
+  opened by tapping the realtor's photo on the redeem celebration AND on the
+  client-home banner photo, always as an
+  in-app push (never the public `/realtor/<id>` page; Sept 2026 fix — the
+  client-home taps were misrouted to the public page). A 150px banner strip on
+  top with the
+  back chevron overlaid (no title text; the chevron returns to the previous
+  screen, and when there is no in-app history — e.g. a web deep link — it
+  falls back to an explicit replace to this device's client home screen).
+  The strip shows the realtor's synced
+  banner (cover-cropped, synced Storage `banner.jpg` first, device-local
+  file offline; the teal gradient renders only when no banner is uploaded).
+  The big 140px profile photo overlapping
+  below the banner (clipped inside its circular frame), then the shared
+  profile content pared down: name,
+  branded subline, About, **Years of experience** (section title + chip,
+  same styling as Areas I serve — no white card), and Areas I serve — no "What
   clients say" reviews section. **Call** and **Text** buttons below (dialer /
   SMS). The profile body is the shared `RealtorProfileView`
   (`src/components/RealtorProfileView.tsx`) in its `inApp` variant, the same
