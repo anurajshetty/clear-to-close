@@ -81,12 +81,17 @@ function mockCloud(be: Backend) {
           },
         }),
       }),
-      upsert: async (rows: Record<string, unknown>[]) => {
-        if (!be.netUp) return { error: new Error('offline') };
-        for (const r of rows) {
-          if (typeof r.photo_url === 'string') be.photoUrl = r.photo_url;
+      upsert: (rows: Record<string, unknown>[]) => {
+        let result: { data?: unknown; error?: unknown };
+        if (!be.netUp) {
+          result = { error: new Error('offline') };
+        } else {
+          for (const r of rows) {
+            if (typeof r.photo_url === 'string') be.photoUrl = r.photo_url;
+          }
+          result = { data: rows.map((r) => ({ id: r.id })), error: null };
         }
-        return { error: null };
+        return { select: () => Promise.resolve(result) };
       },
     }),
     rpc: async (name: string) => {

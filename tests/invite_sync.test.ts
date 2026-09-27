@@ -53,18 +53,23 @@ function fakeCloud() {
         }
         return { error: null };
       },
-      upsert: async (row: Record<string, unknown>, _opts?: unknown) => {
+      upsert: (row: Record<string, unknown>, _opts?: unknown) => {
         calls.push(`upsert ${table} ${row.code ?? ''}`);
+        let result: { data?: unknown; error?: unknown };
         if (table === 'invites') {
           if ([...invites.values()].some((r) => r.code === row.code && r.id !== row.id)) {
-            return { error: { code: '23505', message: 'duplicate key value violates unique constraint "invites_code_key"' } };
+            result = { error: { code: '23505', message: 'duplicate key value violates unique constraint "invites_code_key"' } };
+          } else {
+            invites.set(row.id as string, { ...row });
+            result = { data: [{ id: row.id }], error: null };
           }
-          invites.set(row.id as string, { ...row });
-        }
-        if (table === 'escrows') {
+        } else if (table === 'escrows') {
           escrows.set(row.id as string, { ...row });
+          result = { data: [{ id: row.id }], error: null };
+        } else {
+          result = { data: [{ id: row.id }], error: null };
         }
-        return { error: null };
+        return { select: () => Promise.resolve(result) };
       },
       update: async (_patch: unknown) => ({ error: null }),
       select: (_cols?: string) => {

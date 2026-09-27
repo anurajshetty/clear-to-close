@@ -790,9 +790,50 @@ export async function pingCloud(client: Cloud): Promise<PingResult> {
 
 // --------------------------------------------------------------------- push --
 
+/**
+ * Thrown when a push upsert reports success but affected zero rows.
+ *
+ * Under the RLS owner-policies (migrations 0001/0015: `auth.uid() = user_id`,
+ * child rows via the parent escrow) a write that targets a row owned by a
+ * DIFFERENT user than the session's auth.uid() does NOT error — PostgREST
+ * returns success with zero affected rows. Treating that as "synced" drops
+ * the user's edits on the floor: the server keeps the old data, the next
+ * boot's cloud pull clobbers the local edits (the outbox dirty-guard only
+ * protects queued ops), and every client keeps rendering stale data after
+ * refresh — with no error anywhere. That is exactly the "nothing the
+ * realtor updates reaches the client" failure (Sept 2026).
+ *
+ * A zero-affected upsert-by-id can only mean the row exists but belongs to
+ * someone else: the insert path would have succeeded otherwise (its WITH
+ * CHECK stamps this session's own uid). The op is therefore kept queued for
+ * retry instead of being dropped as converged — it self-heals the next time
+ * the owning identity drains the outbox.
+ */
+export class SyncNotAppliedError extends Error {
+  readonly table: string;
+  readonly expected: number;
+  readonly affected: number;
+  constructor(table: string, expected: number, affected: number) {
+    super(
+      `cloudSync: upsert into ${table} affected ${affected} of ${expected} rows. ` +
+        `The write silently did nothing (the target row belongs to a different user than this session). ` +
+        `No data was changed on the server; the push stays queued for retry.`,
+    );
+    this.name = 'SyncNotAppliedError';
+    this.table = table;
+    this.expected = expected;
+    this.affected = affected;
+  }
+}
+
 async function upsertAll(client: Cloud, table: string, rows: Record<string, unknown>[], onConflict: string): Promise<void> {
-  const { error } = await client.from(table).upsert(rows, { onConflict });
+  // .select(onConflict) asks PostgREST for the affected rows (RETURNING):
+  // without it a write rejected by an RLS owner-policy looks identical to
+  // a successful write (no error, zero rows). See SyncNotAppliedError.
+  const { data, error } = await client.from(table).upsert(rows, { onConflict }).select(onConflict);
   if (error) throw error;
+  const affected = Array.isArray(data) ? data.length : 0;
+  if (affected < rows.length) throw new SyncNotAppliedError(table, rows.length, affected);
 }
 
 /** Push one escrow and ALL of its steps (both roles) — idempotent. */
@@ -1012,10 +1053,17 @@ export async function pushInviteNow(
 ): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < MAX_CODE_REGEN_ATTEMPTS; attempt++) {
-    const { error } = await client
+    const { data, error } = await client
       .from('invites')
-      .upsert(toInviteRow(invite), { onConflict: 'id' });
-    if (!error) return;
+      .upsert(toInviteRow(invite), { onConflict: 'id' })
+      .select('id');
+    if (!error) {
+      // Same RLS silent-no-op guard as upsertAll: a code-regenerated retry
+      // that "succeeds" with zero affected rows must not read as synced.
+      const affected = Array.isArray(data) ? data.length : 0;
+      if (affected < 1) throw new SyncNotAppliedError('invites', 1, affected);
+      return;
+    }
     if (!isUniqueViolation(error)) throw error;
     lastError = error;
     invite.code = genCode();
@@ -1232,9 +1280,19 @@ export async function drainOutbox(
         await pushLinkRevokeNow(client, op.linkId, op.revokedAt);
       }
       drained++;
-    } catch {
-      op.attempts++;
-      if (op.attempts < MAX_PUSH_ATTEMPTS) remaining.push(op);
+    } catch (e) {
+      if (e instanceof SyncNotAppliedError) {
+        // Ownership mismatch (the target row belongs to a different user
+        // than this session): retrying under THIS identity can never
+        // succeed, but dropping the op would lose the user's edits — the
+        // boot pull would then clobber them with the stale server copy.
+        // Keep it queued without counting toward the drop: it converges on
+        // the next drain under the owning identity.
+        remaining.push(op);
+      } else {
+        op.attempts++;
+        if (op.attempts < MAX_PUSH_ATTEMPTS) remaining.push(op);
+      }
     }
   }
   await writeOutbox(kv, remaining);

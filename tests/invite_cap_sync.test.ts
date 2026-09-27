@@ -65,16 +65,19 @@ function mockClient(state: MockState): unknown {
           return thenable({ data: [], error: null });
         },
       }),
-      upsert: async (_row: unknown, _opts?: unknown) => {
+      upsert: (_row: unknown, _opts?: unknown) => {
+        let result: { data?: unknown; error?: unknown };
         if (table === 'invites' && state.capErrorOnPush) {
           // The invites_cap trigger's cap rejection (migration 0012).
-          return {
+          result = {
             error: {
               message: 'two clients per side max — revoke one to invite someone new',
             },
           };
+        } else {
+          result = { data: [{ id: 'x' }], error: null };
         }
-        return { error: null };
+        return { select: () => Promise.resolve(result) };
       },
     }),
     rpc: async () => ({ data: null, error: null }),

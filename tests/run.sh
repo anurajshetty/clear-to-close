@@ -86,6 +86,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/photo_cropper.test.ts" \
   "$ROOT/tests/profile_form_fields.test.ts" \
   "$ROOT/tests/photo_stale_client_chain.test.ts" \
+  "$ROOT/tests/sync_chain_broad.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -146,6 +147,7 @@ node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
 node "$OUT/tests/photo_stale_client_chain.test.js"
+node "$OUT/tests/sync_chain_broad.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

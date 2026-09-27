@@ -21,6 +21,7 @@ import {
   pingCloud,
   pushEscrowNow,
   pushInviteNow,
+  SyncNotAppliedError,
   redeemViaCloud,
   regenerateInviteNow,
   toEscrowRow,
@@ -143,12 +144,18 @@ async function main(): Promise<void> {
   const fallbackClient = {
     from: (table: string) => ({
       upsert: (rows: Record<string, unknown>[]) => {
+        // Eagerly compute the upsert result; .select() returns it like the
+        // real PostgREST RETURNING shape (affected rows for the
+        // SyncNotAppliedError guard in upsertAll).
+        let result: { data: unknown; error: unknown };
         if (table === 'escrows') {
           upserted.push(rows[0]);
-          if (!('buyer_closed_at' in rows[0])) return Promise.resolve({ data: null, error: null });
-          return Promise.resolve({ data: null, error: { code: '42703', message: 'column buyer_closed_at does not exist' } });
+          if (!('buyer_closed_at' in rows[0])) result = { data: [{ id: rows[0].id }], error: null };
+          else result = { data: null, error: { code: '42703', message: 'column buyer_closed_at does not exist' } };
+        } else {
+          result = { data: rows.map((r) => ({ id: r.id })), error: null };
         }
-        return Promise.resolve({ data: null, error: null });
+        return { select: () => Promise.resolve(result) };
       },
     }),
   };
@@ -261,14 +268,14 @@ async function main(): Promise<void> {
     id: 'i1', code: 'AAAAAA', escrowId: e.id, role: 'buyer' as const, partyName: 'Test Buyer',
     createdAt: '2026-09-25T09:00:00Z', revokedAt: null, redeemedAt: null,
   };
-  const c1 = makeClient({ 'from:invites': [{ error: { code: '23505', message: 'duplicate' } }, { data: null }] });
+  const c1 = makeClient({ 'from:invites': [{ error: { code: '23505', message: 'duplicate' } }, { data: [{ id: 'i1' }] }] });
   let genCount = 0;
   await pushInviteNow(c1, inv, () => `CODE${++genCount}`);
   assert(inv.code === 'CODE1', 'code regenerated after 23505 collision');
   assert(c1.calls.filter((k) => k === 'from:invites').length === 2, 'insert retried once after collision');
 
   const inv2 = { ...inv, id: 'i2', code: 'BBBBBB' };
-  const c2 = makeClient({ 'from:invites': [{ data: null }] });
+  const c2 = makeClient({ 'from:invites': [{ data: [{ id: 'i2' }] }] });
   await pushInviteNow(c2, inv2);
   assert(inv2.code === 'BBBBBB', 'no collision -> code untouched');
 
@@ -299,7 +306,7 @@ async function main(): Promise<void> {
   assert(isUniqueViolation({ code: '23505' }) && !isUniqueViolation({ code: '42501' }), 'unique-violation detection');
 
   // --- pushEscrowNow --------------------------------------------------------
-  const c5 = makeClient({ 'from:escrows': [{ data: null }], 'from:steps': [{ data: null }] });
+  const c5 = makeClient({ 'from:escrows': [{ data: [{ id: e.id }] }], 'from:steps': [{ data: [{ id: 's1' }, { id: 's2' }] }] });
   await pushEscrowNow(c5, UID, e);
   assert(c5.calls.includes('from:escrows') && c5.calls.includes('from:steps'), 'pushes escrow row + step rows');
 
@@ -376,11 +383,31 @@ async function main(): Promise<void> {
   assert(d1.drained === 0 && d1.pending === 1, 'failed push stays queued');
 
   const succeeding = makeClient({
-    'from:escrows': [{ data: null }],
-    'from:steps': [{ data: null }],
+    'from:escrows': [{ data: [{ id: e.id }] }],
+    'from:steps': [{ data: [{ id: 's1' }, { id: 's2' }] }],
   });
   const d2 = await drainOutbox(succeeding, UID, kv, load);
   assert(d2.drained === 1 && d2.pending === 0, 'retry drains the outbox');
+
+  // Silent RLS no-op (Sept 2026): a push that "succeeds" with zero affected
+  // rows throws SyncNotAppliedError instead of reading as converged, and the
+  // drain keeps the op queued WITHOUT burning attempts — it converges on
+  // the next drain under the owning identity.
+  await enqueueOutbox(kv, { op: 'pushEscrow', escrowId: e.id, attempts: 0 });
+  const silentNoop = makeClient({
+    'from:escrows': [{ data: [], error: null }, { data: [], error: null }],
+  });
+  let noopThrew: unknown = null;
+  try {
+    await pushEscrowNow(silentNoop, UID, e);
+  } catch (err) {
+    noopThrew = err;
+  }
+  assert(noopThrew instanceof SyncNotAppliedError, 'zero-row upsert throws SyncNotAppliedError');
+  const d3 = await drainOutbox(silentNoop, UID, kv, load);
+  assert(d3.drained === 0 && d3.pending === 1, 'ownership-mismatched push stays queued');
+  const opsAfter = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { attempts: number }[];
+  assert(opsAfter.length === 1 && opsAfter[0].attempts === 0, 'mismatch op keeps its attempts (never dropped)');
 
   delete process.env.EXPO_PUBLIC_SUPABASE_URL;
   delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;

@@ -92,7 +92,7 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
           fx.failEscrows
             ? Promise.resolve({ data: null, error: { message: 'boom' } })
             : Promise.resolve({ data: visibleEscrows, error: null }),
-        upsert: (_rows: unknown, _opts: unknown) => Promise.resolve({ data: null, error: null }),
+        upsert: (_rows: unknown, _opts: unknown) => ({ select: (_c: string) => Promise.resolve({ data: [{}], error: null }) }),
       };
     }
     if (name === 'steps') {
@@ -106,7 +106,7 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
                   error: null,
                 }),
         }),
-        upsert: (_rows: unknown, _opts: unknown) => Promise.resolve({ data: null, error: null }),
+        upsert: (_rows: unknown, _opts: unknown) => ({ select: (_c: string) => Promise.resolve({ data: [{}], error: null }) }),
       };
     }
     if (name === 'realtor_profiles') {
@@ -116,13 +116,13 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
         select: (_cols: string) => chain,
         eq: (_col: string, _val: unknown) => chain,
         limit: async (_n: number) => ({ data: [{ user_id: sessionUid }], error: null }),
-        upsert: async (_row: unknown, _opts: unknown) => ({ data: null, error: null }),
+        upsert: (_row: unknown, _opts: unknown) => ({ select: (_c: string) => Promise.resolve({ data: [{}], error: null }) }),
       };
       return chain;
     }
     return {
       select: () => Promise.resolve({ data: [], error: null }),
-      upsert: () => Promise.resolve({ data: null, error: null }),
+      upsert: () => ({ select: () => Promise.resolve({ data: [{}], error: null }) }),
     };
   };
   return {

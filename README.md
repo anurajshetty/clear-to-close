@@ -318,7 +318,12 @@ the `buyer_closed_at` / `seller_closed_at` columns on `escrows` (migration
 `supabase/migrations/0007_per_side_close_dates.sql` — **apply it on the
 Supabase dashboard SQL editor**; until it is applied, escrow pushes fall back
 to the pre-migration column set instead of failing, and close dates stay
-local-only).
+local-only). Every push verifies its write landed: a push that the database
+silently rejects (zero rows written, no error — e.g. the rows belong to a
+different account than the current session) stays queued for retry instead of
+being dropped as synced, and converges the next time the owning account
+syncs. Failed pushes are never silently discarded, so a realtor edit can no
+longer vanish without the client ever seeing it.
 
 **Sheets on small screens** — every modal sheet wraps its content in a
 height-bounded scroll region (the grabber stays outside it), so lower fields
