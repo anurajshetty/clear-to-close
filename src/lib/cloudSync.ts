@@ -387,6 +387,23 @@ export function toInviteRow(invite: Invite): Record<string, unknown> {
   };
 }
 
+/** Convert a Supabase invites row to the local Invite shape. */
+export function fromInviteRow(row: Record<string, unknown>): Invite {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const nullStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+  const role = str(row.role);
+  return {
+    id: str(row.id),
+    escrowId: str(row.escrow_id),
+    role: role === 'seller' ? 'seller' : role === 'tc' ? 'tc' : 'buyer',
+    partyName: str(row.party_name),
+    code: str(row.code),
+    createdAt: str(row.created_at),
+    revokedAt: nullStr(row.revoked_at),
+    redeemedAt: nullStr(row.redeemed_at),
+  };
+}
+
 export function randomCode(): string {
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) {
@@ -577,6 +594,9 @@ export async function resolveInviteRealtor(
     }
     const r = d.realtor as Record<string, unknown>;
     const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+    // Role comes from migration 0013; older DBs omit it — default to 'buyer'
+    // (client label) so the form still renders before Anuraj runs the migration.
+    const role = d.role === 'tc' ? 'tc' : d.role === 'seller' ? 'seller' : 'buyer';
     return {
       ok: true,
       realtor: {
@@ -585,6 +605,7 @@ export async function resolveInviteRealtor(
         realtyGroup: str(r.realty_group),
         dreLicense: str(r.dre_license),
         realtorId: str(r.realtor_id),
+        role,
       },
     };
   } catch {
@@ -816,9 +837,17 @@ export async function pushProfileNow(client: Cloud, userId: string, profile: Rea
 }
 
 /**
- * Insert an invite. On a code collision (DB unique constraint 23505) the code
- * is regenerated and the insert retried — the invite's code is updated in
- * place so the caller can persist the final value.
+ * Upsert an invite on its primary key. On a code collision (DB unique
+ * constraint 23505 on the code column) the code is regenerated and the
+ * upsert retried — the invite's code is updated in place so the caller can
+ * persist the final value.
+ *
+ * The upsert (not insert) matters: the boot reconcile and the outbox drain
+ * re-push every local invite, including ones already synced. With a plain
+ * insert the primary-key conflict was misread as a code collision, burning
+ * all regeneration attempts and throwing, even though the row was already
+ * there. Upserting on id makes a re-push idempotent; a 23505 from the
+ * upsert can only be the code colliding with a different invite's row.
  */
 export async function pushInviteNow(
   client: Cloud,
@@ -827,7 +856,9 @@ export async function pushInviteNow(
 ): Promise<void> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < MAX_CODE_REGEN_ATTEMPTS; attempt++) {
-    const { error } = await client.from('invites').insert(toInviteRow(invite));
+    const { error } = await client
+      .from('invites')
+      .upsert(toInviteRow(invite), { onConflict: 'id' });
     if (!error) return;
     if (!isUniqueViolation(error)) throw error;
     lastError = error;
@@ -852,6 +883,20 @@ export async function pullInvitesNow(
     .eq('escrow_id', escrowId);
   if (error) throw error;
   return (data ?? []) as { id: string; revoked_at: string | null; redeemed_at: string | null }[];
+}
+
+/**
+ * Best-effort pull of FULL invite rows for one escrow. Used on login/boot
+ * to hydrate server-side invites that were created on another device (or
+ * whose local copy was lost) into the local store.
+ */
+export async function pullFullInvitesNow(client: Cloud, escrowId: string): Promise<Invite[]> {
+  const { data, error } = await client
+    .from('invites')
+    .select('id,code,escrow_id,role,party_name,created_at,revoked_at,redeemed_at')
+    .eq('escrow_id', escrowId);
+  if (error) throw error;
+  return ((data ?? []) as Record<string, unknown>[]).map(fromInviteRow);
 }
 
 // ------------------------------------------------------------------ redeem --

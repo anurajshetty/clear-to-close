@@ -56,6 +56,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/realtygroup.test.ts" \
   "$ROOT/tests/reviews.test.ts" \
   "$ROOT/tests/invite_resolve.test.ts" \
+  "$ROOT/tests/invite_sync.test.ts" \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
@@ -92,6 +93,7 @@ node "$OUT/tests/profilepull.test.js"
 node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"
 node "$OUT/tests/invite_resolve.test.js"
+node "$OUT/tests/invite_sync.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"
 

@@ -160,6 +160,8 @@ export interface InviteRealtor {
   realtyGroup: string;
   dreLicense: string;
   realtorId: string;
+  /** The invite's role: 'tc' for transaction coordinator, otherwise client. */
+  role: ClientRole;
 }
 
 export type ResolveInviteError = 'invalid' | 'already_used' | 'revoked' | 'unknown' | 'network';

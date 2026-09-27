@@ -36,6 +36,7 @@ import {
   fetchCloudView,
   pingCloud,
   pullEscrowsNow,
+  pullFullInvitesNow,
   pullInvitesNow,
   pullProfileNow,
   pushEscrowNow,
@@ -110,6 +111,10 @@ export function createSyncedStore(
   /** Fire-and-forget cloud push; failures (or a not-yet-healthy cloud) go
    *  to the outbox for retry, so the system self-heals when connectivity or
    *  the project configuration is fixed later. */
+  // Throttle for background re-inits kicked off when ops are queued while
+  // the cloud isn't healthy: at most one re-init per minute, so a burst of
+  // offline mutations doesn't hammer the ping endpoint.
+  let lastBgReinit = 0;
   function bgPush(
     run: (c: NonNullable<ReturnType<typeof cloudClient>>, uid: string) => Promise<void>,
     op: { op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke'; escrowId?: string; inviteId?: string } | null,
@@ -128,9 +133,17 @@ export function createSyncedStore(
       })();
       return;
     }
-    // Ping pending or failed: queue the op; the init drain (or a later
-    // successful ping) retries it.
+    // Ping pending or failed: queue the op, then kick off a background
+    // re-init (throttled) so the outbox drains as soon as the cloud is
+    // reachable again — without waiting for the next app reload. This
+    // covers the "boot ping failed transiently, user stays in the app and
+    // creates an invite" case.
     if (op) void enqueueOutbox(kv, { ...op, attempts: 0 });
+    const now = Date.now();
+    if (now - lastBgReinit > 60_000) {
+      lastBgReinit = now;
+      void initCloudSync().catch(() => {});
+    }
   }
 
   async function cloudLinks(): Promise<Record<string, CloudLinkRef>> {
@@ -175,6 +188,21 @@ export function createSyncedStore(
       // background push-reconcile, so the push converges on merged state.
       try {
         await pullEscrowsFromCloud();
+      } catch {
+        // Pull failure keeps the local list as-is.
+      }
+      // Invite hydration: invites created on another device (or whose local
+      // copy was lost) live on the server but never appear locally, because
+      // listInvites only merges states for invites already present. Pull
+      // the full rows and insert the missing ones, so the client list
+      // survives a logout/login round-trip.
+      try {
+        if (c) {
+          for (const escrow of await local.listEscrows()) {
+            const rows = await pullFullInvitesNow(c, escrow.id);
+            if (rows.length) await local.mergeInvites(rows);
+          }
+        }
       } catch {
         // Pull failure keeps the local list as-is.
       }
@@ -394,7 +422,9 @@ export function createSyncedStore(
 
     updateInviteCode: (inviteId: string, code: string) => local.updateInviteCode(inviteId, code),
     getInvite: (inviteId: string) => local.getInvite(inviteId),
+    getInviteByCode: (code: string) => local.getInviteByCode(code),
     mergeInviteStates: (rows) => local.mergeInviteStates(rows),
+    mergeInvites: (invites) => local.mergeInvites(invites),
 
     listInvites: async (escrowId: string): Promise<Invite[]> => {
       if (cloudOk()) {
@@ -431,7 +461,35 @@ export function createSyncedStore(
             if (res.ok && res.linkId) {
               await saveCloudLink(res.escrowId, { linkId: res.linkId, role: res.role });
             }
-            return res;
+            if (res.ok || res.error !== 'invalid') return res;
+            // Server doesn't know the code, but we might hold a local-only
+            // invite whose push failed. Push it and retry the redeem once.
+            const localInvite = await local.getInviteByCode(code);
+            if (localInvite && !localInvite.revokedAt && !localInvite.redeemedAt) {
+              try {
+                const uid = await lazyUser();
+                if (uid) {
+                  const before = localInvite.code;
+                  await pushInviteNow(c, localInvite);
+                  if (localInvite.code !== before) {
+                    await local.updateInviteCode(localInvite.id, localInvite.code);
+                  }
+                  const retry = await redeemViaCloud(
+                    c,
+                    localInvite.code,
+                    name,
+                    deviceId ?? null,
+                  );
+                  if (retry.ok && retry.linkId) {
+                    await saveCloudLink(retry.escrowId, { linkId: retry.linkId, role: retry.role });
+                  }
+                  if (retry.ok || retry.error !== 'invalid') return retry;
+                }
+              } catch {
+                // Push failed; fall through to the local redeem below.
+              }
+            }
+            return local.redeemInvite(code, name, deviceId);
           } catch {
             return { ok: false, error: 'network' };
           }
@@ -455,7 +513,29 @@ export function createSyncedStore(
             // Timeout or RPC failure: report a retryable network error, never
             // a code verdict — the code may be perfectly good.
             if (!res) return { ok: false, error: 'network' };
-            return res;
+            if (res.ok || res.error !== 'invalid') return res;
+            // The server doesn't know this code, but we might hold a
+            // local-only invite whose push failed or hasn't run yet. Push it
+            // now and retry once, so a freshly created code never reads as
+            // invalid on the creating device.
+            const localInvite = await local.getInviteByCode(code);
+            if (localInvite && !localInvite.revokedAt && !localInvite.redeemedAt) {
+              try {
+                const uid = await lazyUser();
+                if (uid) {
+                  const before = localInvite.code;
+                  await pushInviteNow(c, localInvite);
+                  if (localInvite.code !== before) {
+                    await local.updateInviteCode(localInvite.id, localInvite.code);
+                  }
+                  const retry = await resolveInviteRealtorViaCloud(c, localInvite.code);
+                  if (retry.ok) return retry;
+                }
+              } catch {
+                // Push failed; fall through to the local resolve below.
+              }
+            }
+            return local.resolveInviteRealtor(code);
           } catch {
             return { ok: false, error: 'network' };
           }

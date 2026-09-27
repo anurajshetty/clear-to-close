@@ -77,12 +77,13 @@ export function InviteSheet({
   };
 
   // Branded invite deep link (Sept 2026): the shareable URL carries the code
-  // and opens the branded welcome (realtor identity) before name entry.
-  // Exact format: https://anurajshetty.github.io/clear-to-close/invite/<CODE>
+  // and the URL-encoded party name (?name=) so the redeem form pre-fills
+  // both. The server validates the name authoritatively at redeem time.
+  // Exact format: https://anurajshetty.github.io/clear-to-close/invite/<CODE>?name=<PARTY>
   const copyLink = async () => {
     try {
       await Clipboard.setStringAsync(
-        `https://anurajshetty.github.io/clear-to-close/invite/${code}`,
+        `https://anurajshetty.github.io/clear-to-close/invite/${code}?name=${encodeURIComponent(name.trim())}`,
       );
     } catch (err) {
       console.warn('clipboard failed', err);

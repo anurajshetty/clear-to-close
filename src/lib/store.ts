@@ -90,8 +90,17 @@ export interface Store {
   /** Replace an invite's code (cloud collision regeneration). */
   updateInviteCode(inviteId: string, code: string): Promise<Invite>;
   getInvite(inviteId: string): Promise<Invite | null>;
+  /** Find an invite by its 6-char code (case/space-insensitive). */
+  getInviteByCode(code: string): Promise<Invite | null>;
   /** Merge server-side invite states (redeemed/revoked) into local copies. */
   mergeInviteStates(rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[]): Promise<void>;
+  /**
+   * Hydrate server-side invites into the local store. Invites missing
+   * locally are inserted; for existing ones the server's revoked/redeemed
+   * timestamps win (server is the authority). Used on login/boot to pick
+   * up invites created on another device.
+   */
+  mergeInvites(invites: Invite[]): Promise<void>;
   listInvites(escrowId: string): Promise<Invite[]>;
   redeemInvite(code: string, name: string, deviceId?: string): Promise<RedeemResult>;
   /**
@@ -659,6 +668,12 @@ export function createStore(kv: KV): Store {
       return data.invites.find((i) => i.id === inviteId) ?? null;
     },
 
+    async getInviteByCode(code: string): Promise<Invite | null> {
+      await ensureLoaded();
+      const normalized = code.trim().toUpperCase();
+      return data.invites.find((i) => i.code === normalized) ?? null;
+    },
+
     async mergeInviteStates(
       rows: { id: string; revoked_at: string | null; redeemed_at: string | null }[],
     ): Promise<void> {
@@ -675,6 +690,30 @@ export function createStore(kv: KV): Store {
         if (row.redeemed_at && !inv.redeemedAt) {
           inv.redeemedAt = row.redeemed_at;
           changed = true;
+        }
+      }
+      if (changed) await persist();
+    },
+
+    async mergeInvites(invites: Invite[]): Promise<void> {
+      await ensureLoaded();
+      let changed = false;
+      for (const inv of invites) {
+        const existing = data.invites.find((i) => i.id === inv.id);
+        if (!existing) {
+          // Server-only invite (created on another device): insert it.
+          data.invites.push({ ...inv });
+          changed = true;
+        } else {
+          // Server is the authority on redeemed/revoked timestamps.
+          if (inv.revokedAt && !existing.revokedAt) {
+            existing.revokedAt = inv.revokedAt;
+            changed = true;
+          }
+          if (inv.redeemedAt && !existing.redeemedAt) {
+            existing.redeemedAt = inv.redeemedAt;
+            changed = true;
+          }
         }
       }
       if (changed) await persist();
@@ -735,6 +774,7 @@ export function createStore(kv: KV): Store {
           realtyGroup: p.realty_group,
           dreLicense: p.dreLicense,
           realtorId: '',
+          role: inv.role,
         },
       };
     },

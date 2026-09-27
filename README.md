@@ -101,10 +101,12 @@ central user; the buyers and sellers they represent are the other parties.
   longer works" state. **Revoke** kills the invite *and* its linked client
   access; the revoked row disappears from the list. **Copy invite link**
   copies a branded deep link
-  (`https://anurajshetty.github.io/clear-to-close/invite/<CODE>`): opening
-  it shows the realtor's branded welcome (name, photo, realty group, DRE)
-  before name entry, so the client knows who invited them. One
-  **transaction coordinator** per escrow (cap of 1, independent of the
+  (`https://anurajshetty.github.io/clear-to-close/invite/<CODE>?name=<PARTY>`):
+  opening it shows the single redeem form with the realtor's branded welcome
+  (name, photo, realty group, DRE), the invite code and party name pre-filled
+  (both editable), and one "Join your escrow" button. The role label reads
+  "Transaction Coordinator" for TC invites and "client" for buyer/seller.
+  One **transaction coordinator** per escrow (cap of 1, independent of the
   buyer/seller caps): the checklist footer gains **Invite transaction
   coordinator** / **View transaction coordinator**, managed through the same
   invite sheet and client list with the same code/regenerate/revoke
@@ -124,10 +126,11 @@ central user; the buyers and sellers they represent are the other parties.
 
 **For buyers / sellers (clients)**
 
-- No account — redeem with your **invite code first**: the code validates,
-  then a branded welcome shows your realtor's name, photo, realty group,
-  and DRE before you enter the name on the invite. A branded invite link
-  opens the same welcome directly. The confirmation screen is a
+- No account — one redeem form with **Your name** and **Invite code** fields
+  and a single **Join your escrow** button. A branded invite link
+  (`/invite/<CODE>?name=<PARTY>`) pre-fills both fields (editable) and shows
+  the realtor's branded welcome (name, photo, realty group, DRE) on the same
+  form. The confirmation screen is a
   brand-teal **celebration card**: gold "WELCOME ABOARD" kicker, "Your escrow
   is open!" headline, the realtor's photo (initials avatar when none),
   "<realtor name> has got this.", reassuring body copy, and the

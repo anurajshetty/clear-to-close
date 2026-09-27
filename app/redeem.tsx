@@ -1,12 +1,16 @@
-// Clear to Close — client redeem (approved onboarding/auth ⑲).
+// Clear to Close — client redeem (single form, Sept 2026).
 //
-// Stepped flow (Sept 2026): the invite code validates FIRST, then the client
-// sees the identical branded welcome as the invite deep link (/invite/<code>)
-// BEFORE name entry. A successful redeem binds this device's id to the
-// client link; reopening goes straight to the escrow. Every failure gets its
-// specific error + next step, never a dead end.
+// One screen: "Your name" + "Invite code" fields, one "Join your escrow"
+// button. A branded invite link (/invite/<code>?name=<party>) pre-fills both
+// fields (editable) and shows the realtor branding (photo, name, realty
+// group, DRE, welcome) on the same form. The server validates the name
+// authoritatively; the URL name is convenience only.
+//
+// Role label: TC invites show "Transaction Coordinator", buyer/seller show
+// "client" (never distinguishes buyer from seller).
 import React, { useEffect, useState } from 'react';
 import {
+  Image,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -17,9 +21,9 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
-import type { ClientRole, InviteRealtor, RedeemResult, ResolveInviteError } from '../src/lib/types';
-import { InviteWelcome } from '../src/components/InviteWelcome';
-import { BackChevron, Field, Kicker, PrimaryButton, TextLink } from '../src/components/ui';
+import type { ClientRole, InviteRealtor, RedeemResult } from '../src/lib/types';
+import { realtorSubline } from '../src/lib/profile';
+import { Field, Kicker, PrimaryButton, initialsOf } from '../src/components/ui';
 import { RedeemCelebration } from '../src/components/RedeemCelebration';
 import { colors } from '../src/theme';
 
@@ -35,54 +39,68 @@ const ERROR_COPY: Record<RedeemError, string> = {
     'This device is already linked to another escrow. Ask your realtor to release it, then try again.',
 };
 
-const RESOLVE_COPY: Record<ResolveInviteError, string> = {
-  invalid: ERROR_COPY.invalid,
-  already_used: ERROR_COPY.already_used,
-  revoked: ERROR_COPY.revoked,
-  unknown: 'Something went wrong on our end. Check your connection and try again.',
-  network: 'Something went wrong on our end. Check your connection and try again.',
-};
+/** "Transaction Coordinator" for TC, "client" for buyer/seller. */
+function roleLabel(role: ClientRole): string {
+  return role === 'tc' ? 'Transaction Coordinator' : 'client';
+}
 
-type Step = 'code' | 'welcome' | 'name';
+function Branding({ realtor }: { realtor: InviteRealtor }) {
+  const [photoBroken, setPhotoBroken] = useState(false);
+  const subline = realtorSubline({
+    realty_group: realtor.realtyGroup,
+    dreLicense: realtor.dreLicense,
+  });
+  const showPhoto = realtor.photoUrl && !photoBroken;
+  return (
+    <View style={styles.hero}>
+      {showPhoto ? (
+        <Image
+          source={{ uri: realtor.photoUrl as string }}
+          style={styles.photo}
+          onError={() => setPhotoBroken(true)}
+          accessibilityLabel={`${realtor.name}'s photo`}
+        />
+      ) : (
+        <View style={[styles.photo, styles.photoFallback]}>
+          <Text style={styles.photoInitials}>{initialsOf(realtor.name)}</Text>
+        </View>
+      )}
+      <Text style={styles.name}>{realtor.name}</Text>
+      {subline ? <Text style={styles.subline}>{subline}</Text> : null}
+      <Text style={styles.roleLabel}>
+        Invited as {roleLabel(realtor.role)}
+      </Text>
+      <Text style={styles.welcome}>
+        You are invited to follow your escrow in Clear to Close. Enter your
+        name and invite code below to join.
+      </Text>
+    </View>
+  );
+}
 
 export default function Redeem() {
   const router = useRouter();
-  // The dead-link recovery flow (㉓) re-opens redeem with the name pre-filled.
-  // The branded invite deep link (/invite/<code>) lands here with the code
-  // pre-filled and already validated — it skips straight to the welcome.
   const params = useLocalSearchParams<{ name?: string; code?: string }>();
   const prefillName = Array.isArray(params.name) ? params.name[0] : params.name;
   const prefillCode = Array.isArray(params.code) ? params.code[0] : params.code;
 
-  const [step, setStep] = useState<Step>(prefillCode ? 'welcome' : 'code');
   const [code, setCode] = useState((prefillCode ?? '').trim().toUpperCase());
   const [name, setName] = useState(prefillName ?? '');
   const [realtor, setRealtor] = useState<InviteRealtor | null>(null);
-  const [resolveError, setResolveError] = useState<ResolveInviteError | null>(null);
   const [redeemError, setRedeemError] = useState<RedeemError | null>(null);
-  const [resolving, setResolving] = useState(!!prefillCode);
-  // TC invites (role 'tc') redeem through the same stepped flow; a redeemed
-  // TC invite routes to /client/tc/<escrowId> via the role in the URL below.
   const [linked, setLinked] = useState<{ escrowId: string; role: ClientRole } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // A code arriving via ?code= still resolves the realtor (never trusted
-  // blind): the welcome screen always shows the resolved identity.
+  // A code arriving via ?code= resolves the realtor branding for the form.
+  // A resolve failure is not fatal: the form still works, and redeem
+  // validates the code authoritatively.
   useEffect(() => {
     if (!prefillCode) return;
     let active = true;
     (async () => {
-      setResolving(true);
       const res = await store.resolveInviteRealtor(prefillCode);
       if (!active) return;
-      if (res.ok) {
-        setRealtor(res.realtor);
-        setStep('welcome');
-      } else {
-        setResolveError(res.error);
-        setStep('code');
-      }
-      setResolving(false);
+      if (res.ok) setRealtor(res.realtor);
     })();
     return () => {
       active = false;
@@ -90,26 +108,7 @@ export default function Redeem() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canCheckCode = code.trim().length > 0 && !resolving;
-
-  const onCheckCode = async () => {
-    if (!canCheckCode) return;
-    setResolving(true);
-    setResolveError(null);
-    try {
-      const res = await store.resolveInviteRealtor(code);
-      if (!res.ok) {
-        setResolveError(res.error);
-        return;
-      }
-      setRealtor(res.realtor);
-      setStep('welcome');
-    } finally {
-      setResolving(false);
-    }
-  };
-
-  const canRedeem = name.trim().length > 0 && !busy;
+  const canRedeem = code.trim().length > 0 && name.trim().length > 0 && !busy;
 
   const onRedeem = async () => {
     if (!canRedeem) return;
@@ -122,8 +121,6 @@ export default function Redeem() {
         setRedeemError(res.error);
         return;
       }
-      // Bind this device: persist the client link (the access key), remember
-      // the client role, and go straight to the escrow.
       await auth.setClientLink({
         linkId: res.linkId,
         escrowId: res.escrowId,
@@ -148,9 +145,6 @@ export default function Redeem() {
     return (
       <SafeAreaView style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content}>
-          {/* A redeemed TC invite routes to /client/tc/<escrowId> through the
-              role in the URL — that screen shows both checklists on a
-              both-side escrow (Anuraj's decision). */}
           <RedeemCelebration
             escrowId={linked.escrowId}
             role={linked.role}
@@ -162,88 +156,38 @@ export default function Redeem() {
     );
   }
 
-  if (step === 'welcome' && realtor) {
-    return (
-      <InviteWelcome
-        realtor={realtor}
-        continueTitle="Continue"
-        onContinue={() => setStep('name')}
-        onStartOver={onStartOver}
-      />
-    );
-  }
-
-  if (step === 'name') {
-    return (
-      <SafeAreaView style={styles.screen}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <BackChevron label="Code" onPress={() => setStep('code')} />
-          <Kicker>Client access</Kicker>
-          <Text style={styles.h1}>Almost there</Text>
-          <Text style={styles.sub}>
-            Enter the name your realtor used for this invite. It has to match.
-          </Text>
-
-          <View style={styles.form}>
-            <Field
-              label="Your name"
-              value={name}
-              onChangeText={(t) => { setName(t); setRedeemError(null); }}
-              placeholder="e.g. Jordan Lee"
-              autoCapitalize="words"
-            />
-            {redeemError ? <Text style={styles.inlineError}>{ERROR_COPY[redeemError]}</Text> : null}
-          </View>
-
-          <View style={styles.cta}>
-            <PrimaryButton
-              title={busy ? 'Joining…' : 'Join your escrow'}
-              onPress={onRedeem}
-              disabled={!canRedeem}
-            />
-          </View>
-
-          <Pressable
-            accessibilityRole="button"
-            onPress={onStartOver}
-            style={styles.startOver}
-          >
-            <Text style={styles.startOverText}>Not your escrow? </Text>
-            <Text style={styles.link}>Start over</Text>
-          </Pressable>
-        </ScrollView>
-      </SafeAreaView>
-    );
-  }
-
-  // step === 'code'
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <BackChevron label="Role" onPress={() => router.push('/role')} />
         <Kicker>Client access</Kicker>
         <Text style={styles.h1}>Join your escrow</Text>
-        <Text style={styles.sub}>
-          Enter the invite code your realtor shared with you.
-        </Text>
+
+        {realtor ? <Branding realtor={realtor} /> : null}
 
         <View style={styles.form}>
           <Field
+            label="Your name"
+            value={name}
+            onChangeText={(t) => { setName(t); setRedeemError(null); }}
+            placeholder="e.g. Jordan Lee"
+            autoCapitalize="words"
+          />
+          <Field
             label="Invite code"
             value={code}
-            onChangeText={(t) => { setCode(t.toUpperCase()); setResolveError(null); }}
+            onChangeText={(t) => { setCode(t.toUpperCase()); setRedeemError(null); }}
             placeholder="6-character code"
             autoCapitalize="characters"
             autoCorrect={false}
           />
-          {resolveError ? <Text style={styles.inlineError}>{RESOLVE_COPY[resolveError]}</Text> : null}
+          {redeemError ? <Text style={styles.inlineError}>{ERROR_COPY[redeemError]}</Text> : null}
         </View>
 
         <View style={styles.cta}>
           <PrimaryButton
-            title={resolving ? 'Checking…' : 'Continue'}
-            onPress={onCheckCode}
-            disabled={!canCheckCode}
+            title={busy ? 'Joining…' : 'Join your escrow'}
+            onPress={onRedeem}
+            disabled={!canRedeem}
           />
         </View>
 
@@ -270,8 +214,36 @@ const styles = StyleSheet.create({
     letterSpacing: -0.28,
     marginTop: 6,
   },
-  sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
-  form: { marginTop: 8 },
+  hero: { alignItems: 'center', marginTop: 24 },
+  photo: { width: 96, height: 96, borderRadius: 48, backgroundColor: colors.accentSoft },
+  photoFallback: { alignItems: 'center', justifyContent: 'center' },
+  photoInitials: { fontSize: 34, fontWeight: '800', color: colors.accent },
+  name: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: colors.ink,
+    letterSpacing: -0.24,
+    marginTop: 14,
+    textAlign: 'center',
+  },
+  subline: { fontSize: 14, color: colors.body, marginTop: 6, textAlign: 'center' },
+  roleLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.accent,
+    marginTop: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  welcome: {
+    fontSize: 15,
+    color: colors.body,
+    lineHeight: 23,
+    textAlign: 'center',
+    marginTop: 12,
+    paddingHorizontal: 12,
+  },
+  form: { marginTop: 16 },
   inlineError: { fontSize: 13, fontWeight: '600', color: colors.red, marginTop: 8 },
   cta: { marginTop: 24 },
   startOver: {
