@@ -432,6 +432,18 @@ export function isUniqueViolation(error: unknown): boolean {
   );
 }
 
+/**
+ * The invites_cap trigger's cap rejection (Sept 2026): raised when an insert
+ * would push an escrow past its cap (2 per buyer/seller side, 1 TC). A lost
+ * cross-device creation race surfaces here — the local row must be rolled
+ * back, not retried forever.
+ */
+export function isCapViolation(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const msg = String((error as { message?: unknown }).message ?? '');
+  return /two clients per side max|one transaction coordinator per escrow max/i.test(msg);
+}
+
 type RpcRedeemOk = {
   ok: true;
   escrowId: string;

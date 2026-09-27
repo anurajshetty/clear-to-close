@@ -19,7 +19,7 @@ import { store } from '../lib/store-instance';
 import { MAX_CLIENTS_PER_SIDE, MAX_TC_PER_ESCROW } from '../lib/store';
 import type { ClientRole, Invite } from '../lib/types';
 import { InviteSheet } from './InviteSheet';
-import { Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
+import { ConfirmDialog, Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
 import { colors } from '../theme';
 
 export function ClientList({
@@ -44,7 +44,7 @@ export function ClientList({
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const label =
-    side === 'buyer' ? 'Buyer' : side === 'seller' ? 'Seller' : 'Transaction coordinator';
+    side === 'buyer' ? 'Buyer' : side === 'seller' ? 'Seller' : 'Transaction Coordinator';
   const noun =
     side === 'buyer' ? 'buyer' : side === 'seller' ? 'seller' : 'transaction coordinator';
   // Per-role cap: two per buyer/seller side, exactly one transaction
@@ -130,9 +130,9 @@ export function ClientList({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Kicker>Clients · {address}</Kicker>
+            <Kicker>{side === 'tc' ? 'TC' : 'Clients'} · {address}</Kicker>
             <Text style={styles.title}>
-              {side === 'tc' ? 'View transaction coordinator' : 'View clients'}
+              {side === 'tc' ? 'View TC' : 'View clients'}
             </Text>
 
             <Text style={styles.seclab}>
@@ -217,7 +217,7 @@ export function ClientList({
             {invites.length < cap ? (
               <View style={styles.inviteAnother}>
                 <SecondaryButton
-                  title={side === 'tc' ? 'Invite the transaction coordinator' : `Invite another ${noun}`}
+                  title={side === 'tc' ? 'Invite TC' : `Invite another ${noun}`}
                   onPress={() => setSheetOpen(true)}
                 />
               </View>
@@ -266,41 +266,26 @@ export function ClientList({
               </View>
             )}
 
-            {revokeInvite && (
-              <View style={styles.confirmBox}>
-                <Text style={styles.confirmTitle}>
-                  Remove {revokeInvite.partyName}&rsquo;s invite?
-                </Text>
-                <Text style={styles.confirmText}>
-                  {revokeInvite.redeemedAt
-                    ? 'Their invite stops working and their linked device loses access to this escrow. You can send them a fresh invite anytime.'
-                    : 'The invite and its code stop working. You can send them a fresh one anytime.'}
-                </Text>
-                <View style={styles.confirmBtns}>
-                  <View style={styles.confirmPrimary}>
-                    <Pressable
-                      onPress={doRevoke}
-                      disabled={busy}
-                      style={[styles.removeBtnFull, busy && styles.btnBusy]}
-                      accessibilityRole="button"
-                    >
-                      <Text style={styles.removeBtnFullText}>
-                        {busy ? 'Removing…' : 'Remove'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                  <Pressable
-                    onPress={() => setRevokeId(null)}
-                    hitSlop={8}
-                    style={styles.keepBtn}
-                    disabled={busy}
-                  >
-                    <Text style={styles.keepText}>Keep</Text>
-                  </Pressable>
-                </View>
-              </View>
-            )}
           </ScrollView>
+
+          {revokeInvite && (
+            <ConfirmDialog
+              visible
+              title={`Remove ${revokeInvite.partyName}\u2019s invite?`}
+              message={
+                revokeInvite.redeemedAt
+                  ? 'Their invite stops working and their linked device loses access to this escrow. You can send them a fresh invite anytime.'
+                  : 'The invite and its code stop working. You can send them a fresh one anytime.'
+              }
+              confirmTitle="Remove"
+              busyTitle="Removing…"
+              cancelTitle="Keep"
+              onConfirm={doRevoke}
+              onCancel={() => setRevokeId(null)}
+              busy={busy}
+              destructive
+            />
+          )}
 
           {toastMsg && (
             <View style={styles.toast} pointerEvents="none">
@@ -496,22 +481,6 @@ const styles = StyleSheet.create({
   },
   confirmPrimary: {
     flex: 1,
-  },
-  removeBtnFull: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
-    minHeight: 52,
-    backgroundColor: colors.red,
-    borderRadius: 14,
-  },
-  removeBtnFullText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  btnBusy: {
-    opacity: 0.6,
   },
   keepBtn: {
     minHeight: 52,

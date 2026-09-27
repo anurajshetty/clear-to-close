@@ -222,7 +222,7 @@ export default function TransactionDetail() {
     return (
       <View style={styles.inviteBtnWrap}>
         <SecondaryButton
-          title={count > 0 ? 'View transaction coordinator' : 'Invite transaction coordinator'}
+          title={count > 0 ? 'View TC' : 'Invite TC'}
           onPress={() => (count > 0 ? setClientSide('tc') : setSheetSide('tc'))}
         />
       </View>

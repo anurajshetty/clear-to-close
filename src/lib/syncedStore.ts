@@ -35,6 +35,7 @@ import {
   enqueueOutbox,
   ensureCloudUser,
   fetchCloudView,
+  isCapViolation,
   pingCloud,
   pullEscrowsNow,
   pullFullInvitesNow,
@@ -425,13 +426,45 @@ export function createSyncedStore(
     },
 
     createInvite: async (escrowId, role, partyName): Promise<Invite> => {
+      // Stale-cache path (Sept 2026): the local invite cache can lag behind
+      // the server (initCloudSync hydrates on a best-effort pull), so the
+      // local cap check could see fewer than two active invites and
+      // optimistically create a third. Refresh the full server rows first
+      // when the cloud is reachable — the local cap check below then enforces
+      // the real cap at creation time.
+      if (cloudOk()) {
+        const c = client();
+        if (c) {
+          try {
+            const rows = await Promise.race([pullFullInvitesNow(c, escrowId), timeoutMs(4000)]);
+            await local.mergeInvites(rows);
+          } catch {
+            // Offline/slow: fall through to the local cap check — offline
+            // creation keeps working, and the authoritative cap still applies.
+          }
+        }
+      }
       const invite = await local.createInvite(escrowId, role, partyName);
       bgPush(
         async (c) => {
           const uid = await lazyUser();
           if (!uid) throw new Error('cloud dormant');
           const before = invite.code;
-          await pushInviteNow(c, invite);
+          try {
+            await pushInviteNow(c, invite);
+          } catch (e) {
+            if (isCapViolation(e)) {
+              // Lost creation race with another device: the server rejected
+              // the insert as over-cap. Roll back the optimistic local row so
+              // no phantom over-cap invite survives in the UI, and do NOT
+              // enqueue the push — the cap rejection is authoritative and
+              // retrying it would never succeed.
+              await local.revokeInvite(invite.id);
+              console.warn(`[syncedStore] server cap rejected invite ${invite.id}; rolled back locally`);
+              return;
+            }
+            throw e;
+          }
           if (invite.code !== before) {
             await local.updateInviteCode(invite.id, invite.code);
           }

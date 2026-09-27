@@ -62,6 +62,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
+  "$ROOT/tests/invite_cap_sync.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -96,6 +97,7 @@ node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"
 node "$OUT/tests/invite_resolve.test.js"
 node "$OUT/tests/invite_sync.test.js"
+node "$OUT/tests/invite_cap_sync.test.js"
 node "$OUT/tests/media_upload.test.js"
 node "$OUT/tests/profilefetch_live.test.js"
 node "$OUT/tests/escrowpull.test.js"

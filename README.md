@@ -112,9 +112,11 @@ central user; the buyers and sellers they represent are the other parties.
   "Transaction Coordinator" for TC invites and "client" for buyer/seller.
   One **transaction coordinator** per escrow (cap of 1, independent of the
   buyer/seller caps): the checklist footer gains **Invite transaction
-  coordinator** / **View transaction coordinator**, managed through the same
+  coordinator** / **View TC**, managed through the same
   invite sheet and client list with the same code/regenerate/revoke
-  lifecycle, including the branded invite link. A redeemed TC invite opens
+  lifecycle, including the branded invite link. Tapping the row's remove (x)
+  now asks for confirmation in a popup dialog right at the point of action,
+  so the Remove button is seen immediately. A redeemed TC invite opens
   the TC's read-only home at `/client/tc/<escrowId>`: on a both-side escrow
   the TC sees **both** the buyer and seller checklists (labeled sections,
   combined progress), on a single-side escrow the active side's — reusing

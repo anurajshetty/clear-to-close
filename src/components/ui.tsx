@@ -78,6 +78,86 @@ export function TextLink({ title, onPress }: { title: string; onPress: () => voi
   );
 }
 
+/**
+ * Confirmation popup dialog (Sept 2026): a centered modal that appears right
+ * at the point of action so the confirm action is seen immediately — used
+ * instead of an inline confirm box that can sit below the fold of a sheet.
+ * Tapping the dimmed backdrop or the cancel text button dismisses.
+ */
+export function ConfirmDialog({
+  visible,
+  title,
+  message,
+  confirmTitle,
+  busyTitle,
+  cancelTitle,
+  onConfirm,
+  onCancel,
+  busy,
+  destructive,
+}: {
+  visible: boolean;
+  title: string;
+  message: string;
+  confirmTitle: string;
+  busyTitle?: string;
+  cancelTitle: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  busy?: boolean;
+  destructive?: boolean;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onCancel}
+    >
+      <Pressable
+        accessibilityRole="button"
+        onPress={onCancel}
+        disabled={busy}
+        style={styles.dialogOverlay}
+      >
+        <Pressable
+          accessibilityRole="none"
+          onPress={() => {}}
+          style={styles.dialogCard}
+        >
+          <Text style={styles.dialogTitle}>{title}</Text>
+          <Text style={styles.dialogMessage}>{message}</Text>
+          <View style={styles.dialogBtns}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onConfirm}
+              disabled={busy}
+              style={[
+                destructive ? styles.dialogDestructiveBtn : styles.btnPrimary,
+                styles.dialogConfirmBtn,
+                busy && { opacity: 0.6 },
+              ]}
+            >
+              <Text style={styles.dialogDestructiveText}>
+                {busy && busyTitle ? busyTitle : confirmTitle}
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onCancel}
+              disabled={busy}
+              hitSlop={8}
+              style={styles.dialogCancelBtn}
+            >
+              <Text style={styles.dialogCancelText}>{cancelTitle}</Text>
+            </Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
 /** Back chevron row ("‹ Label") used by onboarding screens. */
 export function BackChevron({ label, onPress }: { label: string; onPress: () => void }) {
   return (
@@ -371,4 +451,62 @@ const styles = StyleSheet.create({
   backChevron: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12 },
   backChevronGlyph: { fontSize: 26, fontWeight: '400', color: colors.accent, marginTop: -3 },
   backChevronLabel: { fontSize: 15, fontWeight: '600', color: colors.accent, marginLeft: 2 },
+  dialogOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(33,29,23,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  dialogCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: colors.card,
+    borderRadius: radius.card,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 12,
+  },
+  dialogTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.ink,
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  dialogMessage: {
+    fontSize: 14.5,
+    color: colors.body,
+    textAlign: 'center',
+    lineHeight: 21,
+    marginBottom: 16,
+  },
+  dialogBtns: {
+    alignItems: 'stretch',
+  },
+  dialogConfirmBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 52,
+    width: '100%',
+  },
+  dialogDestructiveBtn: {
+    backgroundColor: colors.red,
+    borderRadius: radius.button,
+  },
+  dialogDestructiveText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  dialogCancelBtn: {
+    minHeight: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dialogCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.accent,
+  },
 });
