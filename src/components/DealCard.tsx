@@ -3,10 +3,11 @@
 //
 // Deal-list edit round (Sept 2026): a pencil (edit) and X (cancel) icon sit
 // in the upper-right corner (44pt targets; pencil in accent teal, X in red);
-// the side tag moves down next to the city line; the buyer/seller name gets
-// its own line below. Cancelled cards render greyed with a Cancelled tag and
-// the pencil only. Icons are drawn with react-native-svg (Material edit/close
-// paths) so they render identically on iOS and web with no native module.
+// the side tag sits on its own first row above the address; the buyer/seller
+// name gets its own line below. Cancelled cards render greyed with a
+// Cancelled tag and the pencil only. Icons are drawn with react-native-svg
+// (Material edit/close paths) so they render identically on iOS and web with
+// no native module.
 import React from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -60,7 +61,6 @@ function IconButton({
 export function DealCard({
   escrowId,
   address,
-  city,
   partyLine,
   side,
   chip,
@@ -75,7 +75,6 @@ export function DealCard({
 }: {
   escrowId: string;
   address: string;
-  city: string;
   partyLine: string;
   side: DealSide;
   chip: string;
@@ -114,7 +113,15 @@ export function DealCard({
         pressed && { transform: [{ scale: 0.99 }] },
       ]}
     >
-      <Card>
+      <Card style={styles.cardBorder}>
+        <View style={styles.sideRow}>
+          <View style={[styles.sidePill, { backgroundColor: SIDE_BG[side] }]}>
+            <Text style={[styles.sidePillText, { color: SIDE_FG[side] }]}>
+              {SIDE_LABEL[side]}
+            </Text>
+          </View>
+        </View>
+
         <View style={styles.row1}>
           <Text style={styles.addr} numberOfLines={2}>{address}</Text>
           <View style={styles.icons}>
@@ -134,15 +141,6 @@ export function DealCard({
                 testID={`cancel-${escrowId}`}
               />
             ) : null}
-          </View>
-        </View>
-
-        <View style={styles.row2}>
-          <Text style={styles.city} numberOfLines={1}>{city}</Text>
-          <View style={[styles.sidePill, { backgroundColor: SIDE_BG[side] }]}>
-            <Text style={[styles.sidePillText, { color: SIDE_FG[side] }]}>
-              {SIDE_LABEL[side]}
-            </Text>
           </View>
         </View>
 
@@ -167,6 +165,14 @@ export function DealCard({
 }
 
 const styles = StyleSheet.create({
+  // Subtle 1px border matching the section-header cards (Sept 2026).
+  cardBorder: {
+    borderWidth: 1,
+    borderColor: 'rgba(231,224,211,0.7)',
+  },
+  sideRow: {
+    alignItems: 'flex-start', marginBottom: 6,
+  },
   row1: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10,
   },
@@ -177,10 +183,6 @@ const styles = StyleSheet.create({
   iconBtn: {
     width: 44, height: 44, alignItems: 'center', justifyContent: 'center',
   },
-  row2: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 2,
-  },
-  city: { fontSize: 13.5, color: colors.muted, flexShrink: 1 },
   sidePill: {
     flexShrink: 0, borderRadius: 6, paddingVertical: 4, paddingHorizontal: 9,
   },

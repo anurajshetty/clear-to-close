@@ -16,13 +16,14 @@ central user; the buyers and sellers they represent are the other parties.
   collapsible sections — **Active escrows** (expanded), **Closed escrows**
   (collapsed), **Cancelled escrows** (collapsed) — each a bordered
   dropdown-style card header with up/down chevrons and 52px touch height.
-  Deal cards show the address, the city on its own line, and the
-  **buyer/seller name on its own line below**, then the countdown chip + step
-  count + mini progress bar. Closed rows carry the **Closed** tag; cancelled
-  rows are greyed with a **Cancelled** tag. Each card carries a pencil (edit)
-  and X (cancel) icon in the upper-right corner (closed and cancelled cards
-  show the pencil only). Empty state with a shortcut to create the first
-  escrow.
+  Deal cards (subtle 1px border, same as the section headers) show the side
+  chip (**Buy side** / **Sell side** / **Both**) first, then the address,
+  then the **buyer/seller name on its own line below**, then the countdown
+  chip + step count + mini progress bar. Closed rows carry the **Closed**
+  tag; cancelled rows are greyed with a **Cancelled** tag. Each card carries
+  a pencil (edit) and X (cancel) icon in the upper-right corner (closed and
+  cancelled cards show the pencil only). Empty state with a shortcut to
+  create the first escrow.
 - **Escrow lifecycle** — the time-tracker card shows the **Opened / Target close
   dates as display-only** (no edit controls on the detail screen — dates are
   changed from the home page's "Update escrow" flow, which covers both dates).

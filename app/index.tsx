@@ -19,7 +19,7 @@ import { colors } from '../src/theme';
 
 export type Role = ClientRole;
 
-/** "Buyer: Priya Nair" — the client half of the line. DealCard prefixes the city itself. */
+/** "Buyer: Priya Nair" — the client line on the deal card. */
 export function partyLine(e: Escrow): string {
   const buyer = e.buyerName?.trim() ?? '';
   const seller = e.sellerName?.trim() ?? '';
@@ -181,7 +181,6 @@ export default function DealList() {
         <DealCard
           escrowId={e.id}
           address={e.address}
-          city={e.city}
           partyLine={partyLine(e)}
           side={e.side}
           chip={chip.chip}
