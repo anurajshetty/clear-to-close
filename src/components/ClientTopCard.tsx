@@ -1,9 +1,9 @@
-// Clear to Close — client home top card, built ONCE and reused by the buyer
-// and seller home views.
+// Clear to Close — client home top card, built ONCE and reused by the buyer,
+// seller, and TC home views.
 //
-// Built EXACTLY to the approved client-home-card sample (Anuraj, Sept 2026).
-// Light theme: white card with a subtle border and a soft shadow on the
-// paper screen.
+// Built EXACTLY to the approved client-home-card + client-home-timeline
+// samples (Anuraj, Sept 2026). Light theme: white card with a subtle border
+// and a soft shadow on the paper screen.
 //
 //  - Banner header strip on top: the realtor's synced banner, cover-cropped;
 //    the brand-teal gradient strip is the fallback when no banner is set.
@@ -11,19 +11,25 @@
 //    on large phones, 68px at right 14 on small), white 3px border, tapping
 //    it opens the realtor profile in-app (the onProfilePress destination
 //    the screens wire up).
-//  - Responsive: two size classes from the sample's 390pt / 320pt phones,
-//    flipping at the TOPCARD_BREAKPOINT midpoint (see src/lib/topCard.ts).
-//    Small phones scale the banner, photo, type, spacing, and ring down so
-//    nothing clips or overflows; large screens keep the full-size layout.
+//  - Viewport-fitted (Anuraj's hard requirement, Sept 2026): the ENTIRE
+//    card fits within the visible screen on ANY phone size — never scroll
+//    to see the card; scrolling is only for content BELOW it. Tokens
+//    resolve from screen width AND height (see topCardTokens): tall screens
+//    keep the exact sample sizes; shorter screens scale the internals down
+//    (smaller ring, tighter spacing, smaller type).
 //  - Card body, all left-aligned except the centered steps/ring/days stack:
 //    "Hi {name}" (30/25px ink 800), the "YOUR TRANSACTION" kicker (buyer
 //    and seller share one kicker, Sept 2026)
 //    (amber) + the escrow status tag ("In progress" amber outline,
-//    "Completed" filled amber), the address lines, then centered "N of N
-//    steps", the progress ring (210/160px, amber-gold #E3B95C on the #E7E0D3
-//    track, centered pct 44/34px ink), and the days line ("days left: N"
-//    with the number ink 26/21px; amber at 7 or fewer days, red at 3 or
-//    fewer; "due today" / "overdue by N day(s)" keep their treatments).
+//    "Completed" filled amber), the address lines, then centered
+//    "{realtor name} completed" above "N of N steps", the progress ring
+//    (210/160px, amber-gold #E3B95C on the #E7E0D3 track, centered pct
+//    44/34px ink), the days line ("days left: N" with the number ink
+//    26/21px; amber at 7 or fewer days, red at 3 or fewer; "due today" /
+//    "overdue by N day(s)" keep their treatments), and the escrow timeline
+//    row: start date left, end date right, the gold elapsed bar on the same
+//    line, "Escrow timeline" caption beneath (hidden when the view carries
+//    no escrow dates).
 //  - 100%: the top card STAYS the same card — only the status tag flips to
 //    "Completed" and the unified confetti BURST (the shared ConfettiBurst)
 //    pops up from the card's bottom edge. No pace pill, no completion pill,
@@ -39,9 +45,10 @@ import { ConfettiBurst } from './Confetti';
 import {
   CLIENT_TOPCARD_BG,
   DAYS_LEFT_COLORS,
-  TOPCARD_TOKENS,
   daysLeftTone,
-  topCardSizeClass,
+  escrowTimelineFill,
+  formatMonthDay,
+  topCardTokens,
 } from '../lib/topCard';
 import { escrowStatusLabel } from '../lib/clientView';
 import { displayBannerUri, displayPhotoUri } from '../lib/profile';
@@ -81,6 +88,13 @@ export type ClientTopCardProps = {
    * absent (older cached views) defaults to "In progress".
    */
   status?: 'open' | 'closed' | 'cancelled';
+  /**
+   * Escrow open / target-close dates (local 'YYYY-MM-DD', from the client
+   * view): feed the escrow timeline row below the days-left line. When
+   * either is absent the timeline is hidden (Anuraj, Sept 2026).
+   */
+  openDate?: string;
+  closeDate?: string;
 };
 
 /** Brand-teal gradient fallback for the banner strip when no banner is set. */
@@ -206,17 +220,19 @@ export function ClientTopCard({
   profile,
   onProfilePress,
   status,
+  openDate,
+  closeDate,
 }: ClientTopCardProps) {
   const branded = profile;
   const name = (branded?.name ?? '').trim();
 
-  // Responsive size class (approved sample, Anuraj, Sept 2026): the sample
-  // pins exact sizes at the 390pt and 320pt phones; the class flips at the
-  // TOPCARD_BREAKPOINT midpoint so small phones scale down and large
-  // screens keep the full-size layout.
-  const { width: screenW } = useWindowDimensions();
-  const sizeClass = topCardSizeClass(screenW);
-  const t = TOPCARD_TOKENS[sizeClass];
+  // Viewport-fitted sizing (Anuraj's hard requirement, Sept 2026): the whole
+  // card must fit the visible screen on ANY phone size — never scroll to
+  // see the card. Tokens resolve from screen width AND height: tall screens
+  // get the exact approved-sample numbers; shorter screens scale the
+  // internals down (smaller ring, tighter spacing, smaller type).
+  const { width: screenW, height: screenH } = useWindowDimensions();
+  const t = topCardTokens(screenW, screenH);
 
   // 100% (Anuraj, Sept 2026): the top card stays the same card — only the
   // status tag flips to "Completed" and the unified confetti BURST pops up
@@ -224,6 +240,12 @@ export function ClientTopCard({
   // The step list below the card is untouched. No JUST NOW markers anywhere.
   const isComplete = total > 0 && done >= total;
   const statusText = escrowStatusLabel({ done, total, status });
+  // Escrow timeline (approved sample, Anuraj, Sept 2026): start date left,
+  // end date right, the gold bar shows time elapsed. Hidden when the view
+  // carries no dates.
+  const timelineFill = escrowTimelineFill(openDate, closeDate);
+  const timelineStart = formatMonthDay(openDate);
+  const timelineEnd = formatMonthDay(closeDate);
   const [cardW, setCardW] = useState(0);
   const [cardH, setCardH] = useState(0);
 
@@ -331,8 +353,16 @@ export function ClientTopCard({
           {city}
         </Text>
 
-        <View style={[styles.center, { marginTop: t.stepsTop }]} testID="topcard-center">
-          <Text style={[styles.ringCap, { fontSize: t.steps }]} testID="steps-caption">{`${done} of ${total} steps`}</Text>
+        <View style={[styles.center, { marginTop: t.realtorDidTop }]} testID="topcard-center">
+          {/* "{realtor name} completed" above the step count (approved
+              timeline sample, Anuraj, Sept 2026). */}
+          <Text style={[styles.realtorDid, { fontSize: t.realtorDid }]} testID="realtor-completed-line">
+            {name ? `${name} completed` : 'Your realtor completed'}
+          </Text>
+          <Text
+            style={[styles.ringCap, { fontSize: t.steps, marginTop: t.stepsGap }]}
+            testID="steps-caption"
+          >{`${done} of ${total} steps`}</Text>
           <View style={{ marginTop: t.ringTop }}>
             <ProgressRing
               done={done}
@@ -350,6 +380,49 @@ export function ClientTopCard({
           <View style={{ marginTop: t.daysTop }}>
             <DaysLine daysToClose={daysToClose} daysSize={t.days} numSize={t.daysNum} />
           </View>
+          {/* Escrow timeline below the days-left line (approved timeline
+              sample, Anuraj, Sept 2026): start date left, end date right,
+              the gold bar on the same line shows time elapsed. */}
+          {timelineFill !== null ? (
+            <View style={[styles.timeline, { marginTop: t.timelineTop }]} testID="escrow-timeline">
+              <View style={styles.timelineRow}>
+                <Text style={[styles.timelineDate, { fontSize: t.timelineDate }]}>
+                  {timelineStart}
+                </Text>
+                <View style={[styles.timelineBar, { height: t.timelineBarH }]} testID="timeline-track">
+                  <Svg
+                    width="100%"
+                    height="100%"
+                    viewBox="0 0 100 8"
+                    preserveAspectRatio="none"
+                  >
+                    <Defs>
+                      <LinearGradient id="topcardTimelineGrad" x1="0" y1="0" x2="1" y2="0">
+                        <Stop offset="0%" stopColor="#E3B95C" />
+                        <Stop offset="100%" stopColor="#C79A3B" />
+                      </LinearGradient>
+                    </Defs>
+                    <Rect
+                      x="0"
+                      y="0"
+                      width={timelineFill * 100}
+                      height="8"
+                      fill="url(#topcardTimelineGrad)"
+                      testID="timeline-fill"
+                    />
+                  </Svg>
+                </View>
+                <Text style={[styles.timelineDate, { fontSize: t.timelineDate }]}>
+                  {timelineEnd}
+                </Text>
+              </View>
+              <Text
+                style={[styles.timelineNote, { fontSize: t.timelineNote, marginTop: t.timelineNoteTop }]}
+              >
+                Escrow timeline
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
     </View>
@@ -450,9 +523,18 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: BODY,
   },
-  // Centered stack: steps count above the ring, days line below.
+  // Centered stack: "{name} completed" above the steps count, the ring,
+  // the days line, then the escrow timeline.
   center: {
     alignItems: 'center',
+  },
+  // "{realtor name} completed" (approved timeline sample, Anuraj, Sept
+  // 2026): bold ink at the steps-caption size, centered above "N of N
+  // steps".
+  realtorDid: {
+    fontWeight: '700',
+    color: INK,
+    textAlign: 'center',
   },
   ringCap: {
     fontWeight: '600',
@@ -478,6 +560,33 @@ const styles = StyleSheet.create({
   },
   overNum: {
     color: RED,
+  },
+  // Escrow timeline below the days line (approved timeline sample, Anuraj,
+  // Sept 2026): start date left, end date right, the gold elapsed bar on
+  // the same line between them, "Escrow timeline" caption beneath.
+  timeline: {
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    alignSelf: 'stretch',
+  },
+  timelineDate: {
+    fontWeight: '700',
+    color: BODY,
+  },
+  timelineBar: {
+    flex: 1,
+    borderRadius: 999,
+    backgroundColor: '#EFE8D8',
+    overflow: 'hidden',
+  },
+  timelineNote: {
+    color: '#9A9184',
+    textAlign: 'center',
   },
   // 100% triumph card removed (Anuraj, Sept 2026): the completed state is
   // just the top card (status tag "Completed") with the confetti burst.

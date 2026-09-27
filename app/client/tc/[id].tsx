@@ -110,6 +110,8 @@ export default function TcView() {
             total={total}
             profile={profile}
             status={view.buyer?.status ?? view.seller?.status}
+            openDate={view.buyer?.openDate ?? view.seller?.openDate}
+            closeDate={view.buyer?.closeDate ?? view.seller?.closeDate}
             // The banner photo opens the IN-APP realtor profile (never the
             // public /realtor/<id> page) — the shared celebration wiring via
             // the escrow id. (Sept 2026: photo taps were misrouted to the

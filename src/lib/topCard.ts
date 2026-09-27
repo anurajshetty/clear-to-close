@@ -26,6 +26,58 @@
 /** Solid background of the client top card (white, on the paper screen). */
 export const CLIENT_TOPCARD_BG = '#FFFFFF';
 
+import { parseDateUTC, localDateISO } from './dates';
+
+/** 'YYYY-MM-DD' -> short calendar label, "Sep 1" (approved timeline sample,
+ * Anuraj, Sept 2026). Returns null on invalid input — callers hide the
+ * timeline rather than render a wrong date. */
+export function formatMonthDay(iso: string | undefined): string | null {
+  if (!iso) return null;
+  let ms: number;
+  try {
+    ms = parseDateUTC(iso);
+  } catch {
+    return null;
+  }
+  const d = new Date(ms);
+  return `${SHORT_MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+}
+
+const SHORT_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+/**
+ * Escrow timeline fill (client top card, Anuraj, Sept 2026): the fraction of
+ * time elapsed between the escrow's open date and target close date
+ * (local 'YYYY-MM-DD'), clamped to [0, 1] — drives the timeline progress
+ * bar below the days-left line. Returns null when either date is
+ * missing/invalid: the card then hides the timeline rather than guessing.
+ * A degenerate range (close on/before open) reads as complete once the open
+ * date arrives, 0 before it.
+ */
+export function escrowTimelineFill(
+  openISO: string | undefined,
+  closeISO: string | undefined,
+  nowMs: number = Date.now(),
+): number | null {
+  if (!openISO || !closeISO) return null;
+  let open: number;
+  let close: number;
+  try {
+    open = parseDateUTC(openISO);
+    close = parseDateUTC(closeISO);
+  } catch {
+    return null;
+  }
+  const total = close - open;
+  const today = parseDateUTC(localDateISO(new Date(nowMs)));
+  const elapsed = today - open;
+  if (total <= 0) return elapsed >= 0 ? 1 : 0;
+  return Math.min(1, Math.max(0, elapsed / total));
+}
+
 /** "days left" number colors on the light top card. */
 export const DAYS_LEFT_COLORS = {
   /** Default number color (ink). */
@@ -140,3 +192,174 @@ export const TOPCARD_TOKENS = {
     daysTop: 8,
   },
 } as const;
+
+/**
+ * Viewport-fit ladder (Anuraj's hard requirement, Sept 2026): the ENTIRE
+ * top card must fit within the visible screen on ANY phone size — the user
+ * never scrolls to see the card; scrolling is only for content BELOW it.
+ * Three height classes drive the token scaling below; width keeps the
+ * existing 355pt breakpoint untouched.
+ */
+export type TopCardHeightClass = 'roomy' | 'compact' | 'ultra';
+
+/** Height class for a phone `screenHeight` tall (points): roomy keeps the
+ * exact sample sizes, compact and ultra scale the internals down (smaller
+ * ring, tighter spacing, smaller type) so the whole card stays visible. */
+export function topCardHeightClass(screenHeight: number): TopCardHeightClass {
+  if (screenHeight >= 760) return 'roomy';
+  if (screenHeight >= 660) return 'compact';
+  return 'ultra';
+}
+
+/** The full token set the ClientTopCard renders from: the width-class base
+ * tokens plus the timeline/realtor-line tokens, scaled by height class. */
+export type TopCardTokenSet = {
+  [K in keyof (typeof TOPCARD_TOKENS)['large']]: number;
+} & {
+  /** "{realtor name} completed" line (approved timeline sample). */
+  realtorDid: number;
+  realtorDidTop: number;
+  /** Gap between the completed line and the "N of N steps" caption. */
+  stepsGap: number;
+  /** Escrow timeline row below the days-left line. */
+  timelineTop: number;
+  timelineDate: number;
+  timelineBarH: number;
+  timelineNote: number;
+  timelineNoteTop: number;
+};
+
+const HEIGHT_SCALE: Record<TopCardHeightClass, number> = {
+  roomy: 1,
+  compact: 0.9,
+  ultra: 0.8,
+};
+
+/** Progress ring display size per (width class, height class): roomy keeps
+ * the exact sample sizes (210/160); shorter screens shrink the ring so the
+ * whole card still fits. */
+const RING_BY_TIER: Record<TopCardSizeClass, Record<TopCardHeightClass, number>> = {
+  large: { roomy: 210, compact: 185, ultra: 160 },
+  small: { roomy: 160, compact: 140, ultra: 120 },
+};
+
+/** Banner strip height per (width class, height class): roomy keeps the
+ * sample heights (118/96). */
+const BANNER_BY_TIER: Record<TopCardSizeClass, Record<TopCardHeightClass, number>> = {
+  large: { roomy: 118, compact: 106, ultra: 92 },
+  small: { roomy: 96, compact: 86, ultra: 76 },
+};
+
+/**
+ * Resolve the full token set for a phone (screenWidth x screenHeight, in
+ * points). Tall screens get the exact approved-sample numbers; shorter
+ * screens scale type/spacing by height class and step the ring and banner
+ * down so the entire card fits the viewport. The width breakpoint
+ * (TOPCARD_BREAKPOINT) is unchanged.
+ */
+export function topCardTokens(screenWidth: number, screenHeight: number): TopCardTokenSet {
+  const wc = topCardSizeClass(screenWidth);
+  const hc = topCardHeightClass(screenHeight);
+  const base = TOPCARD_TOKENS[wc];
+  const k = HEIGHT_SCALE[hc];
+  // Round to 0.1pt; at scale 1 every base value (all multiples of 0.5 or
+  // integers) round-trips exactly, so roomy tokens ARE the sample tokens.
+  const s = (n: number) => Math.round(n * k * 10) / 10;
+  const ring = RING_BY_TIER[wc][hc];
+  return {
+    banner: BANNER_BY_TIER[wc][hc],
+    photo: s(base.photo),
+    photoRight: s(base.photoRight),
+    photoBorder: s(base.photoBorder),
+    photoInitials: s(base.photoInitials),
+    bodyPadT: s(base.bodyPadT),
+    bodyPadH: s(base.bodyPadH),
+    bodyPadB: s(base.bodyPadB),
+    greeting: s(base.greeting),
+    kickerTop: s(base.kickerTop),
+    kicker: s(base.kicker),
+    status: s(base.status),
+    statusPadV: s(base.statusPadV),
+    statusPadH: s(base.statusPadH),
+    addr: s(base.addr),
+    addrTop: s(base.addrTop),
+    steps: s(base.steps),
+    stepsTop: s(base.stepsTop),
+    ring,
+    ringRadius: Math.round(ring * 0.42 * 10) / 10,
+    ringStroke: Math.round(ring * 0.09 * 10) / 10,
+    ringTop: s(base.ringTop),
+    pct: Math.round(ring * 0.21),
+    days: s(base.days),
+    daysNum: s(base.daysNum),
+    daysTop: s(base.daysTop),
+    // Approved timeline sample (Anuraj, Sept 2026): "{name} completed" reads
+    // at the steps-caption size, bold ink; the timeline row sits below the
+    // days-left line — start date left, end date right, elapsed bar between.
+    realtorDid: s(base.steps),
+    realtorDidTop: s(base.stepsTop),
+    stepsGap: s(3),
+    timelineTop: s(14),
+    timelineDate: s(12.5),
+    timelineBarH: s(8),
+    timelineNote: s(11.5),
+    timelineNoteTop: s(6),
+  };
+}
+
+/**
+ * Conservative stacked estimate of the rendered card height from a token
+ * set: banner + body padding + every text row at ~1.25-1.45x its font size
+ * + the ring + the timeline row. Text-row multipliers are upper bounds, so
+ * the estimate errs on the tall side — if the estimate fits, the real card
+ * fits. `addressLines` counts the address + city lines (the address can
+ * wrap on narrow phones).
+ */
+export function estimateTopCardHeight(t: TopCardTokenSet, addressLines: number = 2): number {
+  const kickerRowH = Math.max(t.kicker * 1.5, t.status + 2 * t.statusPadV + 3);
+  const timelineRowH = Math.max(t.timelineDate * 1.3, t.timelineBarH);
+  return (
+    t.banner +
+    t.bodyPadT +
+    t.greeting * 1.25 +
+    t.kickerTop +
+    kickerRowH +
+    t.addrTop +
+    addressLines * t.addr * 1.45 +
+    t.realtorDidTop +
+    t.realtorDid * 1.35 +
+    t.stepsGap +
+    t.steps * 1.4 +
+    t.ringTop +
+    t.ring +
+    t.daysTop +
+    t.daysNum * 1.25 +
+    t.timelineTop +
+    timelineRowH +
+    t.timelineNoteTop +
+    t.timelineNote * 1.4 +
+    t.bodyPadB
+  );
+}
+
+/**
+ * Fixed chrome between the viewport top and the card's bottom edge on the
+ * client home screens: the screen content's top padding (10) + the card's
+ * own top margin (14) + bottom margin (18), plus a 20pt safety margin so
+ * the card never kisses the fold.
+ */
+export const TOPCARD_FIT_CHROME = 10 + 14 + 18 + 20;
+
+/** True when the whole card (estimate + chrome) fits the visible screen —
+ * the card is fully visible without scrolling (Anuraj, Sept 2026). */
+export function topCardFitsScreen(
+  screenWidth: number,
+  screenHeight: number,
+  addressLines: number = 2,
+): boolean {
+  return (
+    estimateTopCardHeight(topCardTokens(screenWidth, screenHeight), addressLines) +
+      TOPCARD_FIT_CHROME <=
+    screenHeight
+  );
+}

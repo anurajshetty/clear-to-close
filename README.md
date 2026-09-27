@@ -203,11 +203,16 @@ central user; the buyers and sellers they represent are the other parties.
   "N of N steps" above the progress ring (amber-gold #E3B95C on the light
   track), then the days line — "days left: N" (the number is ink normally,
   amber at 7 or fewer days, red at 3 or fewer days), "due today" on the
-  target date, red "overdue by N day(s)" past it. The card is responsive:
-  the sample pins exact sizes at the 390pt and 320pt phones (the
-  `TOPCARD_TOKENS` table in `src/lib/topCard.ts`), flipping at a 355pt
-  breakpoint, so small phones scale the banner, photo, type, spacing, and
-  ring down while large screens keep the full-size layout.
+  target date, red "overdue by N day(s)" past it. Above the step count the
+  card reads "{realtor name} completed"; below the days line an escrow
+  timeline row shows the start date left, the target close date right, and
+  a gold bar on the same line showing time elapsed (hidden when the escrow
+  has no dates). The card is responsive and viewport-fitted: the sample pins
+  exact sizes at the 390pt and 320pt phones (the `TOPCARD_TOKENS` table in
+  `src/lib/topCard.ts`), flipping at a 355pt breakpoint, and a height ladder
+  (roomy/compact/ultra) scales the ring, spacing, and type down on shorter
+  screens — the whole card always fits the visible screen without scrolling;
+  scrolling is only for the content below it.
   - **Escrow status tag** — next to the "Your transaction" kicker,
     a small tag reads **"In progress"** or **"Completed"** (mirrors the
     `get_client_view` escrow status, migration 0015; "Completed" once the

@@ -122,6 +122,8 @@ export default function BuyerView() {
             total={view.total}
             profile={profile}
             status={view.status}
+            openDate={view.openDate}
+            closeDate={view.closeDate}
             // The banner photo opens the IN-APP realtor profile (never the
             // public /realtor/<id> page) — the shared celebration wiring via
             // the escrow id. (Sept 2026: photo taps were misrouted to the
