@@ -18,6 +18,7 @@
 import React, { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
@@ -34,6 +35,9 @@ import { colors } from '../../../src/theme';
 
 export default function BuyerView() {
   const router = useRouter();
+  // iOS (Sept 2026): top content crowded the status bar — clear the
+  // safe-area inset plus the existing gap (10).
+  const insets = useSafeAreaInsets();
   const raw = useLocalSearchParams().id;
   const id = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : '';
   const [view, setView] = useState<ClientView | null>(null);
@@ -103,7 +107,7 @@ export default function BuyerView() {
   const showTriumphActions = view != null && canLeaveReview(view);
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingTop: insets.top + 10 }]}>
       {gateState === 'checking' ? (
         <Text style={styles.loading}>Loading…</Text>
       ) : gateState === 'error' ? (

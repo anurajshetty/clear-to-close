@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
@@ -110,6 +111,10 @@ function chipBits(e: Escrow): ChipBits {
 
 export default function DealList() {
   const router = useRouter();
+  // iOS (Sept 2026): the header sat under the status bar on native, so the
+  // greeting/avatar crowded the notch. Clear the safe-area inset plus a
+  // deliberate gap (the existing 14), on every platform the inset is 0 on web.
+  const insets = useSafeAreaInsets();
   const [escrows, setEscrows] = useState<Escrow[]>([]);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [profileIncomplete, setProfileIncomplete] = useState(false);
@@ -207,7 +212,7 @@ export default function DealList() {
   return (
     <View style={styles.wrap}>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={styles.headRow}>
+      <View style={[styles.headRow, { marginTop: insets.top + 14 }]}>
         <View>
           {/* "Hi {realtor name}" replaces the REALTOR kicker (mockup 01 · ①). */}
           <Kicker>{firstName ? `Hi ${firstName}` : 'Hi there'}</Kicker>

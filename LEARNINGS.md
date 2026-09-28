@@ -138,6 +138,18 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   itself — it cannot inherit a screen's SafeAreaView. Web is a no-op (insets
   are 0), so the same code is safe on both platforms. Pin it with a
   structural test on the source.
+- **Fixed top padding ignores the notch — and can make buttons untappable.**
+  The home header ("Hi {name}" + profile pic) and the escrow details header
+  ("‹ Escrows" back button) used a fixed 14pt top padding with no safe-area
+  inset, so on native iOS they rendered under the status bar — the back
+  button was effectively untappable (Anuraj caught it live). Practice: every
+  top-of-screen header adds `useSafeAreaInsets().top` to its existing top
+  padding/margin, preserving the deliberate gap; the back button keeps a 44pt
+  minimum touch target and a render check must verify it is actually hit by
+  `elementFromPoint` at its center (no overlay intercepting), not just
+  visually clear of the status bar. expo-router already wraps the app in a
+  SafeAreaProvider (ExpoRoot), so `useSafeAreaInsets()` works in any screen
+  without adding a new provider.
 
 ## Web forms (Sept 27, 2026)
 

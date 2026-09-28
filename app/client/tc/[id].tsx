@@ -7,6 +7,7 @@
 import React, { useCallback, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
@@ -30,6 +31,9 @@ function SideSection({ title, view }: { title: string; view: ClientView }) {
 
 export default function TcView() {
   const router = useRouter();
+  // iOS (Sept 2026): top content crowded the status bar — clear the
+  // safe-area inset plus the existing gap (10).
+  const insets = useSafeAreaInsets();
   const raw = useLocalSearchParams().id;
   const id = typeof raw === 'string' ? raw : Array.isArray(raw) ? raw[0] : '';
   const [view, setView] = useState<TcView | null>(null);
@@ -91,7 +95,7 @@ export default function TcView() {
   const total = (view?.buyer?.total ?? 0) + (view?.seller?.total ?? 0);
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingTop: insets.top + 10 }]}>
       {gateState === 'checking' ? (
         <Text style={styles.loading}>Loading…</Text>
       ) : gateState === 'error' ? (

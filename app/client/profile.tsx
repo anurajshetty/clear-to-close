@@ -7,6 +7,7 @@
 import React, { createElement, useCallback, useEffect, useState } from 'react';
 import { AppState, Image, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
 import { auth } from '../../src/lib/auth';
 import { getPushPermission } from '../../src/lib/push';
@@ -26,6 +27,9 @@ function Stat({ value, label }: { value: string; label: string }) {
 
 export default function ClientRealtorProfile() {
   const router = useRouter();
+  // iOS (Sept 2026): the "Back to my escrow" button crowded the status
+  // bar — clear the safe-area inset plus the existing gap (12).
+  const insets = useSafeAreaInsets();
   // The escrow this profile was opened from (buyer/seller home passes it).
   // A client device has no local realtor profile of its own — the linked
   // profile from the invite is the source of truth there.
@@ -105,7 +109,7 @@ export default function ClientRealtorProfile() {
   const firstName = (profile?.name ?? '').trim().split(/\s+/)[0] ?? '';
 
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingTop: insets.top + 12 }]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Back to your escrow home screen"

@@ -12,6 +12,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextStyle, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
 import { partyLine } from '../index';
 import type { ClientLink, ClientRole, Escrow, Invite } from '../../src/lib/types';
@@ -65,6 +66,9 @@ function latestVisible(invites: Invite[], role: ClientRole): Invite | null {
 
 export default function ShareEscrow() {
   const router = useRouter();
+  // iOS (Sept 2026): same notch crowding as the escrow header — clear the
+  // safe-area inset plus a deliberate gap (the existing 14).
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string }>();
   const rawId = params.id;
   const escrowId = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -254,7 +258,7 @@ export default function ShareEscrow() {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <Pressable onPress={() => router.back()} hitSlop={8} style={styles.backBtn}>
           <Text style={styles.backText}>‹ Escrows</Text>
         </Pressable>

@@ -11,6 +11,7 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { store } from '../../src/lib/store-instance';
 import type { ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
@@ -30,6 +31,10 @@ function sortedSteps(raw: StepT[]): StepT[] {
 
 export default function TransactionDetail() {
   const router = useRouter();
+  // iOS (Sept 2026): the back button rendered under the status bar and was
+  // effectively untappable. Clear the safe-area inset plus a deliberate gap
+  // (the existing 14) so the whole header sits below the notch.
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string }>();
   const rawId = params.id;
   const escrowId = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -320,7 +325,7 @@ export default function TransactionDetail() {
 
   return (
     <GestureHandlerRootView style={styles.screen}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <Pressable
           onPress={() => router.back()}
           hitSlop={8}
