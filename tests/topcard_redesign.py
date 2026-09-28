@@ -52,6 +52,7 @@ buyer = read("app/client/buyer/[id].tsx")
 seller = read("app/client/seller/[id].tsx")
 tc = read("app/client/tc/[id].tsx")
 topcard_lib = read("src/lib/topCard.ts")
+banner = read("src/components/BannerStrip.tsx")
 pace_lib = read("src/lib/pace.ts")
 
 # 1. GUIDED BY strip is gone from the top card.
@@ -96,11 +97,16 @@ check("onLeaveReviewPress" in buyer, "buyer review sheet wiring preserved")
 #    right side (tappable to the in-app profile); the old top-right photo
 #    is gone; the card is responsive via the sample's size-class tokens;
 #    the pace/completion pills and their logic are gone; the light theme
-#    stays.
-check('testID="topcard-banner-header"' in card, "banner header strip back on the top card")
-check('testID="topcard-banner"' in card, "synced banner image in the strip")
-check('testID="topcard-gradient"' in card, "teal gradient fallback when no banner is set")
-check('testID="topcard-banner-photo"' in card, "realtor photo on the banner strip")
+#    stays. The strip is the shared BannerStrip (Sept 2026 refactor, also
+#    used by the realtor home screen), so the banner testIDs ride in as
+#    prop values on the BannerStrip element.
+check('<BannerStrip' in card, "banner strip is the shared BannerStrip component")
+check('"topcard-banner-header"' in card, "banner header strip testID wired to BannerStrip")
+check('"topcard-banner"' in card, "synced banner image testID wired to BannerStrip")
+check('"topcard-gradient"' in card, "teal gradient fallback testID wired to BannerStrip")
+check('"topcard-banner-photo"' in card, "realtor photo testID wired to BannerStrip")
+check('resizeMode="cover"' in banner, "shared BannerStrip: banner is cover-cropped")
+check("TealGradientFallback" in banner, "shared BannerStrip: teal gradient fallback when no banner is set")
 check("onProfilePress" in card, "banner photo opens the realtor profile in-app")
 check('testID="greeting-avatar"' not in card, "old top-right photo position removed")
 check("avatarCircle" not in card, "old avatar styles removed")

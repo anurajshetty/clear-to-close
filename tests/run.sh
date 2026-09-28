@@ -96,6 +96,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/conflict_rules.test.ts" \
   "$ROOT/tests/date_field_web_width.test.ts" \
   "$ROOT/tests/header_top_gap.test.ts" \
+  "$ROOT/tests/realtor_home_banner.test.ts" \
   "$ROOT/tests/recovery.test.ts" \
   "$ROOT/tests/password_eye_toggle.test.ts" \
   --outDir "$OUT" \
@@ -167,6 +168,7 @@ node "$OUT/tests/pull_then_push.test.js"
 node "$OUT/tests/conflict_rules.test.js"
 node "$OUT/tests/date_field_web_width.test.js"
 node "$OUT/tests/header_top_gap.test.js"
+node "$OUT/tests/realtor_home_banner.test.js"
 node "$OUT/tests/recovery.test.js"
 node "$OUT/tests/password_eye_toggle.test.js"
 

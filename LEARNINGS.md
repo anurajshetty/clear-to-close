@@ -166,3 +166,35 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   the escrow sheet). Pin the constraint with a source-level regression test
   (`tests/date_field_web_width.test.ts`); the visible outcome (no overflow at
   360px/390px) was verified with a headless render of the shipped CSS.
+
+## Realtor home banner (Sept 28, 2026)
+
+- **Shared banner strip, one component for two surfaces.** The realtor home
+  screen gained the approved banner section (118px full-bleed strip, synced
+  banner cover-cropped, brand-teal gradient fallback, 88px photo at right 18
+  with a 3px white ring tapping through to /profile-update); the small
+  avatar left the header row so there is exactly one photo. Rather than a
+  second copy, the strip/photo/gradient block was extracted from
+  ClientTopCard into the shared `src/components/BannerStrip.tsx`, used by
+  both surfaces with the same testIDs passed as props — the realtor header
+  is a pixel-exact preview of what clients see and the two can never drift
+  (UI-reuse standing rule). Practice: when two surfaces must look identical,
+  extract the shared piece with its instrumentation as props so existing
+  source-grep regression tests keep pinning the same testID strings.
+- **Banner sits below the safe-area gap.** The banner section renders after
+  the `insets.top + 14` gap view from the header-top-gap release, never
+  under the status bar; the wrap breaks out of the content's 18px padding
+  with negative margins for the full-bleed look. Practice: full-bleed
+  sections inside a padded scroll container need `marginHorizontal: -18`
+  (and `marginTop: -18` when they start at the top) — and the header-top-gap
+  regression test pins the literal `insets.top + 14`, so keep that exact
+  expression in the file when restructuring the header.
+- **Rendered verification without auth.** The home screen needs a session,
+  so the render check seeds localStorage before load (a fake Supabase JWT
+  for `getSession` + `ctc:profile`/`ctc:escrows` rows) and serves the built
+  dist under /clear-to-close with SPA fallback. The fake JWT makes the
+  server-pull sync attempts fail at the network layer — those
+  ERR_EMPTY_RESPONSE console errors are seeding artifacts, not app errors;
+  the app correctly falls back to the local cache. Assert the visible
+  outcome (strip 118px, full-bleed, photo 88px at right 18, tap routes to
+  /profile-update) from bounding boxes, not just source pins.

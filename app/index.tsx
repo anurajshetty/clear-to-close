@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
@@ -8,11 +8,13 @@ import { shouldShowProfileNudge } from '../src/lib/bootRoute';
 import type { ClientRole, Escrow, RealtorProfile, StepT } from '../src/lib/types';
 import { DealCard } from '../src/components/DealCard';
 import { SectionHeader } from '../src/components/SectionHeader';
+import { BannerStrip } from '../src/components/BannerStrip';
+import { displayBannerUri, displayPhotoUri } from '../src/lib/profile';
+import { TOPCARD_TOKENS } from '../src/lib/topCard';
 import { daysToClose } from '../src/lib/dates';
 import { closedDisplayDate, isClosedRow } from '../src/lib/lifecycle';
 import { formatShortDate } from '../src/components/TimeTrackerCard';
 import { Kicker, PrimaryButton } from '../src/components/ui';
-import { initialsOf } from '../src/components/ui';
 import NewEscrowSheet from '../src/components/NewEscrowSheet';
 import UpdateEscrowSheet from '../src/components/UpdateEscrowSheet';
 import CancelEscrowSheet from '../src/components/CancelEscrowSheet';
@@ -111,9 +113,9 @@ function chipBits(e: Escrow): ChipBits {
 
 export default function DealList() {
   const router = useRouter();
-  // iOS (Sept 2026): the header sat under the status bar on native, so the
-  // greeting/avatar crowded the notch. Clear the safe-area inset plus a
-  // deliberate gap (the existing 14), on every platform the inset is 0 on web.
+  // iOS (Sept 2026): the top of the screen sat under the status bar on
+  // native, so the header crowded the notch. The safe-area gap (inset +
+  // the deliberate 14) sits above the banner strip, which starts below it.
   const insets = useSafeAreaInsets();
   const [escrows, setEscrows] = useState<Escrow[]>([]);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
@@ -212,27 +214,38 @@ export default function DealList() {
   return (
     <View style={styles.wrap}>
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <View style={[styles.headRow, { marginTop: insets.top + 14 }]}>
+      {/* Safe-area gap sits ABOVE the banner (header-top-gap release, Sept
+          2026): the banner must never crowd the status bar. */}
+      <View style={[styles.topSpace, { height: insets.top + 14 }]} />
+      {/* Banner section (approved sample, Anuraj, Sept 2026): full-bleed
+          118px strip above the existing header — the realtor's synced
+          banner, cover-cropped, with the brand-teal gradient fallback. The
+          photo sits on the banner's right side and opens the profile page
+          exactly as the old header avatar did. */}
+      <View style={styles.bannerWrap}>
+        <BannerStrip
+          name={profile?.name ?? ''}
+          bannerUri={displayBannerUri(profile)}
+          photoUri={displayPhotoUri(profile)}
+          bannerHeight={TOPCARD_TOKENS.large.banner}
+          photoSize={TOPCARD_TOKENS.large.photo}
+          photoRight={TOPCARD_TOKENS.large.photoRight}
+          photoBorder={TOPCARD_TOKENS.large.photoBorder}
+          initialsSize={TOPCARD_TOKENS.large.photoInitials}
+          onPhotoPress={() => router.push('/profile-update')}
+          photoAccessibilityLabel="Your profile"
+          stripTestID="home-banner-strip"
+          bannerTestID="home-banner"
+          gradientTestID="home-banner-gradient"
+          photoTestID="home-banner-photo"
+        />
+      </View>
+      <View style={styles.headRow}>
         <View>
           {/* "Hi {realtor name}" replaces the REALTOR kicker (mockup 01 · ①). */}
           <Kicker>{firstName ? `Hi ${firstName}` : 'Hi there'}</Kicker>
           <Text style={styles.h2}>Escrows</Text>
         </View>
-        <Pressable
-          onPress={() => router.push('/profile-update')}
-          hitSlop={8}
-          accessibilityRole="button"
-          accessibilityLabel="Your profile"
-          style={styles.avatarBtn}
-        >
-          {profile?.photoUri ? (
-            <Image source={{ uri: profile.photoUri }} style={styles.avatar} />
-          ) : (
-            <View style={styles.avatar}>
-              <Text style={styles.avatarInitials}>{initialsOf(profile?.name ?? '')}</Text>
-            </View>
-          )}
-        </Pressable>
       </View>
       <Text style={styles.count}>{countLine}</Text>
 
@@ -362,28 +375,22 @@ const styles = StyleSheet.create({
     marginTop: 14,
     marginBottom: 4,
   },
+  // Safe-area gap above the banner (header-top-gap release): breaks out of
+  // the content padding so it spans the full screen width.
+  topSpace: {
+    marginTop: -18,
+    marginHorizontal: -18,
+  },
+  // Full-bleed banner strip above the header (approved sample, Anuraj,
+  // Sept 2026): breaks out of the content's 18px padding edge to edge.
+  bannerWrap: {
+    marginHorizontal: -18,
+  },
   h2: {
     fontSize: 26,
     fontWeight: '700',
     color: colors.ink,
     marginTop: 2,
-  },
-  avatarBtn: {
-    width: 48,
-    height: 48,
-  },
-  avatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitials: {
-    color: '#FFFFFF',
-    fontSize: 17,
-    fontWeight: '800',
   },
   count: {
     fontSize: 13,

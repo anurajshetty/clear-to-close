@@ -10,7 +10,11 @@ central user; the buyers and sellers they represent are the other parties.
 
 **For realtors**
 
-- **Deal list** — "Hi {realtor name}" greeting, "Escrows" title, and
+- **Deal list** — a full-bleed banner section at the very top (118px strip,
+  the realtor's synced banner image cover-cropped, brand-teal gradient
+  fallback when no banner is uploaded; the realtor's photo sits on the
+  strip's right side, 88px with a white ring, and opens the profile page
+  on tap). Below it, the "Hi {realtor name}" greeting, "Escrows" title, and
   "{N} open · {M} closed · {K} cancelled" summary (the cancelled segment
   appears only when > 0). **+ New escrow** sits above the sections. Three
   collapsible sections — **Active escrows** (expanded), **Closed escrows**
@@ -111,7 +115,7 @@ central user; the buyers and sellers they represent are the other parties.
   size computed from the celebration card banner strip's actual dimensions
   (`src/lib/bannerSize.ts`, about 2.7 : 1, e.g. 1024 x 386 px) so the
   cover-cropped banner fills the strip with the least cropping. Editable
-  anytime via the avatar in the deal-list header. A quiet **Change password**
+  anytime via the photo on the deal-list banner strip. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current
   password is verified server-side, and success shows a "Password updated."

@@ -37,11 +37,11 @@
 //  - The step list below the card is untouched. No JUST NOW markers
 //    anywhere.
 import React, { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import Svg, { Circle, Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import { initialsOf } from './ui';
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { ProgressRing } from './ProgressRing';
 import { ConfettiBurst } from './Confetti';
+import { BannerStrip } from './BannerStrip';
 import {
   CLIENT_TOPCARD_BG,
   DAYS_LEFT_COLORS,
@@ -97,81 +97,9 @@ export type ClientTopCardProps = {
   closeDate?: string;
 };
 
-/** Brand-teal gradient fallback for the banner strip when no banner is set. */
-function TealGradientFallback({ testID }: { testID?: string }) {
-  return (
-    <Svg
-      style={StyleSheet.absoluteFill}
-      width="100%"
-      height="100%"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="xMidYMid slice"
-      testID={testID}
-    >
-      <Defs>
-        <LinearGradient id="topcardBannerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <Stop offset="0%" stopColor="#0E3B36" />
-          <Stop offset="55%" stopColor="#175E54" />
-          <Stop offset="100%" stopColor="#2A7A6C" />
-        </LinearGradient>
-      </Defs>
-      <Rect x="0" y="0" width="100" height="100" fill="url(#topcardBannerGrad)" />
-    </Svg>
-  );
-}
-
-/**
- * The realtor photo on the banner strip's right side (approved sample,
- * Anuraj, Sept 2026): the synced photo when available, otherwise the
- * amber-gold gradient circle with the realtor's initials.
- */
-function BannerPhoto({
-  name,
-  photoUri,
-  size,
-  borderWidth,
-  initialsSize,
-}: {
-  name: string;
-  photoUri: string | null;
-  size: number;
-  borderWidth: number;
-  initialsSize: number;
-}) {
-  const inner = size - borderWidth * 2;
-  return (
-    <View
-      style={[
-        styles.photoRing,
-        { width: size, height: size, borderRadius: size / 2, borderWidth },
-      ]}
-    >
-      {photoUri ? (
-        <Image
-          source={{ uri: photoUri }}
-          style={{ width: inner, height: inner, borderRadius: inner / 2 }}
-        />
-      ) : (
-        <View style={{ width: inner, height: inner, borderRadius: inner / 2, overflow: 'hidden' }}>
-          <Svg width={inner} height={inner} viewBox={`0 0 ${inner} ${inner}`}>
-            <Defs>
-              <LinearGradient id="topcardPhotoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <Stop offset="0%" stopColor={AMBER} />
-                <Stop offset="100%" stopColor={AMBER_LIGHT} />
-              </LinearGradient>
-            </Defs>
-            <Circle cx={inner / 2} cy={inner / 2} r={inner / 2} fill="url(#topcardPhotoGrad)" />
-          </Svg>
-          <View style={styles.photoInitialsWrap}>
-            <Text style={[styles.photoInitials, { fontSize: initialsSize }]}>
-              {initialsOf(name)}
-            </Text>
-          </View>
-        </View>
-      )}
-    </View>
-  );
-}
+/** The banner strip, photo, and their fallbacks live in the shared
+ * BannerStrip component (built once, reused by the client top card and
+ * the realtor home screen) — see src/components/BannerStrip.tsx. */
 
 function DaysLine({
   daysToClose,
@@ -251,15 +179,6 @@ export function ClientTopCard({
 
   const bannerUri = displayBannerUri(branded);
   const avatarPhoto = displayPhotoUri(branded);
-  const photo = (
-    <BannerPhoto
-      name={name}
-      photoUri={avatarPhoto}
-      size={t.photo}
-      borderWidth={t.photoBorder}
-      initialsSize={t.photoInitials}
-    />
-  );
 
   return (
     <View
@@ -271,40 +190,26 @@ export function ClientTopCard({
       }}
     >
       {/* Banner header strip on top (approved sample, Anuraj, Sept 2026):
-          the realtor's synced banner, cover-cropped; the brand-teal gradient
-          strip is the fallback when no banner is uploaded. The realtor
-          photo sits on the banner's right side and opens the realtor
-          profile in-app. */}
-      <View style={[styles.bannerStrip, { height: t.banner }]} testID="topcard-banner-header">
-        {bannerUri ? (
-          <Image
-            source={{ uri: bannerUri }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-            testID="topcard-banner"
-          />
-        ) : (
-          <TealGradientFallback testID="topcard-gradient" />
-        )}
-        {onProfilePress ? (
-          <Pressable
-            onPress={onProfilePress}
-            accessibilityRole="button"
-            accessibilityLabel={`View ${name}'s profile`}
-            style={[styles.photoBtn, { right: t.photoRight, transform: [{ translateY: -(t.photo / 2) }] }]}
-            testID="topcard-banner-photo"
-          >
-            {photo}
-          </Pressable>
-        ) : (
-          <View
-            style={[styles.photoBtn, { right: t.photoRight, transform: [{ translateY: -(t.photo / 2) }] }]}
-            testID="topcard-banner-photo"
-          >
-            {photo}
-          </View>
-        )}
-      </View>
+          the shared BannerStrip — the realtor's synced banner,
+          cover-cropped; the brand-teal gradient strip is the fallback when
+          no banner is uploaded. The realtor photo sits on the banner's
+          right side and opens the realtor profile in-app. */}
+      <BannerStrip
+        name={name}
+        bannerUri={bannerUri}
+        photoUri={avatarPhoto}
+        bannerHeight={t.banner}
+        photoSize={t.photo}
+        photoRight={t.photoRight}
+        photoBorder={t.photoBorder}
+        initialsSize={t.photoInitials}
+        onPhotoPress={onProfilePress}
+        photoAccessibilityLabel={`View ${name}'s profile`}
+        stripTestID="topcard-banner-header"
+        bannerTestID="topcard-banner"
+        gradientTestID="topcard-gradient"
+        photoTestID="topcard-banner-photo"
+      />
 
       {/* 100%: the unified confetti BURST pops up from below the top card
           (the shared ConfettiBurst — one confetti implementation, same look
@@ -446,40 +351,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.07,
     shadowRadius: 24,
     elevation: 6,
-  },
-  // Banner header strip: the realtor's synced banner, cover-cropped, full
-  // card width; the brand-teal gradient is the fallback. The card's rounded
-  // top corners come from `overflow: hidden` on the hero above.
-  bannerStrip: {
-    position: 'relative',
-    overflow: 'hidden',
-    backgroundColor: '#0E3B36',
-  },
-  // Realtor photo on the banner's right side: vertically centered on the
-  // strip, white ring, opens the realtor profile in-app (Anuraj, Sept 2026).
-  photoBtn: {
-    position: 'absolute',
-    top: '50%',
-  },
-  photoRing: {
-    borderColor: '#FFFFFF',
-    backgroundColor: AMBER,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  photoInitialsWrap: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  photoInitials: {
-    color: '#FFFFFF',
-    fontWeight: '800',
   },
   // Card body: left-aligned content; the steps/ring/days stack centers.
   content: {},

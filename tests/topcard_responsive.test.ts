@@ -88,16 +88,22 @@ assert(ROOT.length > 0, 'CTC_REPO_ROOT is set (tests/run.sh exports it)');
 const srcFile = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const card = srcFile('src/components/ClientTopCard.tsx');
+const strip = srcFile('src/components/BannerStrip.tsx');
 
-// Banner strip is back on top of the card.
-assert(card.includes('testID="topcard-banner-header"'), 'banner header strip present on the top card');
-assert(card.includes('testID="topcard-banner"'), 'synced banner image in the strip');
-assert(card.includes('resizeMode="cover"'), 'banner is cover-cropped');
-assert(card.includes('testID="topcard-gradient"'), 'teal gradient fallback when no banner is set');
+// Banner strip is back on top of the card. It is the shared BannerStrip
+// component (built once, reused by the client top card and the realtor
+// home screen — Sept 2026 refactor), so the banner testIDs ride in as prop
+// values on the BannerStrip element.
+assert(card.includes('<BannerStrip'), 'client top card renders the shared BannerStrip');
+assert(card.includes('"topcard-banner-header"'), 'banner header strip testID wired to BannerStrip');
+assert(card.includes('"topcard-banner"'), 'synced banner image testID wired to BannerStrip');
+assert(strip.includes('resizeMode="cover"'), 'shared strip: banner is cover-cropped');
+assert(card.includes('"topcard-gradient"'), 'teal gradient fallback testID wired to BannerStrip');
+assert(strip.includes('TealGradientFallback'), 'shared strip: teal gradient fallback when no banner is set');
 assert(card.includes('t.banner'), 'strip height comes from the responsive tokens');
 
 // The realtor photo sits ON the banner's right side and opens the profile.
-assert(card.includes('testID="topcard-banner-photo"'), 'banner photo testID present');
+assert(card.includes('"topcard-banner-photo"'), 'banner photo testID wired to BannerStrip');
 assert(card.includes('onProfilePress'), 'banner photo wired to onProfilePress (in-app profile)');
 assert(card.includes("View ${name}'s profile"), 'banner photo keeps the profile accessibility label');
 assert(card.includes('t.photoRight'), 'photo offset comes from the responsive tokens');
