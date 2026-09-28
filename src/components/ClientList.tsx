@@ -18,9 +18,8 @@ import * as Clipboard from 'expo-clipboard';
 import { store } from '../lib/store-instance';
 import { MAX_CLIENTS_PER_SIDE, MAX_TC_PER_ESCROW } from '../lib/store';
 import type { ClientRole, Invite } from '../lib/types';
-import { InviteSheet } from './InviteSheet';
-import { ConfirmDialog, Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
-import { colors } from '../theme';
+import { Field, Kicker, PrimaryButton, SecondaryButton, Sheet } from './ui';
+import { colors, radius } from '../theme';
 
 export function ClientList({
   visible,
@@ -36,7 +35,9 @@ export function ClientList({
   onClose: () => void;
 }) {
   const [invites, setInvites] = useState<Invite[]>([]);
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteName, setInviteName] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
   const [regenId, setRegenId] = useState<string | null>(null);
   const [revokeId, setRevokeId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -71,7 +72,9 @@ export function ClientList({
     if (visible) {
       setRegenId(null);
       setRevokeId(null);
-      setSheetOpen(false);
+      setInviteOpen(false);
+      setInviteName('');
+      setInviteBusy(false);
       setBusy(false);
       refresh();
     }
@@ -118,11 +121,41 @@ export function ClientList({
     }
   };
 
+  // "Invite another" is an inline form inside this sheet (Sept 28, 2026):
+  // no stacked Modal — iOS silently drops a second Modal presented while
+  // another is visible (verified in react-native 0.86.3), which is why the
+  // old nested <InviteSheet> did nothing on tap. On success the new invite
+  // renders in the list above (existing row rendering: code chip + Copy)
+  // and the form collapses and clears.
+  const doInviteCreate = async () => {
+    const partyName = inviteName.trim();
+    if (!partyName || inviteBusy) return;
+    setInviteBusy(true);
+    try {
+      await store.createInvite(escrowId, side, partyName);
+      setInviteOpen(false);
+      setInviteName('');
+      showToast('Invite created.');
+      await refresh();
+    } catch (err) {
+      console.warn('createInvite failed', err);
+      showToast('Could not create the invite. Try again.');
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
   const regenInvite = regenId ? invites.find((i) => i.id === regenId) ?? null : null;
   const revokeInvite = revokeId ? invites.find((i) => i.id === revokeId) ?? null : null;
 
   return (
     <>
+      {/* One Modal on screen at all times (Sept 28, 2026): the "Invite
+          another" form and the revoke confirmation both render INLINE
+          inside this sheet's already-open Modal. iOS silently drops a
+          second Modal presented while another is visible (verified in
+          react-native 0.86.3), which is why "Invite another buyer" used to
+          do nothing. */}
       <Sheet visible={visible} onClose={onClose}>
         <View style={styles.wrap}>
           <ScrollView
@@ -215,12 +248,54 @@ export function ClientList({
             })}
 
             {invites.length < cap ? (
-              <View style={styles.inviteAnother}>
-                <SecondaryButton
-                  title={side === 'tc' ? 'Invite TC' : `Invite another ${noun}`}
-                  onPress={() => setSheetOpen(true)}
-                />
-              </View>
+              inviteOpen ? (
+                <View style={styles.inviteForm}>
+                  <Field
+                    label={
+                      side === 'buyer'
+                        ? "Buyer's name"
+                        : side === 'seller'
+                          ? "Seller's name"
+                          : "Coordinator's name"
+                    }
+                    value={inviteName}
+                    onChangeText={setInviteName}
+                    placeholder={`${label}'s name`}
+                    testID="invite-another-name"
+                  />
+                  <Text style={styles.inviteHint}>
+                    They’ll enter this exact name with the code. It has to
+                    match.
+                  </Text>
+                  <View style={styles.inviteBtns}>
+                    <View style={styles.confirmPrimary}>
+                      <PrimaryButton
+                        title={inviteBusy ? 'Creating…' : 'Create code'}
+                        onPress={doInviteCreate}
+                        disabled={inviteName.trim().length === 0 || inviteBusy}
+                      />
+                    </View>
+                    <Pressable
+                      onPress={() => {
+                        setInviteOpen(false);
+                        setInviteName('');
+                      }}
+                      hitSlop={8}
+                      style={styles.keepBtn}
+                      disabled={inviteBusy}
+                    >
+                      <Text style={styles.keepText}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.inviteAnother}>
+                  <SecondaryButton
+                    title={side === 'tc' ? 'Invite TC' : `Invite another ${noun}`}
+                    onPress={() => setInviteOpen(true)}
+                  />
+                </View>
+              )
             ) : (
               <Text style={styles.capnote}>
                 {side === 'tc' ? (
@@ -266,26 +341,48 @@ export function ClientList({
               </View>
             )}
 
-          </ScrollView>
+            {revokeInvite && (
+              <View style={styles.confirmBox}>
+                <Text style={styles.confirmTitle}>
+                  Remove {revokeInvite.partyName}’s invite?
+                </Text>
+                <Text style={styles.confirmText}>
+                  {revokeInvite.redeemedAt
+                    ? 'Their invite stops working and their linked device loses access to this escrow. You can send them a fresh invite anytime.'
+                    : 'The invite and its code stop working. You can send them a fresh one anytime.'}
+                </Text>
+                <View style={styles.confirmBtns}>
+                  <View style={styles.confirmPrimary}>
+                    <Pressable
+                      onPress={doRevoke}
+                      disabled={busy}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${revokeInvite.partyName}’s invite`}
+                      style={({ pressed }) => [
+                        styles.dangerBtn,
+                        busy && { opacity: 0.6 },
+                        pressed && !busy && { opacity: 0.88 },
+                      ]}
+                    >
+                      <Text style={styles.dangerBtnText}>
+                        {busy ? 'Removing…' : 'Remove'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  <Pressable
+                    onPress={() => setRevokeId(null)}
+                    hitSlop={8}
+                    style={styles.keepBtn}
+                    disabled={busy}
+                  >
+                    <Text style={styles.keepText}>Keep</Text>
+                  </Pressable>
+                </View>
+              </View>
+            )}
 
-          {revokeInvite && (
-            <ConfirmDialog
-              visible
-              title={`Remove ${revokeInvite.partyName}\u2019s invite?`}
-              message={
-                revokeInvite.redeemedAt
-                  ? 'Their invite stops working and their linked device loses access to this escrow. You can send them a fresh invite anytime.'
-                  : 'The invite and its code stop working. You can send them a fresh one anytime.'
-              }
-              confirmTitle="Remove"
-              busyTitle="Removing…"
-              cancelTitle="Keep"
-              onConfirm={doRevoke}
-              onCancel={() => setRevokeId(null)}
-              busy={busy}
-              destructive
-            />
-          )}
+          </ScrollView>
 
           {toastMsg && (
             <View style={styles.toast} pointerEvents="none">
@@ -294,16 +391,6 @@ export function ClientList({
           )}
         </View>
       </Sheet>
-
-      {sheetOpen && (
-        <InviteSheet
-          visible
-          side={side}
-          escrowId={escrowId}
-          onClose={() => setSheetOpen(false)}
-          onCreated={refresh}
-        />
-      )}
     </>
   );
 }
@@ -437,6 +524,21 @@ const styles = StyleSheet.create({
   inviteAnother: {
     marginTop: 10,
   },
+  inviteForm: {
+    marginTop: 10,
+  },
+  inviteHint: {
+    fontSize: 13.5,
+    lineHeight: 20,
+    color: colors.body,
+    marginTop: 6,
+  },
+  inviteBtns: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+  },
   capnote: {
     fontSize: 13,
     lineHeight: 20,
@@ -480,6 +582,19 @@ const styles = StyleSheet.create({
   },
   confirmPrimary: {
     flex: 1,
+  },
+  dangerBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    minHeight: 52,
+    backgroundColor: colors.red,
+    borderRadius: radius.button,
+  },
+  dangerBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
   },
   keepBtn: {
     minHeight: 52,

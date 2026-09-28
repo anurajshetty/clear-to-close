@@ -104,6 +104,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/realtor_home_banner.test.ts" \
   "$ROOT/tests/recovery.test.ts" \
   "$ROOT/tests/password_eye_toggle.test.ts" \
+  "$ROOT/tests/invite_inline_form.test.ts" \
+  "$ROOT/tests/invite_expiry.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -181,6 +183,8 @@ node "$OUT/tests/header_top_gap.test.js"
 node "$OUT/tests/realtor_home_banner.test.js"
 node "$OUT/tests/recovery.test.js"
 node "$OUT/tests/password_eye_toggle.test.js"
+node "$OUT/tests/invite_inline_form.test.js"
+node "$OUT/tests/invite_expiry.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

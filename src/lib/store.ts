@@ -38,11 +38,26 @@ export interface RevokedClientLink {
   revokedAt: string;
 }
 
-/** closeEscrow result: the closed escrow plus the client links revoked at
- * close time. */
+/** An invite killed by an explicit escrow close/cancel (for cloud
+ * convergence via the pushRevoke outbox op). */
+export interface RevokedInvite {
+  id: string;
+  revokedAt: string;
+}
+
+/** closeEscrow result: the closed escrow plus the client links and invites
+ * revoked at close time. */
 export interface CloseEscrowResult {
   escrow: Escrow;
   revokedLinks: RevokedClientLink[];
+  revokedInvites: RevokedInvite[];
+}
+
+/** cancelEscrow result: the cancelled escrow plus the invites revoked at
+ * cancel time (every active invite dies with the escrow). */
+export interface CancelEscrowResult {
+  escrow: Escrow;
+  revokedInvites: RevokedInvite[];
 }
 
 export interface Store {
@@ -106,7 +121,7 @@ export interface Store {
    * Move an escrow to the Cancelled section. Closed escrows cannot be
    * cancelled (their cards show the pencil only).
    */
-  cancelEscrow(escrowId: string): Promise<Escrow>;
+  cancelEscrow(escrowId: string): Promise<CancelEscrowResult>;
   toggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Escrow>;
   addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow>;
   reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow>;
@@ -426,6 +441,32 @@ export function createStore(kv: KV): Store {
     };
   }
 
+  /**
+   * Revoke every ACTIVE invite for an escrow (optionally limited to
+   * roles), using the exact revokeInvite semantics: the code is
+   * invalidated AND the device link tied to the invite is killed at the
+   * same moment, so affected devices land on the dead-code state, never
+   * a blank screen. Already-revoked invites are untouched (already dead).
+   * Single persist is left to the caller.
+   */
+  function revokeActiveInvites(escrowId: string, roles?: ClientRole[]): RevokedInvite[] {
+    const now = new Date().toISOString();
+    const revoked: RevokedInvite[] = [];
+    for (const inv of data.invites) {
+      if (inv.escrowId !== escrowId || inv.revokedAt) continue;
+      if (roles && !roles.includes(inv.role)) continue;
+      const next = { ...inv, revokedAt: now };
+      data.invites[data.invites.indexOf(inv)] = next;
+      for (const link of data.links) {
+        if (link.inviteId === inv.id && !link.revokedAt) {
+          link.revokedAt = now;
+        }
+      }
+      revoked.push({ id: inv.id, revokedAt: now });
+    }
+    return revoked;
+  }
+
   const store: Store = {
     async getProfile(): Promise<RealtorProfile | null> {
       await ensureLoaded();
@@ -648,9 +689,16 @@ export function createStore(kv: KV): Store {
           revokedLinks.push({ id: link.id, revokedAt: now });
         }
       }
+      // Invite codes die with the close (Anuraj, Sept 28, 2026): the closed
+      // side's active invites are revoked with the same rolesToKill scope —
+      // a per-side close kills only that side's invites (the other side and
+      // the TC stay live), while a whole-escrow close kills buyer, seller,
+      // and TC. Same revoke semantics as revokeInvite: code invalidated +
+      // device link killed at the same moment.
+      const revokedInvites = revokeActiveInvites(escrowId, rolesToKill);
       const next = replaceEscrow(e);
       await persist();
-      return { escrow: next, revokedLinks };
+      return { escrow: next, revokedLinks, revokedInvites };
     },
 
     async updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
@@ -683,16 +731,22 @@ export function createStore(kv: KV): Store {
       return next;
     },
 
-    async cancelEscrow(escrowId: string): Promise<Escrow> {
+    async cancelEscrow(escrowId: string): Promise<CancelEscrowResult> {
       await ensureLoaded();
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
       if (e.status === 'closed') {
         throw new Error('cancelEscrow: a closed escrow cannot be cancelled');
       }
       e.status = 'cancelled';
+      // Invite codes die with the escrow (Anuraj, Sept 28, 2026): every
+      // active invite — buyer, seller, and TC — is revoked. Same revoke
+      // semantics as revokeInvite: code invalidated + device link killed at
+      // the same moment, so affected devices land on the dead-code state,
+      // never a blank screen. Already-revoked invites are untouched.
+      const revokedInvites = revokeActiveInvites(escrowId);
       const next = replaceEscrow(e);
       await persist();
-      return next;
+      return { escrow: next, revokedInvites };
     },
 
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {

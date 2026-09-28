@@ -15,7 +15,7 @@
 // When the ping fails (offline / no realtor session / RLS blocking) the app
 // behaves exactly as the local-only v1 — sync stays dormant.
 
-import { createStore, type CloseEscrowResult, type KV, type Store } from './store';
+import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type Store } from './store';
 import type {
   ClientRole,
   ClientView,
@@ -773,10 +773,26 @@ export function createSyncedStore(
       return e;
     },
 
-    cancelEscrow: async (escrowId): Promise<Escrow> => {
-      const e = await local.cancelEscrow(escrowId);
+    cancelEscrow: async (escrowId): Promise<CancelEscrowResult> => {
+      const { escrow: e, revokedInvites } = await local.cancelEscrow(escrowId);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      // The invite revocations must reach the server now — a cancelled
+      // escrow's codes die with it (Anuraj, Sept 28, 2026).
+      if (cloudConfigured()) {
+        for (const inv of revokedInvites) {
+          await enqueueOutbox(kv, {
+            op: 'pushRevoke',
+            inviteId: inv.id,
+            revokedAt: inv.revokedAt,
+            attempts: 0,
+          });
+        }
+        // Same immediate-drain rationale as closeEscrow: the revocation must
+        // reach the server now, not at next boot. Non-blocking; failures
+        // stay queued for the boot drain.
+        void drainOutboxNow();
+      }
+      return { escrow: e, revokedInvites };
     },
 
     // Per-side close (escrow lifecycle, Sept 2026): closing is per side —
@@ -785,7 +801,7 @@ export function createSyncedStore(
     // to the cloud (client_links.revoked_at) so the public gate rejects
     // them and the client lands on the dead-link screen.
     closeEscrow: async (escrowId, role): Promise<CloseEscrowResult> => {
-      const { escrow: e, revokedLinks } = await local.closeEscrow(escrowId, role);
+      const { escrow: e, revokedLinks, revokedInvites } = await local.closeEscrow(escrowId, role);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
       if (cloudConfigured()) {
         for (const link of revokedLinks) {
@@ -796,12 +812,23 @@ export function createSyncedStore(
             attempts: 0,
           });
         }
+        // Invite codes die with the close (Anuraj, Sept 28, 2026): converge
+        // the revocations to the cloud so the codes are dead on the server
+        // too (redeem path reads invite.revoked_at).
+        for (const inv of revokedInvites) {
+          await enqueueOutbox(kv, {
+            op: 'pushRevoke',
+            inviteId: inv.id,
+            revokedAt: inv.revokedAt,
+            attempts: 0,
+          });
+        }
         // The revocation must reach the server now — the outbox otherwise
         // only drains at next boot, leaving the client's link live (Anuraj,
         // Sept 2026). Non-blocking; failures stay queued for the boot drain.
         void drainOutboxNow();
       }
-      return { escrow: e, revokedLinks };
+      return { escrow: e, revokedLinks, revokedInvites };
     },
 
     createInvite: async (escrowId, role, partyName): Promise<Invite> => {

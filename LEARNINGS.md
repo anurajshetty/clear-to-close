@@ -278,3 +278,61 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   outcome (strip 118px, full-bleed, photo 88px at right 18, tap routes to
   /profile-update) from bounding boxes, not just source pins.
 
+## 2026-09-28 — "Invite another" opens an inline form inside the View clients sheet (not a nested InviteSheet)
+
+- **Second Modal never presents on iOS.** "Invite another buyer" in the
+  View-clients sheet rendered a nested Modal-based `<InviteSheet>` while
+  the sheet's own Modal was open. iOS presents every RN Modal from the
+  root view controller and silently drops the second
+  presentViewController: (verified in react-native 0.86.3) — the tap fired
+  and state flipped but no invite UI ever appeared, so the button "did
+  nothing" on the iPhone. Anuraj's call: expand an inline form inside the
+  existing sheet instead (existing Field, role-specific label,
+  exact-name hint, "Create code" disabled until non-empty, "Creating…"
+  while busy; on success the list refreshes so the new row renders with
+  code/Copy, and the form collapses and clears). The standalone
+  InviteSheet stays unchanged for first-invite flows from detail/share
+  (never nested there). Practice: one Modal on screen at all times —
+  confirm dialogs get the same inline treatment (the revoke
+  `<ConfirmDialog>` had the identical latent bug and became an inline
+  destructive confirm box). The focused field stays above the keyboard
+  through the shared Sheet's whole-sheet lift, not a per-field scroll.
+- **Pin the pattern, not the look.** The regression test
+  (`tests/invite_inline_form.test.ts`) is structural: exactly one `<Sheet>`,
+  no `<InviteSheet` / `<ConfirmDialog` in ClientList, the scoped
+  doInviteCreate flow (create → `await refresh()` → collapse + clear),
+  role-aware button title, under-cap rendering, the whole-sheet keyboard
+  lift in ui.tsx, and the standalone InviteSheet still wired from
+  detail/share. A source-grep guard catches a reintroduced nested Modal
+  that a render test would only catch on a real device.
+
+## 2026-09-28 — Invite codes die with the escrow (cancel / close)
+
+- **Cancel kills every active invite; per-side close kills only that
+  side's.** Cancelling revokes all active buyer/seller/TC invites;
+  closing the buyer (or seller) side revokes only that side's invites
+  (the other side and the TC stay live); the whole-escrow close (last
+  side) revokes buyer, seller, AND TC. Already-revoked invites are
+  untouched (the helper skips `revokedAt != null`, so timestamps are
+  never rewritten). Revocation reuses the exact revokeInvite semantics —
+  code invalidated AND the device link killed at the same moment — so
+  affected devices land on the existing dead-code state (`redeem`
+  returns `revoked`, `validateClientLink` returns invalid), never a
+  blank screen. This composes with the Activate escrow release: a
+  reactivated escrow starts with zero live codes and the realtor issues
+  fresh invites.
+- **Sync follows the same shape as the link revocation.** `local`
+  returns the killed invites (`CloseEscrowResult.revokedInvites`,
+  new `CancelEscrowResult`); the syncedStore wrapper enqueues a
+  `pushRevoke` outbox op per invite and drains immediately (the codes
+  must die on the server now, not at next boot). `cancelEscrow` changed
+  from `Promise<Escrow>` to `Promise<CancelEscrowResult>` — the one UI
+  caller (`CancelEscrowSheet`) destructures `.escrow`, and the
+  editcancel test was updated the same way. Practice: when a mutation
+  gains side effects that must converge to the cloud, return them in the
+  result object (the closeEscrow `revokedLinks` precedent) rather than
+  re-diffing before/after state.
+- **Tests pin each scope.** `tests/invite_expiry.test.ts` covers: cancel
+  kills buyer/seller/TC (and the redeemed device link), per-side close
+  leaves the other side + TC redeemable, whole close kills all, and a
+  revoked code redeems as `revoked`. 27 assertions, all green.

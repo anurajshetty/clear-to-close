@@ -122,7 +122,7 @@ async function main(): Promise<void> {
   const toCancel = await store.createEscrow({
     address: 'Cancel Me', city: 'X', side: 'sell', sellerName: 'S', openDate, closeDate,
   });
-  const cancelled = await store.cancelEscrow(toCancel.id);
+  const { escrow: cancelled } = await store.cancelEscrow(toCancel.id);
   assert(cancelled.status === 'cancelled', 'cancel: status becomes cancelled');
   assert(cancelled.address === 'Cancel Me', 'cancel: fields untouched');
   assert(cancelled.sellerSteps.length > 0, 'cancel: steps intact');

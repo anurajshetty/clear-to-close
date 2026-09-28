@@ -32,7 +32,7 @@ export function CancelEscrowBody({ escrow, onClose, onCancelled }: CancelEscrowS
     setSaving(true);
     setError(null);
     try {
-      const updated = await store.cancelEscrow(escrow.id);
+      const { escrow: updated } = await store.cancelEscrow(escrow.id);
       onCancelled(updated);
     } catch (err) {
       console.warn('cancelEscrow failed', err);

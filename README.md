@@ -45,7 +45,11 @@ central user; the buyers and sellers they represent are the other parties.
   versa; unchecking reopens only that side. **Explicit close revokes client
   access** (Anuraj, Sept 2026): the moment a side closes, that side's live
   buyer/seller device links are revoked (the transaction coordinator's links
-  are revoked once the whole escrow is closed). The revocation is pushed to
+  are revoked once the whole escrow is closed). **Invite codes die with the
+  close** (Anuraj, Sept 28, 2026): a per-side close revokes that side's
+  active invite codes (the other side's codes and the coordinator's code
+  stay live); closing the final side revokes the buyer, seller, AND
+  coordinator codes. Already-revoked invites are untouched. The revocation is pushed to
   the cloud immediately — no app restart needed — and a client with the
   escrow already open is re-checked when the app is foregrounded. A revoked
   client fails the link gate and lands on "This code no longer works" (the
@@ -65,7 +69,10 @@ central user; the buyers and sellers they represent are the other parties.
 - **Cancel escrow** — the X (or the "Cancel this escrow" action inside the
   update sheet) asks for confirmation, then moves the card to a collapsible
   "Cancelled escrows" section, greyed with a Cancelled tag; the header
-  counts update ("N open · N closed · N cancelled"). Closed and cancelled
+  counts update ("N open · N closed · N cancelled"). **Cancelling revokes
+  every active invite code** for the escrow (buyer, seller, and transaction
+  coordinator) — the codes die with the escrow, and any redeemed device
+  link is killed at the same moment. Closed and cancelled
   cards show the pencil only.
 - **Transaction detail** — per-escrow home with:
   - **Time tracker** — escrow open date, end date (display-only), and where
