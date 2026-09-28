@@ -44,7 +44,7 @@ type UpsertBehavior = 'ok' | 'network-fail' | 'zero-rows' | 'cap-violation';
 
 // Scripted mock cloud: a mutable behavior object so a test can fail the
 // push, assert the error surfaced, then flip to success and retry.
-function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior }) {
+function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior; failLinkSelect?: boolean }) {
   const stats = { writes: 0 };
   const builder = (table: string): unknown => {
     let rows: unknown[] | null = null;
@@ -52,6 +52,7 @@ function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior
     const b: Record<string, (...args: any[]) => any> = {
       select: () => b,
       eq: () => b,
+      is: () => b,
       limit: () => b,
       order: () => b,
       upsert: (r: unknown) => {
@@ -68,6 +69,11 @@ function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior
       },
       then: (res: (v: unknown) => void, rej?: (e: unknown) => void) => {
         try {
+          if (behavior.failLinkSelect && table === 'client_links' && rows === null) {
+            // Scripted outage of the server-side link lookup: the
+            // convergeLinkRevokes op cannot list live links.
+            throw new TypeError('fetch failed');
+          }
           if (rows) {
             stats.writes++;
             switch (behavior.upsert) {
@@ -124,7 +130,7 @@ async function main(): Promise<void> {
 
   // ------------------------------------------------------------- copy pins --
   {
-    const ops = ['pushEscrow', 'pushProfile', 'pushInvite', 'pushRevoke', 'revokeClientLink', 'inviteCap'] as const;
+    const ops = ['pushEscrow', 'pushProfile', 'pushInvite', 'pushRevoke', 'revokeClientLink', 'convergeLinkRevokes', 'inviteCap'] as const;
     const kinds = ['network', 'rejected', 'unknown'] as const;
     for (const op of ops) {
       for (const kind of kinds) {
@@ -310,10 +316,15 @@ async function main(): Promise<void> {
       'a successful revocation retry clears the error');
   }
 
-  // ----------------------- client-link revocation (close) surfaces as well --
+  // ------- link-revocation convergence (close) surfaces failures as well --
+  // Close/revoke no longer enqueue per-link ops for local link ids (they
+  // are locally minted and never match server rows). Instead each revoked
+  // invite gets a convergeLinkRevokes op that lists the invite's live
+  // server links and revokes them. A failed lookup must surface visibly
+  // and stay retryable — never strand a silent zombie link.
   {
     const kv = memoryKV();
-    const behavior = { sessionUid: UID, upsert: 'ok' as UpsertBehavior };
+    const behavior = { sessionUid: UID, upsert: 'ok' as UpsertBehavior, failLinkSelect: false };
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => makeCloud(behavior) as never });
     await initCloudSync();
     const e = await store.createEscrow({
@@ -322,24 +333,28 @@ async function main(): Promise<void> {
     });
     const inv = await store.createInvite(e.id, 'buyer', 'Link Client');
     await tick(150);
-    const res = await store.redeemInvite(inv.code, 'Link Client');
-    assert(res.ok === true && Boolean((res as { linkId?: string }).linkId),
-      'local redeem binds a device link');
     // Per-side close requires every step on the side to be complete.
     const le = await store.getEscrow(e.id);
     for (const s of le!.buyerSteps) {
       if (!s.done) await store.toggleStep(e.id, 'buyer', s.id);
     }
     await tick(300);
-    // RLS owner-policy rejects the close + link-revocation writes.
-    behavior.upsert = 'zero-rows';
+    // The server-side link lookup fails: the convergence op stays queued
+    // and the realtor sees the failure (retryable), not a silent zombie.
+    behavior.failLinkSelect = true;
     await store.closeEscrow(e.id, 'buyer');
     await tick(300); // closeEscrow kicks a non-blocking immediate drain
     const errors = await store.getSyncErrors();
-    const linkRev = errors.find((x) => x.op === 'revokeClientLink');
-    assert(!!linkRev, 'failed client-link revocation records a visible error');
-    assert(linkRev!.kind === 'rejected', 'RLS-rejected link revocation is a rejection');
-    assert(/different account/.test(linkRev!.why), 'link-revocation copy explains the mismatch');
+    const linkRev = errors.find((x) => x.op === 'convergeLinkRevokes');
+    assert(!!linkRev, 'failed link-revocation convergence records a visible error');
+    assert(linkRev!.kind === 'network' && linkRev!.retryable, 'convergence failure is retryable');
+    assert(/client access/i.test(linkRev!.what), 'convergence copy names the client access');
+    // Recovery: the lookup succeeds, Retry converges and clears the record.
+    behavior.failLinkSelect = false;
+    await store.retrySync();
+    await tick(300);
+    assert(!(await store.getSyncErrors()).some((x) => x.op === 'convergeLinkRevokes'),
+      'a successful convergence retry clears the error');
   }
 
   // -------- exhausted automatic attempts stay manually retryable ---------

@@ -32,7 +32,7 @@ export interface KV {
 }
 
 /** A client device link killed by an explicit escrow close (for cloud
- * convergence via the revokeClientLink outbox op). */
+ * convergence via the convergeLinkRevokes outbox op). */
 export interface RevokedClientLink {
   id: string;
   revokedAt: string;
@@ -151,7 +151,7 @@ export interface Store {
    */
   closeEscrow(escrowId: string, role: ClientRole): Promise<CloseEscrowResult>;
   createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite>;
-  revokeInvite(inviteId: string): Promise<void>;
+  revokeInvite(inviteId: string): Promise<{ revokedLinks: RevokedClientLink[] }>;
   /** Replace an invite's code (cloud collision regeneration). */
   updateInviteCode(inviteId: string, code: string): Promise<Invite>;
   getInvite(inviteId: string): Promise<Invite | null>;
@@ -843,7 +843,7 @@ export function createStore(kv: KV): Store {
       return invite;
     },
 
-    async revokeInvite(inviteId: string): Promise<void> {
+    async revokeInvite(inviteId: string): Promise<{ revokedLinks: RevokedClientLink[] }> {
       await ensureLoaded();
       const inv = data.invites.find((i) => i.id === inviteId);
       if (!inv) throw new Error(`Invite not found: ${inviteId}`);
@@ -853,13 +853,19 @@ export function createStore(kv: KV): Store {
       data.invites[data.invites.indexOf(inv)] = next;
       // The client link dies with the invite: a revoked client can never get
       // back in on the old link (their access is killed, not just future
-      // redemption). validateClientLink reads link.revokedAt.
+      // redemption). validateClientLink reads link.revokedAt. The killed
+      // links are returned for cloud convergence — without this, a single
+      // invite revoke leaves a zombie live device link on the server that
+      // blocks the device from joining any other escrow (Sept 28, 2026).
+      const revokedLinks: RevokedClientLink[] = [];
       for (const link of data.links) {
         if (link.inviteId === inviteId && !link.revokedAt) {
           link.revokedAt = now;
+          revokedLinks.push({ id: link.id, revokedAt: now });
         }
       }
       await persist();
+      return { revokedLinks };
     },
 
     async updateInviteCode(inviteId: string, code: string): Promise<Invite> {

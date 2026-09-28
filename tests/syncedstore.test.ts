@@ -234,8 +234,11 @@ async function main(): Promise<void> {
   {
     // Regenerate through the wrapper (cloud dormant -> local path): fresh
     // code for the same party, old code dead, old device link dead, and the
-    // convergence ops (pushRevoke old / pushInvite new / revokeClientLink)
-    // are queued.
+    // convergence ops (pushRevoke old / pushInvite new / convergeLinkRevokes)
+    // are queued. No revokeClientLink op: local link ids are minted by the
+    // offline redeem fallback and never exist as server rows, so the killed
+    // server links are converged by the retryable converge op's invite_id
+    // query at drain time (Sept 28, 2026).
     const kv = memoryKV();
     const { store } = createSyncedStore(kv, { cloudClient: () => null });
     const escrow = await inviteEscrow(store);
@@ -252,8 +255,8 @@ async function main(): Promise<void> {
     const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string }[];
     const ops = outbox.map((o) => o.op);
     assert(
-      ops.includes('pushRevoke') && ops.includes('pushInvite') && ops.includes('revokeClientLink'),
-      `regen queues pushRevoke + pushInvite + revokeClientLink (got ${ops.join(',')})`,
+      ops.includes('pushRevoke') && ops.includes('pushInvite') && ops.includes('convergeLinkRevokes'),
+      `regen queues pushRevoke + pushInvite + convergeLinkRevokes (got ${ops.join(',')})`,
     );
   }
 

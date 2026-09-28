@@ -110,6 +110,10 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/invite_expiry.test.ts" \
   "$ROOT/tests/side_lock_confirm_create.test.ts" \
   "$ROOT/tests/profile_media_removal.test.ts" \
+  "$ROOT/tests/clients_kicker.test.ts" \
+  "$ROOT/tests/revoke_invite_kills_link.test.ts" \
+  "$ROOT/tests/revoke_links_server_authoritative.test.ts" \
+  "$ROOT/tests/outbox_concurrency.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -192,6 +196,10 @@ node "$OUT/tests/invite_inline_form.test.js"
 node "$OUT/tests/invite_expiry.test.js"
 node "$OUT/tests/side_lock_confirm_create.test.js"
 node "$OUT/tests/profile_media_removal.test.js"
+node "$OUT/tests/clients_kicker.test.js"
+node "$OUT/tests/revoke_invite_kills_link.test.js"
+node "$OUT/tests/revoke_links_server_authoritative.test.js"
+node "$OUT/tests/outbox_concurrency.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

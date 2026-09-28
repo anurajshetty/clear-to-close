@@ -15,7 +15,7 @@
 // When the ping fails (offline / no realtor session / RLS blocking) the app
 // behaves exactly as the local-only v1 — sync stays dormant.
 
-import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type Store } from './store';
+import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type RevokedClientLink, type Store } from './store';
 import type {
   ClientRole,
   ClientView,
@@ -370,7 +370,7 @@ export function createSyncedStore(
       // must upload a changed photo/banner, not just push the row.
       saveProfile: (prof: RealtorProfile) => local.saveProfile(prof),
       manual,
-      onOpError: (op: OutboxOp, error: unknown) => {
+      onOpError: async (op: OutboxOp, error: unknown) => {
         // A cap rejection is authoritative and final: retrying it would
         // never succeed, so it gets the final (dismissable) copy instead
         // of the retryable one.
@@ -381,7 +381,11 @@ export function createSyncedStore(
                 { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
                 error,
               );
-        void recordSyncError(kv, {
+        // Awaited (not fire-and-forget): the drain awaits onOpError, so
+        // two ops failing in the same drain record sequentially. A void
+        // call here raced concurrent read-modify-writes on the persisted
+        // error map and silently dropped one record (Sept 28 2026).
+        await recordSyncError(kv, {
           key: opErrorKey(op),
           op: op.op === 'pushInvite' && isCapViolation(error) ? 'inviteCap' : op.op,
           escrowId: op.escrowId,
@@ -419,6 +423,42 @@ export function createSyncedStore(
       await drainAndReconcileErrors(c, uid);
     } catch {
       // Stays queued; the boot-time drain retries.
+    }
+  }
+
+  /**
+   * Server-authoritative link convergence (Sept 28, 2026): the redeem_invite
+   * RPC creates client_links rows server-side, which the realtor's device
+   * never holds locally — so the killed links are converged from the
+   * server, not from local data.links (a local-state-only convergence is a
+   * no-op in production: tests that seed local data.links pass for the
+   * wrong reason).
+   *
+   * This enqueues one retryable `convergeLinkRevokes` op per revoked
+   * invite; the drain runs the live server query and stamps revoked_at.
+   * A failed query stays queued (attempts/manualOnly) and retries on the
+   * next drain instead of stranding a zombie link with no recovery path —
+   * the Sept 28 side-effect pass caught that a one-shot query-then-enqueue
+   * here recorded a sync error but left nothing to retry. The immediate
+   * drain after each action runs the op now; failures surface via the
+   * drain's onOpError recording.
+   *
+   * NOTE: no direct `revokeClientLink` ops are enqueued for local
+   * data.links ids — local ids are minted by the offline redeem fallback
+   * and never exist as server rows, so pushing revokes for them would only
+   * produce permanent SyncNotAppliedError records. Server links are
+   * discovered by the converge op's invite_id query.
+   */
+  async function convergeServerLinks(
+    revokedInvites: { id: string; revokedAt: string }[],
+  ): Promise<void> {
+    for (const inv of revokedInvites) {
+      await enqueueOutbox(kv, {
+        op: 'convergeLinkRevokes',
+        inviteId: inv.id,
+        revokedAt: inv.revokedAt,
+        attempts: 0,
+      });
     }
   }
 
@@ -824,6 +864,13 @@ export function createSyncedStore(
             attempts: 0,
           });
         }
+        // Zombie-link fix (Sept 28, 2026): cancelling must kill the
+        // server-side device links too, exactly like closeEscrow — the
+        // redeem_invite RPC creates client_links rows server-side, which
+        // the realtor's device never holds locally, so the killed links
+        // are converged from the server via a retryable converge op
+        // (local revokeActiveInvites only kills the local copies).
+        await convergeServerLinks(revokedInvites);
         // Same immediate-drain rationale as closeEscrow: the revocation must
         // reach the server now, not at next boot. Non-blocking; failures
         // stay queued for the boot drain.
@@ -841,14 +888,6 @@ export function createSyncedStore(
       const { escrow: e, revokedLinks, revokedInvites } = await local.closeEscrow(escrowId, role);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
       if (cloudConfigured()) {
-        for (const link of revokedLinks) {
-          await enqueueOutbox(kv, {
-            op: 'revokeClientLink',
-            linkId: link.id,
-            revokedAt: link.revokedAt,
-            attempts: 0,
-          });
-        }
         // Invite codes die with the close (Anuraj, Sept 28, 2026): converge
         // the revocations to the cloud so the codes are dead on the server
         // too (redeem path reads invite.revoked_at).
@@ -860,6 +899,14 @@ export function createSyncedStore(
             attempts: 0,
           });
         }
+        // Zombie-link fix (Sept 28, 2026): the killed device links are
+        // converged server-authoritatively via a retryable converge op.
+        // No revokeClientLink ops are enqueued for the local revokedLinks:
+        // local link ids are minted by the offline redeem fallback and
+        // never exist as server rows, so pushing revokes for them would
+        // only produce permanent SyncNotAppliedError records. The local
+        // kills already happened in local.closeEscrow above.
+        await convergeServerLinks(revokedInvites);
         // The revocation must reach the server now — the outbox otherwise
         // only drains at next boot, leaving the client's link live (Anuraj,
         // Sept 2026). Non-blocking; failures stay queued for the boot drain.
@@ -930,11 +977,41 @@ export function createSyncedStore(
       return invite;
     },
 
-    revokeInvite: async (inviteId: string): Promise<void> => {
-      await local.revokeInvite(inviteId);
+    revokeInvite: async (inviteId: string): Promise<{ revokedLinks: RevokedClientLink[] }> => {
+      const { revokedLinks } = await local.revokeInvite(inviteId);
       const inv = await local.getInvite(inviteId);
       const revokedAt = inv?.revokedAt ?? new Date().toISOString();
-      bgPush((c) => pushRevokeNow(c, inviteId, revokedAt), { op: 'pushRevoke', inviteId });
+      if (!cloudConfigured()) return { revokedLinks };
+      // Zombie-link fix (Sept 28, 2026): killing only the invite row leaves
+      // the device link live on the server, and the unique live-link index
+      // then blocks that device from joining any other escrow. Converge the
+      // killed links too — server-authoritatively, because the redeem_invite
+      // RPC creates client_links rows server-side (the realtor's device
+      // never holds them locally). Same "code invalidated + device link
+      // killed at the same moment" semantics.
+      //
+      // Single coordinated outbox writer: both convergence ops are enqueued
+      // awaited and in order. bgPush's dormant branch enqueues fire-and-
+      // forget, and two concurrent enqueueOutbox calls read-then-write —
+      // the last write clobbers the other op (and the drain's reconcile
+      // then clears its sync-error record). So bgPush gets op: null here:
+      // it still attempts the immediate push and kicks the background
+      // re-init when dormant, but never touches the outbox.
+      bgPush((c) => pushRevokeNow(c, inviteId, revokedAt), null);
+      await enqueueOutbox(kv, { op: 'pushRevoke', inviteId, attempts: 0 });
+      // Server-authoritative link convergence (Sept 28, 2026): the killed
+      // device links are converged from the server via a retryable
+      // converge op — the local revokedLinks above are empty in production
+      // (the redeem_invite RPC creates client_links rows server-side,
+      // which the realtor's device never holds locally). Tests must seed
+      // the server side, not local data.links, or they pass for the wrong
+      // reason.
+      await convergeServerLinks([{ id: inviteId, revokedAt }]);
+      // The device must lose access now, not at next boot (Anuraj, Sept
+      // 2026): immediate drain, same rationale as closeEscrow. Failures
+      // stay queued and surface via the drain's onOpError recording.
+      void drainOutboxNow();
+      return { revokedLinks };
     },
 
     updateInviteCode: (inviteId: string, code: string) => local.updateInviteCode(inviteId, code),
@@ -1096,14 +1173,14 @@ export function createSyncedStore(
         // kill the old device link (drain retries each until it lands).
         await enqueueOutbox(kv, { op: 'pushRevoke', inviteId, attempts: 0 });
         await enqueueOutbox(kv, { op: 'pushInvite', inviteId: res.invite.id, attempts: 0 });
-        if (res.revokedLink) {
-          await enqueueOutbox(kv, {
-            op: 'revokeClientLink',
-            linkId: res.revokedLink.id,
-            revokedAt: res.revokedLink.revokedAt,
-            attempts: 0,
-          });
-        }
+        const oldInvite = await local.getInvite(inviteId);
+        const revokedAt = oldInvite?.revokedAt ?? new Date().toISOString();
+        // Server-authoritative link convergence (Sept 28, 2026): the old
+        // device link is converged from the server via a retryable
+        // converge op — the local revokedLink above is null in production
+        // (the redeem_invite RPC creates client_links rows server-side,
+        // which the realtor's device never holds locally).
+        await convergeServerLinks([{ id: inviteId, revokedAt }]);
         // Same immediate-drain rationale as closeEscrow: the old device must
         // lose access now, not at next boot (Anuraj, Sept 2026).
         void drainOutboxNow();

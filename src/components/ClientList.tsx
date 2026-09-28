@@ -24,7 +24,6 @@ import { colors, radius } from '../theme';
 export function ClientList({
   visible,
   escrowId,
-  address,
   side,
   onClose,
 }: {
@@ -163,7 +162,7 @@ export function ClientList({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <Kicker>{side === 'tc' ? 'TC' : 'Clients'} · {address}</Kicker>
+            <Kicker>{side === 'tc' ? 'TC' : 'Clients'}</Kicker>
             <Text style={styles.title}>
               {side === 'tc' ? 'View TC' : 'View clients'}
             </Text>

@@ -68,7 +68,13 @@ export interface CloudViewResult {
 }
 
 interface OutboxOp {
-  op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke' | 'revokeClientLink';
+  op:
+    | 'pushEscrow'
+    | 'pushProfile'
+    | 'pushInvite'
+    | 'pushRevoke'
+    | 'revokeClientLink'
+    | 'convergeLinkRevokes';
   escrowId?: string;
   inviteId?: string;
   linkId?: string;
@@ -1332,6 +1338,31 @@ export async function pushLinkRevokeNow(
   if (affected < 1) throw new SyncNotAppliedError('client_links', 1, affected);
 }
 
+/**
+ * Server-authoritative live link IDs for an invite (Sept 28, 2026).
+ * client_links rows are created server-side by the redeem_invite RPC —
+ * the realtor's device never holds them in its local store (local
+ * data.links is written only by the offline redeem fallback) — so every
+ * link-killing path MUST query the server instead of trusting local
+ * data.links. A local-state-only convergence is a no-op in production:
+ * tests that seed local data.links pass for the wrong reason.
+ */
+export async function fetchLiveServerLinkIds(client: Cloud, inviteId: string): Promise<string[]> {
+  const { data, error } = await client
+    .from('client_links')
+    .select('id')
+    .eq('invite_id', inviteId)
+    .is('revoked_at', null);
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  const ids: string[] = [];
+  for (const r of rows) {
+    const id = String((r as Record<string, unknown>).id ?? '');
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
 export async function fetchCloudView(client: Cloud, linkId: string): Promise<CloudViewResult> {
   try {
     const { data, error } = await client.rpc('get_client_view', { p_link_id: linkId });
@@ -1344,6 +1375,37 @@ export async function fetchCloudView(client: Cloud, linkId: string): Promise<Clo
 
 // ------------------------------------------------------------------ outbox --
 
+/**
+ * Outbox serialization (Sept 28, 2026): every outbox read-modify-write
+ * runs on a per-KV promise chain, so a fire-and-forget drain and a bgPush
+ * completion can never interleave a stale read between another writer's
+ * read and write. Without this, a stale dequeueOutboxOp — from an earlier
+ * bgPush whose push finished late — could read the outbox, then write
+ * back its filtered snapshot AFTER a newer enqueue landed, silently
+ * dropping the newer op with no error and an empty outbox. That is
+ * exactly the Sept 28 zombie-link failure: a close's buyer converge op
+ * vanished between its enqueue and the drain's read, the server link
+ * stayed live, and nothing remained queued to retry it.
+ *
+ * The chain survives rejections: a failed op must not stall every later
+ * outbox writer forever. The drain holds the chain for its whole
+ * read-process-write cycle; enqueues behind a running drain simply wait
+ * their turn on the fresh state instead of racing it.
+ */
+const outboxChains = new WeakMap<KV, Promise<void>>();
+
+function withOutboxChain<T>(kv: KV, fn: () => Promise<T>): Promise<T> {
+  const prev = outboxChains.get(kv) ?? Promise.resolve();
+  const run = prev.then(fn);
+  outboxChains.set(
+    kv,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
 async function readOutbox(kv: KV): Promise<OutboxOp[]> {
   try {
     const raw = await kv.getItem(K_OUTBOX);
@@ -1365,11 +1427,13 @@ export async function readOutboxOps(kv: KV): Promise<OutboxOp[]> {
  * realtor's session.
  */
 export async function clearOutbox(kv: KV): Promise<void> {
-  try {
-    await kv.removeItem(K_OUTBOX);
-  } catch {
-    // best-effort
-  }
+  return withOutboxChain(kv, async () => {
+    try {
+      await kv.removeItem(K_OUTBOX);
+    } catch {
+      // best-effort
+    }
+  });
 }
 
 async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
@@ -1381,11 +1445,13 @@ async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
 }
 
 export async function enqueueOutbox(kv: KV, op: OutboxOp): Promise<void> {
-  const ops = await readOutbox(kv);
-  // Coalesce: one pending op per (op, escrowId, inviteId, linkId).
-  const next = ops.filter((o) => outboxOpKey(o) !== outboxOpKey(op));
-  next.push({ ...op, attempts: 0 });
-  await writeOutbox(kv, next);
+  return withOutboxChain(kv, async () => {
+    const ops = await readOutbox(kv);
+    // Coalesce: one pending op per (op, escrowId, inviteId, linkId).
+    const next = ops.filter((o) => outboxOpKey(o) !== outboxOpKey(op));
+    next.push({ ...op, attempts: 0 });
+    await writeOutbox(kv, next);
+  });
 }
 
 /** Coalescing key for one queued push op. */
@@ -1409,10 +1475,12 @@ export async function dequeueOutboxOp(
   kv: KV,
   op: { op: string; escrowId?: string; inviteId?: string; linkId?: string },
 ): Promise<void> {
-  const ops = await readOutbox(kv);
-  const key = outboxOpKey(op);
-  const next = ops.filter((o) => outboxOpKey(o) !== key);
-  if (next.length !== ops.length) await writeOutbox(kv, next);
+  return withOutboxChain(kv, async () => {
+    const ops = await readOutbox(kv);
+    const key = outboxOpKey(op);
+    const next = ops.filter((o) => outboxOpKey(o) !== key);
+    if (next.length !== ops.length) await writeOutbox(kv, next);
+  });
 }
 
 const K_CONFLICT_LOG = 'ctc:conflict-log';
@@ -1483,14 +1551,38 @@ export async function drainOutbox(
      * Called with the op and the error each time an op fails during the
      * drain (Sept 2026 sync-failure surface: the realtor must see every
      * failure on screen, never silently queued). Optional so existing
-     * callers and tests keep working.
+     * callers and tests keep working. May be async: the drain awaits it,
+     * so concurrent failure records cannot clobber each other in the
+     * persisted map (read-modify-write race, caught Sept 28 2026 when a
+     * revoke drain lost the pushRevoke record next to a converge failure).
      */
-    onOpError?(op: OutboxOp, error: unknown): void;
+    onOpError?(op: OutboxOp, error: unknown): void | Promise<void>;
     /**
      * True when the drain was triggered by an explicit user Retry (Sept
      * 2026 sync-failure surface). Manual drains also attempt manual-only
      * ops; automatic drains (boot, background) skip them.
      */
+    manual?: boolean;
+  },
+): Promise<{ drained: number; pending: number }> {
+  // Serialized with every other outbox writer (see withOutboxChain): the
+  // drain's read-process-write cycle is atomic relative to concurrent
+  // enqueues and bgPush dequeues, so no op can vanish between the read
+  // and the final write.
+  return withOutboxChain(kv, () => drainOutboxLocked(client, userId, kv, load));
+}
+
+async function drainOutboxLocked(
+  client: Cloud,
+  userId: string,
+  kv: KV,
+  load: {
+    getEscrow(id: string): Promise<Escrow | null>;
+    getProfile(): Promise<RealtorProfile | null>;
+    getInvite?(inviteId: string): Promise<Invite | null>;
+    updateInviteCode?(inviteId: string, code: string): Promise<unknown>;
+    saveProfile?(p: RealtorProfile): Promise<void>;
+    onOpError?(op: OutboxOp, error: unknown): void | Promise<void>;
     manual?: boolean;
   },
 ): Promise<{ drained: number; pending: number }> {
@@ -1532,10 +1624,22 @@ export async function drainOutbox(
         if (inv?.revokedAt) await pushRevokeNow(client, inv.id, inv.revokedAt);
       } else if (op.op === 'revokeClientLink' && op.linkId && op.revokedAt) {
         await pushLinkRevokeNow(client, op.linkId, op.revokedAt);
+      } else if (op.op === 'convergeLinkRevokes' && op.inviteId && op.revokedAt) {
+        // Server-authoritative link convergence (Sept 28, 2026): the
+        // redeem_invite RPC creates client_links rows server-side, which
+        // the realtor's device never holds locally — so the killed links
+        // are discovered with a live server query HERE, at drain time,
+        // where a failure stays queued and retries. A one-shot query at
+        // action time would strand the zombie with no recovery path (the
+        // Sept 28 side-effect pass caught exactly that hole).
+        const ids = await fetchLiveServerLinkIds(client, op.inviteId);
+        for (const id of ids) {
+          await pushLinkRevokeNow(client, id, op.revokedAt);
+        }
       }
       drained++;
     } catch (e) {
-      load.onOpError?.(op, e);
+      await load.onOpError?.(op, e);
       if (e instanceof SyncNotAppliedError) {
         // Ownership mismatch (the target row belongs to a different user
         // than this session): retrying under THIS identity can never

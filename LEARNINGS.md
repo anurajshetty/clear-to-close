@@ -440,3 +440,251 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   `pushProfileWithMedia` converges a removal; pending flags re-run on
   retry; re-pick after clear re-uploads with a fresh versioned URL; a
   failed Storage delete rejects (loud). 42 assertions, all green.
+
+## View-clients kicker: no property address (Sept 28, 2026)
+- **Surgical change, exact scope.** Anuraj's directive with screenshot: the
+  View clients sheet kicker read "CLIENTS · <full address>"; it now reads
+  just "CLIENTS" (or "TC"). Only the kicker line in
+  `src/components/ClientList.tsx` changed; the address stays on the
+  escrow-detail and client-home surfaces where it belongs.
+- **Unused prop removed at the call site, kept in the interface.** The
+  `address` prop was destructured in `ClientList` only for the kicker; the
+  destructure was removed while the `address: string` interface field and
+  all callers stay untouched — no ripple into call sites.
+- **Test pins the kicker text.** `tests/clients_kicker.test.ts` asserts the
+  one `<Kicker>` line still shows TC/Clients per side and contains neither
+  the address nor a middle-dot separator.
+
+## Zombie device links on single-invite revoke (Sept 28, 2026)
+- **CONFIRMED from code:** `syncedStore.revokeInvite` pushed only
+  `pushRevokeNow` (invites.revoked_at) and never revoked the
+  `client_links` rows. The server-side link stayed live (`revoked_at =
+  NULL`), still occupying the device's one-live-link slot in
+  `client_links_device_live_uidx` — so a later redeem for a DIFFERENT
+  escrow on that device hit the 23505 unique violation and the client saw
+  "This device is already linked to another escrow. Ask your realtor to
+  release it, then try again." with nothing left for the realtor to
+  release. Regenerate and close-escrow were immune because they enqueue
+  the `revokeClientLink` outbox op; single-invite revoke was the only
+  path that skipped it.
+- **Fix mirrors the existing pattern.** `store.revokeInvite` now returns
+  `{ revokedLinks }` (the local loop already killed the links; it just
+  never surfaced them). `syncedStore.revokeInvite` enqueues a
+  `revokeClientLink` op per killed link and drains immediately — the
+  exact closeEscrow/regenerateInvite pattern, same "code invalidated +
+  device link killed at the same moment" semantics. All existing callers
+  ignore the return value, so the signature change is safe.
+- **Tests pin each scope.** `tests/revoke_invite_kills_link.test.ts`:
+  revokeInvite returns the killed link id + revokedAt; the link reads
+  dead after revoke; the same device can redeem a different escrow's code
+  afterward; revoking an invite with no redeemed link enqueues nothing;
+  the synced wrapper pushes the link revocation to the server
+  (pushLinkRevokeNow), the op drains to zero, and the public gate reads
+  the link dead. A genuinely-live link on another escrow still maps 23505
+  to `device_has_link` (pinned separately in syncedstore.test.ts).
+
+## Outbox enqueue is not concurrency-safe (Sept 28, 2026)
+- **CONFIRMED by test:** wiring `revokeInvite` to enqueue a new
+  `revokeClientLink` op AFTER `bgPush` broke two existing suites. Root
+  cause is a read-then-write race, not the new op itself:
+  `enqueueOutbox` reads the outbox, appends, and writes it back. Two
+  concurrent enqueues (bgPush's fire-and-forget dormant branch + an
+  awaited enqueue) interleave so the last write clobbers the other op.
+  Worse, the drain's `finally` reconcile then cleared the clobbered op's
+  sync-error record ("retryable records persist only while their op is
+  still in the outbox"), so the failure went invisible too.
+- **Practice:** one coordinated outbox writer per user action. In
+  `syncedStore.revokeInvite`, bgPush now gets `op: null` (immediate push
+  attempt + dormant re-init kick, no outbox touch) and the wrapper
+  enqueues `pushRevoke` + `revokeClientLink` awaited and in order before
+  the single immediate drain. Never run a fire-and-forget enqueue next
+  to an awaited one on the same KV.
+
+## Server-created rows are not in the local store: the zombie-link correction (Sept 28, 2026)
+- **CONFIRMED by audit, not by a failing test:** the `revoke_invite_kills_link` fix shipped with a full green suite, yet was a no-op in production.
+  The `redeem_invite` RPC creates `client_links` rows server-side; the
+  redeeming device never stores them locally, and the realtor's device
+  never hydrates them at all — the realtor's local `data.links` is written
+  ONLY by the offline redeem fallback. The first fix converged link
+  revocations from the realtor's LOCAL `data.links`, which is empty in
+  production, so every kill-link path (single revoke, cancel, close,
+  regenerate) enqueued nothing. The suite passed because it seeded an
+  impossible state: a locally-held link for a server-side row.
+- **Practice, now enforced by test design:** tests for server-created data
+  must seed the SERVER side and assert against it. Every kill-link path now
+  queries live server `client_links` per invite
+  (`fetchLiveServerLinkIds(client, inviteId)` in `src/lib/cloudSync.ts`,
+  converged via `convergeServerLinks` in `syncedStore.ts` for
+  `revokeInvite`, `cancelEscrow`, `closeEscrow`, and the regenerate
+  fallback), instead of inferring server rows from local state. The
+  faithful in-memory Supabase stand-in (`tests/mock_server.ts`) encodes
+  the production shape — server-side link creation in `redeem_invite`, the
+  one-live-link-per-device unique index (revoked links free the slot,
+  live links on other escrows block with `device_has_link`), revoked
+  invites rejecting codes — and the suites drive it: single revoke, cancel
+  (including cancel freeing a device to redeem a new code afterward, and
+  genuinely-live links still blocking), close, and regenerate all
+  converge `revoked_at` server-side with local `data.links` EMPTY. Any test
+  that seeds local state for server-created rows is a red flag.
+
+## Stale outbox writers clobber newer ops: serialize the outbox (Sept 28, 2026)
+- **CONFIRMED by instrumented test run:** after the server-authoritative
+  converge fix, `close_revoke_converges.test.ts` failed intermittently —
+  the buyer's server link stayed live (`revoked_at` null) while the TC link
+  was revoked, the outbox ended empty, and no sync error was recorded. A
+  sequence-numbered log of every outbox write pinned it: the buyer's
+  converge enqueue completed (`[pushEscrow, pr1, pr2, c-buyer]`), then a
+  STALE `dequeueOutboxOp` — from an earlier `bgPush` whose push finished
+  late — wrote its stale snapshot (`[pr1, pr2]`, read before the converge
+  enqueue), silently dropping the buyer's converge op. The TC converge
+  then enqueued onto the clobbered state, the drain executed only what
+  remained, and the zombie survived with nothing queued to retry it.
+- **Root cause:** every outbox mutation (`enqueueOutbox`,
+  `dequeueOutboxOp`, `drainOutbox`'s read-process-write) was an
+  uncoordinated read-modify-write. Fire-and-forget drains and bgPush
+  completions interleave freely, so any writer's read can go stale between
+  another writer's read and write. The earlier fix in this branch (one
+  coordinated writer per action) narrowed the window but could not close
+  it: the stale writer belongs to a PREVIOUS action.
+- **Fix:** a per-KV promise chain (`withOutboxChain` in
+  `src/lib/cloudSync.ts`) serializes `enqueueOutbox`, `dequeueOutboxOp`,
+  `clearOutbox`, and the entire `drainOutbox` read-process-write cycle.
+  The chain survives rejections so one failed op never stalls later
+  writers. The drain holds the chain across its network I/O; enqueues
+  behind a running drain wait their turn on the fresh state instead of
+  racing it. No reentrancy: the drain never calls an outbox writer.
+- **Regression test:** `tests/outbox_concurrency.test.ts` uses a rigged KV
+  (reads/writes pend until released) to deterministically interleave a
+  stale dequeue's read/write around newer enqueues — the exact Sept 28
+  shape. It fails without the chain (dropped converge op, zombie link)
+  and passes with it, then drains all surviving ops against the mock
+  server and asserts every invite/link revoked and the outbox empty.
+- **Practice:** any persisted read-modify-write shared by fire-and-forget
+  writers must be serialized. A "stale" writer is not a bug in the writer
+  — it is the normal shape of bgPush completions — so the coordination
+  belongs in the store, not in each caller.
+
+## Side-effect checklist: escrow lifecycle actions (Anuraj hard rule, Sept 28, 2026)
+Every lifecycle action enumerated against every surface it touches —
+Expected vs Actual (verified from code + tests, not assumed). Two genuine
+gaps found and fixed in this branch; the rest verified as handled.
+
+### cancelEscrow
+- Active invite codes: EXPECTED all active codes (buyer, seller, TC) die.
+  ACTUAL yes — local revokeActiveInvites revokes every role; synced wrapper
+  enqueues pushRevoke per invite + immediate drain; server invites.revoked_at
+  set, redeem returns 'revoked'.
+- Device links: EXPECTED every server client_links row for the escrow's
+  invites killed. ACTUAL yes — one retryable convergeLinkRevokes op per
+  revoked invite; the drain queries live server links by invite_id and
+  stamps revoked_at. Pinned: cancel converges revoked_at; the freed device
+  redeems a new code afterward; genuinely-live links on other escrows still
+  block (device_has_link).
+- Checked items/steps: EXPECTED preserved. ACTUAL yes — untouched.
+- Deal list: EXPECTED Active -> Cancelled section, counts update. ACTUAL
+  yes — status='cancelled' excluded from the open filter, in the cancelled
+  filter; count line shows "N open · M closed · K cancelled".
+- Client home views (buyer/seller/TC): EXPECTED all land on the dead-link
+  screen ("This code no longer works"). ACTUAL yes — get_client_view
+  returns 'revoked', the gate fails closed. (Offline fail-open still renders
+  the cached view — by design.)
+- Realtor views: EXPECTED Cancelled chip on the card; "View clients"/"View
+  TC" flip back to "Invite client"/"Invite TC"; no X on cancelled cards.
+  ACTUAL yes — ClientList filters revoked invites; buttons count only
+  non-revoked; onCancel is null for non-open escrows.
+
+### closeEscrow — per-side (dual agency, first side)
+- Invite codes: EXPECTED only the closed side's codes die; other side + TC
+  stay live. ACTUAL yes — rolesToKill=[role]; revokeActiveInvites +
+  pushRevoke scoped to that role.
+- Device links: EXPECTED closed side's server links killed; other side + TC
+  untouched. ACTUAL yes — converge ops only for the revoked invites.
+- Steps: EXPECTED preserved (all done — enforced precondition). ACTUAL yes.
+- Deal list: EXPECTED stays in Active (not whole-closed). ACTUAL yes —
+  isClosedRow is false until every side closes; status stays 'open'. This is
+  the approved per-side semantics, not a bug.
+- Client home views: EXPECTED closed side's client -> dead-link screen;
+  other side + TC -> normal home. ACTUAL yes.
+- Realtor views: EXPECTED "Closed <date>" chip on the closed side only.
+  ACTUAL yes.
+
+### closeEscrow — whole (single-side close, or second side of dual)
+- Invite codes: EXPECTED all die including TC. ACTUAL yes —
+  rolesToKill=[role,'tc'] once applyDerivedStatus flips status to 'closed'.
+- Device links: EXPECTED all server links including TC killed. ACTUAL yes.
+- Steps: preserved. Deal list: EXPECTED Active -> Closed. ACTUAL yes —
+  isClosedRow true.
+- Client home views: EXPECTED all roles -> dead-link screen. ACTUAL yes.
+- Realtor views: EXPECTED Closed chip; review gate still allows review at
+  100% on a closed (non-cancelled) escrow. ACTUAL yes.
+
+### revokeInvite (single)
+- Invite codes: EXPECTED that code dies; sibling invites stay live. ACTUAL
+  yes — local revoke + pushRevoke op + immediate drain.
+- Device links: EXPECTED that invite's server links killed (the original
+  zombie). ACTUAL yes — convergeLinkRevokes op; the Sept 28 correction
+  (server-authoritative, never local data.links) plus the retryable-op fix
+  below. Pinned with local data.links EMPTY (the production shape).
+- Steps / deal list: untouched; escrow stays Active. Client home: EXPECTED
+  revoked client -> dead-link screen, others unaffected. ACTUAL yes.
+- Realtor views: EXPECTED "View clients" count drops, flips to "Invite
+  client" at zero. ACTUAL yes.
+
+### regenerateInvite
+- Invite codes: EXPECTED old code dies atomically as the new code is
+  issued (same escrow/role/party). ACTUAL yes — regenerate_invite RPC is
+  atomic; the local+outbox fallback kills-then-issues in one critical
+  section.
+- Device links: EXPECTED old server link killed; old device -> "This code
+  no longer works"; new device redeems the fresh code. ACTUAL yes —
+  converge op on the old invite id; RPC path kills server-side atomically.
+- Steps / deal list: untouched. Client home: new device sees the current
+  checklist. Realtor views: share sheet shows the new code.
+
+### activateEscrow
+- Invite codes: EXPECTED stay revoked — reactivation starts with ZERO live
+  codes (Anuraj-approved). ACTUAL yes — activateEscrow never touches
+  invites.
+- Device links: EXPECTED stay revoked — old clients do not silently regain
+  access. ACTUAL yes — links untouched.
+- Steps: EXPECTED preserved ("resumes where it left off"). ACTUAL yes.
+- Deal list: EXPECTED back to Active. ACTUAL yes — status='open' AND
+  buyerClosedAt/sellerClosedAt cleared (without the clear, isClosedRow
+  would keep the card in Closed — the comment in code calls this out).
+- Client home views: EXPECTED old links still dead -> dead-link screen
+  until the realtor re-invites. ACTUAL yes.
+- Realtor views: EXPECTED open state; "Invite client" buttons; address/dates
+  updated from the reactivation input and pushed. ACTUAL yes.
+
+### Gaps the side-effect pass caught and fixed in this branch
+1. A FAILED server-link converge query stranded the zombie permanently.
+   The one-shot query-then-enqueue design recorded a sync error but left
+   NO op to retry — boot drain, manual Retry, nothing could recover the
+   live server link. Fixed: convergence is now a retryable
+   `convergeLinkRevokes` outbox op; the drain runs the live server query
+   and stamps revoked_at, so a failure stays queued (attempts/manualOnly),
+   surfaces in the sync-error list, and converges on the next drain or
+   manual Retry. Pinned by a failure-injection test (failLinkSelect).
+2. Direct `revokeClientLink` ops enqueued from LOCAL data.links ids could
+   never match a server row — local ids are minted by the offline redeem
+   fallback; server rows are created only by the redeem_invite RPC. In
+   production they were empty no-ops; in the fallback case they would push
+   revokes for nonexistent ids and produce permanent SyncNotAppliedError
+   records. Removed; convergence is solely the invite_id query. The
+   syncedstore regen test expectation was corrected (it had encoded the
+   wrong model).
+
+### Verified non-issues / open product questions (NOT changed — UI/behavior freeze)
+- Creating a NEW invite on a closed/cancelled escrow is allowed (no status
+  gate in createInvite or the detail screen). Plausibly intended for closed
+  escrows (client re-access to the completed file); questionable for
+  cancelled. Open question for Anuraj.
+- The `closed` deal-list filter does not exclude cancelled — unreachable
+  (cancel of a closed escrow throws; a dual-agency escrow cannot be
+  whole-closed then cancelled), noted only.
+- lastAction is not set by lifecycle actions — the client "Latest from"
+  card keeps showing the last check/uncheck; acceptable because killed
+  links route to the dead-link screen anyway.
+- Unchecking a step on a closed side reopens the side (approved per-side
+  semantics) but the killed client link stays dead until re-invited —
+  consistent with explicit-close-kills-access.

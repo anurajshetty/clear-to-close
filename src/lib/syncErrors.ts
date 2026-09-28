@@ -21,7 +21,8 @@ export type SyncOpKind =
   | 'pushProfile'
   | 'pushInvite'
   | 'pushRevoke'
-  | 'revokeClientLink';
+  | 'revokeClientLink'
+  | 'convergeLinkRevokes';
 
 export type SyncErrorKind = 'network' | 'rejected' | 'unknown';
 
@@ -53,6 +54,9 @@ const WHAT: Record<SyncOpKind | 'inviteCap', string> = {
   pushInvite: 'The invite code',
   pushRevoke: 'The invite revocation',
   revokeClientLink: 'The client access revocation',
+  // Server-authoritative link convergence (Sept 28, 2026): same
+  // user-visible outcome as revokeClientLink — the client's device access.
+  convergeLinkRevokes: 'The client access revocation',
   inviteCap: 'The invite code',
 };
 
