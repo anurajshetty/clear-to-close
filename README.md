@@ -260,11 +260,13 @@ central user; the buyers and sellers they represent are the other parties.
     pace logic anywhere, in any state. The only per-status changes on the
     top card are the status tag flip and the confetti burst.
   - **"LATEST FROM {NAME}" card** — directly below the top card, above the
-    checklist, always visible. Shows the single most recent realtor action:
+    checklist, always visible, on the buyer, seller, and transaction
+    coordinator homes. Shows the single most recent realtor action:
     "Checked off {step} · {relative time}" with a green check, or the honest,
     neutral "Reopened {step} · {relative time}" when a step is unchecked, or
     "{FirstName} opened your escrow · {relative time}" when nothing is
-    checked off yet. Relative time: just now (<5 min), Xm ago, Xh ago,
+    checked off yet. On the TC home the action is merged across both sides
+    (the most recent of the buyer/seller `lastAction`s wins). Relative time: just now (<5 min), Xm ago, Xh ago,
     Yesterday, Xd ago, then "Mar 3" style dates. The action is stamped on
     every toggle (`Escrow.lastAction`, additive migration
     `supabase/migrations/0009_escrow_last_action.sql`); escrows that predate

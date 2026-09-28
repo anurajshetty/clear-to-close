@@ -720,6 +720,42 @@ gaps found and fixed in this branch; the rest verified as handled.
    wrong model).
 
 ### Verified non-issues / open product questions (NOT changed — UI/behavior freeze)
+
+## "LATEST FROM {NAME}" card — TC home coverage (Sept 28, 2026)
+
+Side-effect pass (hard rule). The card already lived on the buyer and
+seller homes (branding release, Sept 2026); the gap was the transaction
+coordinator home, which now renders the same shared `LatestFromCard`
+directly below the top card, above the checklist sections — always
+visible, in every state. Enumerated surfaces and behavior:
+
+- **Buyer home / seller home:** unchanged — already wired, placement and
+  copy untouched.
+- **TC home, both-side escrow:** the single card shows the most recent
+  realtor action across BOTH sides (`mostRecentAction` in `src/lib/latest`,
+  pure and unit-tested) — a seller-side checkoff wins over an older
+  buyer-side one and vice versa. The `completedAt` fallback scans the
+  combined steps. The opened-escrow fallback uses the buyer side's
+  `openedAt`, else the seller's.
+- **TC home, single-side escrow:** one side is null; the merge ignores the
+  null side and behaves exactly like the buyer/seller card.
+- **Closed/completed/cancelled escrows:** the card still renders (always
+  visible) — the model derives from `lastAction`/`completedAt` regardless
+  of lifecycle status. The existing known behavior (lastAction is not set
+  by lifecycle actions) is unchanged.
+- **Client-view refresh:** the card re-renders from the view state on the
+  existing focus effect and foreground refresh — no new subscription, no
+  push changes (notification rules are spec'd separately).
+- **Multi-link / cross-escrow:** the card consumes only this escrow's own
+  `TcView` — each escrow's view is built through its own device link, so
+  no cross-realtor leakage is possible.
+- **Realtor views:** untouched. No new component — reuse of
+  `LatestFromCard` + `latestModel` (Anuraj's design rule: shared
+  components implemented once).
+
+Regression: `tests/latest.test.ts` now covers the TC merge (most-recent
+wins, order independence, null-side, all-null fallback, tie) alongside the
+existing card model tests.
 - ~~Creating a NEW invite on a closed/cancelled escrow is allowed (no status
   gate in createInvite or the detail screen). Plausibly intended for closed
   escrows (client re-access to the completed file); questionable for

@@ -14,7 +14,9 @@ import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import type { ClientView, RealtorProfile, TcView } from '../../../src/lib/types';
 import { Kicker, SecondaryButton } from '../../../src/components/ui';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
+import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
+import { mostRecentAction } from '../../../src/lib/latest';
 import { colors } from '../../../src/theme';
 
 function SideSection({ title, view }: { title: string; view: ClientView }) {
@@ -93,6 +95,12 @@ export default function TcView() {
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
   const done = (view?.buyer?.done ?? 0) + (view?.seller?.done ?? 0);
   const total = (view?.buyer?.total ?? 0) + (view?.seller?.total ?? 0);
+  // "LATEST FROM {NAME}" (mockup screens ④/⑤/⑪/⑭, shared component): the
+  // most recent realtor action across BOTH sides wins. Single-side escrows
+  // just carry one side; when neither side has activity the card falls
+  // back to "{Name} opened your escrow".
+  const tcLastAction = view ? mostRecentAction([view.buyer?.lastAction, view.seller?.lastAction]) : null;
+  const tcSteps = view ? [...(view.buyer?.steps ?? []), ...(view.seller?.steps ?? [])] : [];
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingTop: insets.top + 10 }]}>
@@ -128,6 +136,16 @@ export default function TcView() {
             onProfilePress={() =>
               router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
+          />
+
+          {/* "LATEST FROM {NAME}" (mockup screen 7): directly below the top
+              card, above the checklist, in every state — always visible. */}
+          <LatestFromCard
+            lastAction={tcLastAction}
+            steps={tcSteps}
+            realtorName={profile?.name ?? ''}
+            openedAt={view.buyer?.openedAt ?? view.seller?.openedAt}
+            openDate={view.buyer?.openDate ?? view.seller?.openDate}
           />
 
           {view.buyer ? <SideSection title="Buyer checklist" view={view.buyer} /> : null}

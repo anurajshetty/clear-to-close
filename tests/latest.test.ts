@@ -13,7 +13,7 @@
 // stale. Run with TZ=America/Los_Angeles (see tests/run.sh) for
 // deterministic calendar-day math.
 import { assert, summary } from './assert';
-import { latestModel } from '../src/lib/latest';
+import { latestModel, mostRecentAction } from '../src/lib/latest';
 import { relativeTime } from '../src/lib/dates';
 import type { StepT } from '../src/lib/types';
 
@@ -161,6 +161,37 @@ async function main(): Promise<void> {
   // --- future / garbage input never blanks the card ----------------------
   assert(relativeTime(new Date(nowMs + HOUR).toISOString(), nowMs) === 'just now', 'future reads just now');
   assert(relativeTime('not-a-date', nowMs) === 'just now', 'unparseable reads just now');
+
+  // --- TC home merge: most recent action across buyer + seller sides ------
+  {
+    const t1 = new Date(nowMs - 3 * HOUR).toISOString();
+    const t2 = new Date(nowMs - 1 * HOUR).toISOString();
+    const buyer = { kind: 'checked' as const, stepTitle: 'Appraisal', at: t1 };
+    const seller = { kind: 'reopened' as const, stepTitle: 'Termite inspection report', at: t2 };
+    const m = mostRecentAction([buyer, seller]);
+    assert(m !== null && m.stepTitle === 'Termite inspection report' && m.kind === 'reopened',
+      'TC merge: the most recent side wins (seller reopen beats older buyer check)');
+    const m2 = mostRecentAction([seller, buyer]);
+    assert(m2 !== null && m2.stepTitle === 'Termite inspection report', 'TC merge: order independent');
+  }
+  {
+    // Single-side escrow: one null side.
+    const only = { kind: 'checked' as const, stepTitle: 'Loan docs', at: new Date(nowMs - HOUR).toISOString() };
+    const m = mostRecentAction([null, only]);
+    assert(m !== null && m.stepTitle === 'Loan docs', 'TC merge: null side ignored');
+  }
+  {
+    assert(mostRecentAction([null, undefined, null]) === null, 'TC merge: no actions -> null (card falls back)');
+  }
+  {
+    // Equal timestamps: first one wins, no crash.
+    const t = new Date(nowMs - HOUR).toISOString();
+    const m = mostRecentAction([
+      { kind: 'checked' as const, stepTitle: 'A', at: t },
+      { kind: 'checked' as const, stepTitle: 'B', at: t },
+    ]);
+    assert(m !== null && m.stepTitle === 'A', 'TC merge: tie keeps the first, no crash');
+  }
 
   summary('latest');
 }

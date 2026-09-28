@@ -80,3 +80,20 @@ export function latestModel(args: {
     icon: 'check',
   };
 }
+
+/**
+ * Pick the single most recent realtor action across several views
+ * (TC home merges the buyer and seller sides). Null when none exists —
+ * latestModel then falls back to the steps' completed_at or the
+ * opened-escrow fallback.
+ */
+export function mostRecentAction(
+  actions: Array<RealtorAction | null | undefined>,
+): RealtorAction | null {
+  let best: RealtorAction | null = null;
+  for (const a of actions) {
+    if (!a) continue;
+    if (!best || a.at > best.at) best = a;
+  }
+  return best;
+}
