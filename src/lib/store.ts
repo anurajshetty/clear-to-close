@@ -800,7 +800,17 @@ export function createStore(kv: KV): Store {
 
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {
       await ensureLoaded();
-      findEscrowOrThrow(escrowId);
+      const escrow = findEscrowOrThrow(escrowId);
+      // No new invites on a dead escrow (Anuraj, Sept 28, 2026): a closed
+      // or cancelled escrow must not offer invite creation for any role.
+      // The server enforces the same rule with a trigger (migration 0018);
+      // this is the app-level gate. Per-side-closed sides (status still
+      // 'open') are not blocked — this rule is status-based by design.
+      if (escrow.status === 'closed' || escrow.status === 'cancelled') {
+        throw new Error(
+          `createInvite: cannot create invites for a ${escrow.status} escrow`,
+        );
+      }
       // Per-role cap: two per buyer/seller side, exactly one transaction
       // coordinator per escrow. Revoking frees a slot, so only live invites
       // count. (The DB trigger enforces the same caps authoritatively.)

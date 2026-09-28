@@ -49,7 +49,13 @@ central user; the buyers and sellers they represent are the other parties.
   close** (Anuraj, Sept 28, 2026): a per-side close revokes that side's
   active invite codes (the other side's codes and the coordinator's code
   stay live); closing the final side revokes the buyer, seller, AND
-  coordinator codes. Already-revoked invites are untouched. The revocation is pushed to
+  coordinator codes. Already-revoked invites are untouched. **No new invites
+  on a dead escrow** (Anuraj, Sept 28, 2026): once the whole escrow is closed
+  or cancelled, new invite codes cannot be created for any role — the detail
+  screen's Invite buttons and the client list's "Invite another" offer are
+  hidden, local creation throws, and the server rejects the insert
+  (migration 0018). Existing live invites stay visible and revocable. The
+  revocation is pushed to
   the cloud immediately — no app restart needed — and a client with the
   escrow already open is re-checked when the app is foregrounded. A revoked
   client fails the link gate and lands on "This code no longer works" (the

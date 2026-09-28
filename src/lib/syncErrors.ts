@@ -29,7 +29,7 @@ export type SyncErrorKind = 'network' | 'rejected' | 'unknown';
 export interface SyncError {
   /** One record per pending write; matches the outbox coalescing key. */
   key: string;
-  op: SyncOpKind | 'inviteCap';
+  op: SyncOpKind | 'inviteCap' | 'inviteClosed';
   escrowId?: string;
   inviteId?: string;
   linkId?: string;
@@ -48,7 +48,7 @@ export interface SyncError {
 
 const K_SYNC_ERRORS = 'ctc:sync_errors';
 
-const WHAT: Record<SyncOpKind | 'inviteCap', string> = {
+const WHAT: Record<SyncOpKind | 'inviteCap' | 'inviteClosed', string> = {
   pushProfile: 'Your profile changes',
   pushEscrow: "This escrow's updates",
   pushInvite: 'The invite code',
@@ -58,6 +58,7 @@ const WHAT: Record<SyncOpKind | 'inviteCap', string> = {
   // user-visible outcome as revokeClientLink — the client's device access.
   convergeLinkRevokes: 'The client access revocation',
   inviteCap: 'The invite code',
+  inviteClosed: 'The invite code',
 };
 
 export function syncErrorHeadline(e: SyncError): string {
@@ -92,7 +93,7 @@ export function classifySyncError(error: unknown): SyncErrorKind {
 
 /** Plain-words copy for a failed write. No em dashes in user-facing copy. */
 export function syncErrorCopy(
-  op: SyncOpKind | 'inviteCap',
+  op: SyncOpKind | 'inviteCap' | 'inviteClosed',
   kind: SyncErrorKind,
 ): { what: string; why: string; hint: string; retryable: boolean } {
   const what = WHAT[op];
@@ -101,6 +102,18 @@ export function syncErrorCopy(
       what,
       why: 'This escrow already has 2 active invite codes.',
       hint: 'Revoke an unused code first, then create a new one.',
+      retryable: false,
+    };
+  }
+  if (op === 'inviteClosed') {
+    // No new invites on a dead escrow (Anuraj, Sept 28, 2026): the server
+    // trigger rejected a push whose escrow was closed/cancelled after the
+    // local creation. The local row is rolled back; there is nothing to
+    // retry.
+    return {
+      what,
+      why: 'This escrow is closed or cancelled. New invites cannot be created.',
+      hint: 'No action needed. The invite was removed.',
       retryable: false,
     };
   }

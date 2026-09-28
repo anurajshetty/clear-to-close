@@ -357,6 +357,51 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   leaves the other side + TC redeemable, whole close kills all, and a
   revoked code redeems as `revoked`. 27 assertions, all green.
 
+## 2026-09-28 — No new invites on a closed/cancelled escrow (Anuraj)
+
+Decided by Anuraj after the invite-expiry release (which had left this an
+open question, see below): once the whole escrow is closed or cancelled,
+no new invite codes may be created for any role (buyer, seller, TC).
+
+- **The gate is status-based, not lifecycle-based.** `store.createInvite`
+  loads the escrow and throws `cannot create invites for a <status>
+  escrow` when status is `closed` or `cancelled`. A per-side close keeps
+  status `open`, so the other side can still be invited — deliberate, not
+  a hole. Practice: put the rule on the data (status), not on the action
+  that set it, so partial states behave consistently.
+- **UI hides the offer; the local throw is the backstop.** The detail
+  screen's `renderInviteButton`/`renderTcButton` return null when the
+  escrow is dead and no live invite exists ("View clients"/"View TC"
+  stays for legacy live invites so they can be revoked); `ClientList`
+  takes an `escrowClosed` prop and hides the "Invite another" button,
+  form, AND the cap note (the note invites creating "someone new", so it
+  counts as a creation affordance). The standalone InviteSheet is only
+  reachable through those gated buttons; even if reached another way,
+  `store.createInvite` throws. Practice: hide the affordance AND guard
+  the mutation — the UI is presentation, the store is the rule.
+- **The server is the final authority.** Migration 0018 adds
+  `invites_no_closed_escrow`, a `BEFORE INSERT` trigger on `invites`
+  that raises `cannot create invites for a closed|cancelled escrow`
+  (regeneration goes through the same path and is blocked too).
+- **The race is real: create-while-open, push-after-close.** An invite
+  created locally moments before the close dies at the server trigger.
+  The push path treats it exactly like the cap race: the rejection is
+  authoritative and final, so `syncedStore` rolls back the optimistic
+  local row (no phantom invite), records a final non-retryable
+  `inviteClosed` sync error in plain words ("This escrow is closed or
+  cancelled. New invites cannot be created."), and drops the op — never
+  retried forever. `cloudSync.ts`'s drain-time drop clause and
+  `onOpError` classification both learn the new rejection via the shared
+  `isClosedEscrowRejection` / `finalInviteRejection` helpers. Practice:
+  every new server rejection reason gets its own final-vs-retryable
+  classification from day one; "unknown → retry" would have turned a
+  certain failure into an infinite loop.
+- **Tests:** `tests/invite_closed_block.test.ts` (46 assertions):
+  closed/cancelled block all three roles, open escrows and per-side
+  closes unaffected, the synced race rolls back with a final error and
+  no retry, structural checks on the gated buttons/ClientList, and the
+  migration's trigger/message.
+
 ## 2026-09-28 — Side locked after creation + two-phase new-escrow confirmation (Anuraj)
 
 - **The edit flow let the side change, and the picker was the only thing
@@ -675,10 +720,14 @@ gaps found and fixed in this branch; the rest verified as handled.
    wrong model).
 
 ### Verified non-issues / open product questions (NOT changed — UI/behavior freeze)
-- Creating a NEW invite on a closed/cancelled escrow is allowed (no status
+- ~~Creating a NEW invite on a closed/cancelled escrow is allowed (no status
   gate in createInvite or the detail screen). Plausibly intended for closed
   escrows (client re-access to the completed file); questionable for
-  cancelled. Open question for Anuraj.
+  cancelled. Open question for Anuraj.~~ **Decided Sept 28, 2026: BLOCKED.**
+  Anuraj said no new invites on closed/cancelled escrows for any role —
+  shipped in the "No new invites on a closed/cancelled escrow" release
+  above (UI gates + store throw + migration 0018 server trigger +
+  race-safe final rejection).
 - The `closed` deal-list filter does not exclude cancelled — unreachable
   (cancel of a closed escrow throws; a dual-agency escrow cannot be
   whole-closed then cancelled), noted only.

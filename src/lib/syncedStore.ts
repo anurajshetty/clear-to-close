@@ -38,6 +38,7 @@ import {
   ensureCloudUser,
   fetchCloudView,
   isCapViolation,
+  isClosedEscrowRejection,
   logConflict,
   mediaKindsRemoved,
   outboxOpKey,
@@ -147,6 +148,21 @@ async function writeJson(kv: KV, key: string, value: unknown): Promise<void> {
 
 function timeoutMs(ms: number): Promise<never> {
   return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+}
+
+/**
+ * A pushInvite failure that is authoritative and final: retrying would never
+ * succeed. Returns the sync-error record kind to use, or null when the
+ * failure is retryable. Two cases (Sept 2026):
+ * - 'inviteCap': lost a cross-device creation race against the per-side cap.
+ * - 'inviteClosed': the invite was created while the escrow was open but the
+ *   escrow was closed/cancelled before the push landed (the 0018 server
+ *   trigger rejected it).
+ */
+function finalInviteRejection(error: unknown): 'inviteCap' | 'inviteClosed' | null {
+  if (isCapViolation(error)) return 'inviteCap';
+  if (isClosedEscrowRejection(error)) return 'inviteClosed';
+  return null;
 }
 
 export function createSyncedStore(
@@ -371,23 +387,23 @@ export function createSyncedStore(
       saveProfile: (prof: RealtorProfile) => local.saveProfile(prof),
       manual,
       onOpError: async (op: OutboxOp, error: unknown) => {
-        // A cap rejection is authoritative and final: retrying it would
-        // never succeed, so it gets the final (dismissable) copy instead
-        // of the retryable one.
-        const copy =
-          op.op === 'pushInvite' && isCapViolation(error)
-            ? syncErrorCopy('inviteCap', 'rejected')
-            : syncErrorForOp(
-                { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
-                error,
-              );
+        // A cap or closed-escrow rejection is authoritative and final:
+        // retrying it would never succeed, so it gets the final
+        // (dismissable) copy instead of the retryable one.
+        const final = op.op === 'pushInvite' ? finalInviteRejection(error) : null;
+        const copy = final
+          ? syncErrorCopy(final, 'rejected')
+          : syncErrorForOp(
+              { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
+              error,
+            );
         // Awaited (not fire-and-forget): the drain awaits onOpError, so
         // two ops failing in the same drain record sequentially. A void
         // call here raced concurrent read-modify-writes on the persisted
         // error map and silently dropped one record (Sept 28 2026).
         await recordSyncError(kv, {
           key: opErrorKey(op),
-          op: op.op === 'pushInvite' && isCapViolation(error) ? 'inviteCap' : op.op,
+          op: final ?? op.op,
           escrowId: op.escrowId,
           inviteId: op.inviteId,
           linkId: op.linkId,
@@ -943,25 +959,27 @@ export function createSyncedStore(
           try {
             await pushInviteNow(c, invite);
           } catch (e) {
-            if (isCapViolation(e)) {
-              // Lost creation race with another device: the server rejected
-              // the insert as over-cap. Roll back the optimistic local row so
-              // no phantom over-cap invite survives in the UI, and do NOT
-              // enqueue the push — the cap rejection is authoritative and
-              // retrying it would never succeed.
+            const final = finalInviteRejection(e);
+            if (final) {
+              // Lost creation race with another device (cap), or the escrow
+              // was closed/cancelled between local creation and the push
+              // (closed-escrow trigger): the server rejected the insert as
+              // authoritative and final. Roll back the optimistic local row
+              // so no phantom invite survives in the UI, and do NOT enqueue
+              // the push — retrying it would never succeed.
               //
               // Sync-failure surface (Anuraj, Sept 2026): this is a final
               // server rejection the realtor must see on screen (what
               // failed, why, next step) — not just a console warning.
               await local.revokeInvite(invite.id);
-              const cap = syncErrorCopy('inviteCap', 'rejected');
+              const copy = syncErrorCopy(final, 'rejected');
               await recordSyncError(kv, {
-                key: `inviteCap:${invite.id}`,
-                op: 'inviteCap',
+                key: `${final}:${invite.id}`,
+                op: final,
                 escrowId,
                 inviteId: invite.id,
                 kind: 'rejected',
-                ...cap,
+                ...copy,
                 at: Date.now(),
               });
               return;

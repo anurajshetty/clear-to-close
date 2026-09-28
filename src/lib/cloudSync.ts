@@ -468,6 +468,20 @@ export function isCapViolation(error: unknown): boolean {
   return /two clients per side max|one transaction coordinator per escrow max/i.test(msg);
 }
 
+/**
+ * The invites_no_closed_escrow trigger's rejection (Sept 2026): raised when
+ * an insert would mint an invite on a closed or cancelled escrow. Like the
+ * cap rejection, this is authoritative and final — retrying would never
+ * succeed. Race: an invite created while the escrow was open whose push
+ * lands after a close/cancel must roll back locally and surface loudly,
+ * never retry forever.
+ */
+export function isClosedEscrowRejection(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const msg = String((error as { message?: unknown }).message ?? '');
+  return /cannot create invites for a (closed|cancelled) escrow/i.test(msg);
+}
+
 type RpcRedeemOk = {
   ok: true;
   escrowId: string;
@@ -1648,12 +1662,13 @@ async function drainOutboxLocked(
         // Keep it queued without counting toward the drop: it converges on
         // the next drain under the owning identity.
         remaining.push(op);
-      } else if (op.op === 'pushInvite' && isCapViolation(e)) {
-        // Authoritative cap rejection at drain time (the invite was queued
-        // while offline and another device filled the cap meanwhile):
-        // retrying would never succeed, so the op is dropped. The final
-        // inviteCap failure record (from onOpError above) stays until the
-        // user dismisses it.
+      } else if (op.op === 'pushInvite' && (isCapViolation(e) || isClosedEscrowRejection(e))) {
+        // Authoritative cap / closed-escrow rejection at drain time (the
+        // invite was queued while offline and another device filled the cap
+        // meanwhile, or the escrow was closed/cancelled before the push
+        // landed): retrying would never succeed, so the op is dropped. The
+        // final failure record (from onOpError above) stays until the user
+        // dismisses it.
       } else {
         op.attempts++;
         if (op.attempts < MAX_PUSH_ATTEMPTS) {

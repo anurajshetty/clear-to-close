@@ -223,6 +223,10 @@ export default function TransactionDetail() {
   // agency tab; flips to "View clients" once an active invite exists.
   const renderInviteButton = (r: ClientRole) => {
     const count = invites.filter((i) => i.role === r && !i.revokedAt).length;
+    // No new invites on a dead escrow (Anuraj, Sept 28, 2026): the "Invite
+    // client" offer is hidden when the escrow is closed or cancelled.
+    // "View clients" stays for legacy live invites so they can be revoked.
+    if (escrow && escrow.status !== 'open' && count === 0) return null;
     return (
       <View style={styles.inviteBtnWrap}>
         <SecondaryButton
@@ -239,6 +243,9 @@ export default function TransactionDetail() {
   // side's invite button on every tab.
   const renderTcButton = () => {
     const count = invites.filter((i) => i.role === 'tc' && !i.revokedAt).length;
+    // Same dead-escrow rule as renderInviteButton: no "Invite TC" offer on
+    // closed/cancelled escrows; "View TC" stays for legacy live invites.
+    if (escrow && escrow.status !== 'open' && count === 0) return null;
     return (
       <View style={styles.inviteBtnWrap}>
         <SecondaryButton
@@ -454,6 +461,7 @@ export default function TransactionDetail() {
           side={clientSide}
           address={escrow.address}
           escrowId={escrow.id}
+          escrowClosed={escrow.status !== 'open'}
           onClose={() => {
             setClientSide(null);
             refreshInvites();

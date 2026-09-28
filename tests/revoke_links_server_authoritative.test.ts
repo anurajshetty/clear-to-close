@@ -92,12 +92,19 @@ async function main(): Promise<void> {
     const r2 = await store.redeemInvite(inv2.code, 'Gus', 'dev-1');
     assert(r2.ok, `device freed by cancel redeems a different escrow's code (got ${JSON.stringify(r2)})`);
 
-    // Same-escrow re-invite after cancel: the old link is dead, the new
-    // code redeems cleanly.
-    const inv3 = await store.createInvite(e1.id, 'buyer', 'Hana');
-    await tick();
-    const r3 = await store.redeemInvite(inv3.code, 'Hana', 'dev-1b');
-    assert(r3.ok, `same-escrow re-invite redeems after cancel (got ${JSON.stringify(r3)})`);
+    // Same-escrow re-invite after cancel is now BLOCKED (Anuraj, Sept 28,
+    // 2026): no new invites on closed/cancelled escrows, any role.
+    let blockedErr: unknown = null;
+    try {
+      await store.createInvite(e1.id, 'buyer', 'Hana');
+    } catch (e) {
+      blockedErr = e;
+    }
+    assert(
+      !!blockedErr &&
+        /cannot create invites for a cancelled escrow/.test(String((blockedErr as Error).message)),
+      `createInvite on the cancelled escrow throws (got ${String(blockedErr)})`,
+    );
   }
 
   // --- 3. A genuinely-live link still blocks ------------------------------

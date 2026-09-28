@@ -25,12 +25,17 @@ export function ClientList({
   visible,
   escrowId,
   side,
+  escrowClosed = false,
   onClose,
 }: {
   visible: boolean;
   escrowId: string;
   address: string;
   side: ClientRole;
+  /** Closed/cancelled escrows never offer invite creation (Anuraj, Sept 28,
+   * 2026): the "Invite another" button + form and the cap note are hidden.
+   * Viewing/revoking legacy live invites still works. */
+  escrowClosed?: boolean;
   onClose: () => void;
 }) {
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -246,7 +251,10 @@ export function ClientList({
               );
             })}
 
-            {invites.length < cap ? (
+            {/* No invite creation on a dead escrow (Anuraj, Sept 28, 2026):
+                neither the "Invite another" offer nor the cap note (which
+                invites creating "someone new") renders when escrowClosed. */}
+            {!escrowClosed && invites.length < cap ? (
               inviteOpen ? (
                 <View style={styles.inviteForm}>
                   <Field
@@ -295,7 +303,7 @@ export function ClientList({
                   />
                 </View>
               )
-            ) : (
+            ) : !escrowClosed ? (
               <Text style={styles.capnote}>
                 {side === 'tc' ? (
                   <>
@@ -309,7 +317,7 @@ export function ClientList({
                   </>
                 )}
               </Text>
-            )}
+            ) : null}
 
             {regenInvite && (
               <View style={styles.confirmBox}>
