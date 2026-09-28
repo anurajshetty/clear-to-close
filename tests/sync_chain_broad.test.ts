@@ -20,8 +20,11 @@
 //
 // THE FIX: upsertAll verifies the affected row count via .select() and
 // throws SyncNotAppliedError when the write silently did nothing, so the
-// op stays queued (retryable) instead of being dropped as converged. A
-// zero-affected upsert-by-id can only mean the row exists but is owned by
+// confirmed write fails LOUDLY (Sept 28, 2026: the plain "server refused"
+// copy, thrown at once) instead of reporting success while the server kept
+// the old data. Nothing is queued and nothing is applied locally; the
+// realtor retries the action explicitly once the owning identity is back.
+// A zero-affected upsert-by-id can only mean the row exists but is owned by
 // someone else — the insert path would have succeeded otherwise — so the
 // error names the ownership mismatch explicitly.
 import { assert, summary } from './assert';
@@ -426,20 +429,38 @@ async function scenarioMismatch(): Promise<void> {
 
   // The live session changes to account B. The store's boot-captured userId
   // is still A (no fresh initCloudSync — e.g. a second tab signed in as B).
+  // The mismatched writes must FAIL LOUDLY (Sept 28, 2026): the confirmed
+  // write throws the refused copy at once — nothing is queued, nothing is
+  // applied locally, and the server keeps A's data.
   session.sessionUid = UID_B;
 
   const newClose = bumped(closeDate, 21);
-  await realtor.store.updateEscrow(esc.id, { ...escrowInput, closeDate: newClose });
-  await realtor.store.saveProfile(profileNamed('Rita Realtor'));
-  await tick(300);
+  let escrowMsg = '';
+  try {
+    await realtor.store.updateEscrow(esc.id, { ...escrowInput, closeDate: newClose });
+  } catch (e) {
+    escrowMsg = (e as Error).message;
+  }
+  let profileMsg = '';
+  try {
+    await realtor.store.saveProfile(profileNamed('Rita Realtor'));
+  } catch (e) {
+    profileMsg = (e as Error).message;
+  }
+  assert(/server refused/.test(escrowMsg), 'mismatched escrow write throws the refused copy');
+  assert(/server refused/.test(profileMsg), 'mismatched profile write throws the refused copy');
 
-  // The failure must be RETAINED, never silently dropped as converged.
+  // The failure is never silently queued or dropped: there is no outbox
+  // for user actions anymore, and nothing was applied locally.
   const ops = await readOutboxOps(kvR);
-  const hasEscrowOp = ops.some((o) => o.op === 'pushEscrow' && o.escrowId === esc.id);
-  const hasProfileOp = ops.some((o) => o.op === 'pushProfile');
+  assert(ops.length === 0, 'a refused user write queues no outbox op');
   assert(
-    hasEscrowOp && hasProfileOp,
-    `ownership-mismatched pushes stay queued for retry (outbox=${JSON.stringify(ops.map((o) => o.op))})`,
+    (await realtor.store.getEscrow(esc.id))?.closeDate === closeDate,
+    'local escrow keeps the old close date after the refused write',
+  );
+  assert(
+    (await realtor.store.getProfile())?.name === 'Anuraj',
+    'local profile keeps the old name after the refused write',
   );
 
   // No partial/corrupt writes: the server still has the old data.
@@ -449,18 +470,19 @@ async function scenarioMismatch(): Promise<void> {
   );
   assert(String(server.profiles.get(UID_A)?.name) === 'Anuraj', 'server profile untouched by the mismatched push');
 
-  // Self-heal: the owning identity returns; the next init drains the queue
-  // and the server converges on the realtor's actual edits.
+  // Self-heal: the owning identity returns and the realtor retries the
+  // actions explicitly — the confirmed writes land and the server
+  // converges on the realtor's actual edits.
   session.sessionUid = UID_A;
-  await realtor.initCloudSync();
-  await tick(300);
+  await realtor.store.updateEscrow(esc.id, { ...escrowInput, closeDate: newClose });
+  await realtor.store.saveProfile(profileNamed('Rita Realtor'));
   assert(
     String(server.escrows.get(esc.id)?.close_date) === newClose,
-    `server escrow converged after the owning identity returned (got ${server.escrows.get(esc.id)?.close_date})`,
+    `server escrow converged after the explicit retry (got ${server.escrows.get(esc.id)?.close_date})`,
   );
   assert(
     String(server.profiles.get(UID_A)?.name) === 'Rita Realtor',
-    `server profile converged after the owning identity returned (got ${server.profiles.get(UID_A)?.name})`,
+    `server profile converged after the explicit retry (got ${server.profiles.get(UID_A)?.name})`,
   );
 
   // Client refresh now receives both new values.

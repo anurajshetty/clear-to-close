@@ -1,14 +1,13 @@
 // Clear to Close — SyncErrorBar: the on-screen sync failure surface.
 //
-// Mounted once in app/_layout.tsx, above the router stack. Whenever a
-// realtor write fails to reach the server, the failure is recorded in
-// src/lib/syncErrors.ts and THIS bar shows it: what failed, why in plain
-// words, and the next step (Retry, or Dismiss for final rejections).
-//
-// It is persistent and unmissable by design — never a toast that vanishes.
-// Retryable records clear the moment their write lands; final rejections
-// are dismissed by the user. It renders only for the realtor role: client
-// devices never see it.
+// Mounted once in app/_layout.tsx, above the router stack. Under the
+// synchronous server-first model (Anuraj, Sept 28, 2026) user actions
+// never queue writes, so the ONLY records that can appear here are left
+// by the ONE final drain of the retired background-push outbox (ops
+// queued by older installs). It is persistent and unmissable by design —
+// never a toast that vanishes. Retryable records clear the moment their
+// write lands; final rejections are dismissed by the user. It renders
+// only for the realtor role: client devices never see it.
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';

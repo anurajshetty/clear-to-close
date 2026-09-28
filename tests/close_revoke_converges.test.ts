@@ -7,20 +7,22 @@
 // (initCloudSync). get_client_view therefore kept returning ok:true and the
 // client kept access — exactly what Anuraj reproduced.
 //
+// The fix (Sept 28, 2026 synchronous model): closeEscrow is a CONFIRMED
+// WRITE. Its server effect revokes the escrow row, the invites, and every
+// live server link for those invites (listed server-side — the realtor's
+// device never holds server link ids) BEFORE the local apply. No second
+// boot, no outbox, no fire-and-forget: the write throws and leaves local
+// state untouched if any part fails.
 // This pins the fix:
-//  1. Closing an escrow from an already-booted app must push the
-//     client_links revocation to the cloud immediately — no second
-//     initCloudSync, no app restart. The convergence is
-//     server-authoritative: one retryable convergeLinkRevokes op per
-//     revoked invite, whose drain lists the invite's live server links and
-//     stamps revoked_at (local data.links is a production no-op — the
-//     realtor's device never holds server link ids).
+//  1. Closing an escrow from an already-booted app revokes the server-side
+//     client_links rows before the local apply — the client loses access
+//     at once, with EMPTY local data.links (the production shape).
 //  2. An already-open client app must revalidate its link when foregrounded
 //     (AppState 'active' -> silent re-check -> /link-dead on a dead link),
 //     because useFocusEffect alone never refires on foreground.
-//  3. The regenerate fallback path (local + outbox, when the RPC path is
-//     unavailable) gets the same immediate drain — it enqueues the
-//     identical convergeLinkRevokes op.
+//  3. Regenerate goes through the atomic regenerate_invite RPC (old code +
+//     old device links killed, fresh code issued in one transaction) — the
+//     old local+outbox fallback path is retired; there is nothing to force.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
@@ -73,7 +75,7 @@ async function redeem(
   deviceId: string,
 ): Promise<{ invite: any; linkId: string }> {
   const invite = await store.createInvite(escrowId, role, partyName);
-  await tick(150); // let bgPush land the invite row on the mock server
+  // Confirmed write: the invite row is on the mock server before this returns.
   const res = await store.redeemInvite(invite.code, partyName, deviceId);
   if (!res.ok || !res.linkId) throw new Error(`redeem failed for ${partyName}: ${JSON.stringify(res)}`);
   const linkId = res.linkId as string;
@@ -115,29 +117,32 @@ async function main(): Promise<void> {
     assert(server.links.get(tcLink)?.revokedAt === null, 'TC server link live before close');
 
     // The realtor closes from the already-open app. NO second initCloudSync.
+    // The confirmed write revokes the server links before the local apply.
     const { revokedLinks } = await store.closeEscrow(e.id, 'buyer');
     assert(revokedLinks.length === 0, `production shape: local data.links is EMPTY (got ${revokedLinks.length})`);
-    await tick(200); // the immediate drain is fire-and-forget; let it land
 
     const buyerRev = server.links.get(buyerLink);
     const tcRev = server.links.get(tcLink);
     assert(
       !!buyerRev?.revokedAt && typeof buyerRev.revokedAt === 'string',
-      `buyer server link revoked_at converged without a reboot (got ${buyerRev?.revokedAt})`,
+      `buyer server link revoked_at converged before the local apply (got ${buyerRev?.revokedAt})`,
     );
     assert(
       !!tcRev?.revokedAt && typeof tcRev.revokedAt === 'string',
-      `TC server link revoked_at converged without a reboot (got ${tcRev?.revokedAt})`,
+      `TC server link revoked_at converged before the local apply (got ${tcRev?.revokedAt})`,
     );
     assert(
       server.pushedLinkRevocations.some((r) => r.linkId === buyerLink) &&
         server.pushedLinkRevocations.some((r) => r.linkId === tcLink),
-      'convergeLinkRevokes ops reached pushLinkRevokeNow for both server links',
+      'the close converged both server links via update, not local state',
     );
   }
 
-  // --- 2. Regenerate fallback also converges without a reboot ---------------
-  // Production shape: the old link lives ONLY on the mock server.
+  // --- 2. Regenerate kills the old server link atomically -----------------
+  // The atomic regenerate_invite RPC kills the old code + old device links
+  // and issues the fresh code in one transaction — inside the confirmed
+  // write, before the local apply. The old local+outbox fallback path (and
+  // its code override) is retired: regenerate always goes through the RPC.
   {
     const server = createMockServer();
     const kv = memoryKV();
@@ -157,16 +162,18 @@ async function main(): Promise<void> {
     });
     const { invite: inv, linkId: oldLink } = await redeem(store, e.id, 'buyer', 'Test Buyer', 'dev-r1');
 
-    // Force the local+outbox fallback path (the RPC path would converge
-    // atomically server-side on its own).
-    const res = await store.regenerateInvite(inv.id, 'NEWCODE1');
+    const res = await store.regenerateInvite(inv.id);
     assert(res.revokedLink === null, 'production shape: no local link to kill');
-    await tick(200);
+    assert(res.invite.code !== inv.code, 'the fresh server-issued code replaces the old one');
 
     const link = server.links.get(oldLink);
     assert(
       !!link?.revokedAt && typeof link.revokedAt === 'string',
-      `regenerated old server link revoked_at converged without a reboot (got ${link?.revokedAt})`,
+      `regenerated old server link revoked_at converged before the local apply (got ${link?.revokedAt})`,
+    );
+    assert(
+      (await store.getInvite(res.invite.id))?.revokedAt == null,
+      'the replacement invite is live locally',
     );
   }
 

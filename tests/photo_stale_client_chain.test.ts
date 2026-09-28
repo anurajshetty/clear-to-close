@@ -3,17 +3,21 @@
 // CLIENT page still shows the old one even after refresh.
 //
 // Chain under test (mock Supabase backend, no network):
-//   realtor saveProfile -> Storage upload (?v= versioned URL) ->
+//   realtor saveProfile -> Storage upload (unique-path URL) ->
 //   realtor_profiles upsert -> get_client_view -> client render URI
 //   (displayPhotoUri).
 //
-// The break: the media upload only ran inside saveProfile's live bgPush.
-// Any save that converged through the outbox (offline / ping failed / the
-// live run threw) or through the boot-time background reconcile pushed the
-// profile row WITHOUT uploading the new image — the server kept the old
+// The break (old model): the media upload only ran inside saveProfile's live
+// bgPush. Any save that converged through the outbox (offline / ping failed
+// / the live run threw) or through the boot-time background reconcile pushed
+// the profile row WITHOUT uploading the new image — the server kept the old
 // photo_url forever while the realtor's device showed the new photo from
 // its local managed file. The client then showed the old photo even after
 // refresh, with no error anywhere.
+//
+// Under the synchronous model (Sept 28, 2026): the upload is part of the
+// confirmed write — it throws instead of silently producing an unconfirmed
+// result, and nothing is ever queued for a later background push.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
@@ -180,19 +184,24 @@ async function main(): Promise<void> {
     assert(ping.ok === true, '1: boot ping ok (happy path)');
     await store.saveProfile({ ...profileFixture(), photoUri: PHOTO_A });
     const updated = await waitFor(
-      () => be.photoUrl !== OLD_PHOTO_URL && be.photoUrl.includes('?v='),
-      '1: server photo_url updated with a fresh ?v=',
+      () =>
+        be.photoUrl !== OLD_PHOTO_URL &&
+        /^https:\/\/cdn\.example\/storage\/v1\/object\/public\/realtor-media\/user-123\/photo-[0-9a-z]+\.jpg$/.test(
+          be.photoUrl,
+        ),
+      '1: server photo_url updated with a fresh unique-path URL',
     );
-    assert(updated, '1: server photo_url updated with a fresh ?v=');
+    assert(updated, '1: server photo_url updated with a fresh unique-path URL');
     assert(
-      be.uploads.length === 1 && be.uploads[0] === 'realtor-media/user-123/photo.jpg',
-      '1: the new photo bytes were uploaded to the realtor-media bucket',
+      be.uploads.length === 1 &&
+        /^realtor-media\/user-123\/photo-[0-9a-z]+\.jpg$/.test(be.uploads[0]),
+      '1: the new photo bytes were uploaded to a unique path in the realtor-media bucket',
     );
     const uri = await clientPhotoUri(be);
     assert(uri === be.photoUrl && uri !== OLD_PHOTO_URL, '1: client renders the new photo after refresh');
   }
 
-  // ----------------- 2. THE BUG: save while offline -> outbox -> drain -------
+  // ------ 2. save while offline: fail-fast, nothing queued, nothing uploaded
   {
     const be = makeBackend();
     be.netUp = false;
@@ -202,28 +211,28 @@ async function main(): Promise<void> {
     });
     const ping1 = await initCloudSync();
     assert(ping1.ok === false, '2: boot ping fails while offline');
-    // The realtor updates the photo with no connectivity.
-    await store.saveProfile({ ...profileFixture(), photoUri: PHOTO_B });
-    // bgPush enqueues fire-and-forget: poll until the op lands.
-    let opQueued = false;
-    for (let i = 0; i < 200 && !opQueued; i++) {
-      const ops = await readOutboxOps(kv);
-      opQueued = ops.some((o) => o.op === 'pushProfile');
-      if (!opQueued) await sleep(25);
+    // The realtor updates the photo with no connectivity: the confirmed
+    // write fails fast instead of queueing a background push.
+    let msg = '';
+    try {
+      await store.saveProfile({ ...profileFixture(), photoUri: PHOTO_B });
+    } catch (e) {
+      msg = (e as Error).message;
     }
-    assert(opQueued, '2: pushProfile op queued while offline');
+    assert(/not saved/i.test(msg), '2: offline save throws the plain not-saved copy');
     assert(be.uploads.length === 0, '2: nothing uploaded while offline (sanity)');
-    // Network recovers; the next boot drains the outbox.
+    const ops = await readOutboxOps(kv);
+    assert(ops.length === 0, '2: no outbox op is queued for a user action');
+    const kept = await store.getProfile();
+    assert(kept === null, '2: the failed save leaves no local profile behind');
+    // Network recovers; a fresh save converges the photo end to end.
     be.netUp = true;
-    const ping2 = await initCloudSync();
-    assert(ping2.ok === true, '2: boot ping ok after reconnect');
-    const uploaded = await waitFor(() => be.uploads.length > 0, '2: drain uploads the new photo bytes');
-    assert(uploaded, '2: the outbox drain uploads the new photo bytes');
+    await store.saveProfile({ ...profileFixture(), photoUri: PHOTO_B });
     const updated = await waitFor(
-      () => be.photoUrl !== OLD_PHOTO_URL && be.photoUrl.includes('?v='),
-      '2: server photo_url carries the new ?v= URL after the drain',
+      () => be.photoUrl !== OLD_PHOTO_URL && /\/photo-[0-9a-z]+\.jpg$/.test(be.photoUrl),
+      '2: server photo_url carries the new unique-path URL after the retry',
     );
-    assert(updated, '2: server photo_url carries the new ?v= URL after the drain');
+    assert(updated, '2: server photo_url carries the new unique-path URL after the retry');
     const uri = await clientPhotoUri(be);
     assert(
       uri !== null && uri === be.photoUrl && uri !== OLD_PHOTO_URL,
@@ -231,7 +240,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // ----------------- 3. no ?v= churn when the photo did not change -----------
+  // ----------------- 3. no URL churn when the photo did not change -----------
   {
     const be = makeBackend();
     const kv = memoryKV();
@@ -243,11 +252,11 @@ async function main(): Promise<void> {
     const first = await waitFor(() => be.uploads.length === 1, '3: first save uploads once');
     assert(first, '3: first save uploads once');
     const firstUrl = be.photoUrl;
-    // A name-only edit must not re-upload the unchanged photo or churn ?v=.
+    // A name-only edit must not re-upload the unchanged photo or mint a new URL.
     await store.saveProfile({ ...profileFixture(), name: 'Rita Updated', photoUri: PHOTO_A });
     await sleep(600);
     assert(be.uploads.length === 1, '3: unchanged photo is not re-uploaded on a name-only edit');
-    assert(be.photoUrl === firstUrl, '3: ?v= URL is stable when the photo did not change');
+    assert(be.photoUrl === firstUrl, '3: photo URL is stable when the photo did not change');
   }
 
   summary('photo_stale_client_chain');

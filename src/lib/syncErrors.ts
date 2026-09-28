@@ -67,7 +67,7 @@ export function syncErrorHeadline(e: SyncError): string {
     : `${e.what} did not save.`;
 }
 
-/** Same coalescing key as enqueueOutbox: one pending op per write target. */
+/** Coalescing key for one failure record: one pending record per write target. */
 export function opErrorKey(op: {
   op: SyncOpKind;
   escrowId?: string;

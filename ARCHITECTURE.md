@@ -14,8 +14,9 @@ lives in Supabase.
 Local data is explicitly a cache. It knows it may be stale: it refreshes
 on open, on foreground return, and on pull-to-refresh — and it NEVER
 overrides the server. A cache is a performance convenience, not a second
-database. Any local write that has not been confirmed by the server is
-marked unconfirmed, not treated as fact.
+database. There are no unconfirmed local writes: a user-initiated write
+applies to the local cache only after the server confirms it, and a
+failed save leaves local state exactly as it was.
 
 ## 3. Confirmed-or-loud writes
 
@@ -54,6 +55,38 @@ Operational corollaries (from the Sept 27 sync rebuild):
 - If a user taps Save while a pull is in flight, the explicit push still
   goes through (user intent wins); the save's confirmation is the last
   word, and a pull must not clobber an in-flight save's result.
+
+Synchronous writes (Anuraj, Sept 28, 2026 — every user-initiated write):
+
+1. Await server confirmation. No optimistic commit, no background queue.
+2. Apply server first, local cache second — local commits only after the
+   server effect confirms.
+3. Throw a plain-language error on failure; failure is loud and on-screen.
+4. Leave local state unchanged on failure (byte-identical — pinned by
+   tests on every write).
+5. Fail fast offline with "couldn't reach the server" style copy.
+6. Have a timeout (15s; 30s for profile-with-media, cancel, close).
+7. Create no user-action outbox entry. The user-action outbox is retired:
+   one final drain of legacy queued operations runs on upgrade, then the
+   queue is gone (remaining code is legacy-only: read/clear/retry of old
+   failures plus the identity-boundary wipe).
+8. Recover safely: crash before confirmation → local unchanged; crash
+   after confirmation but before local commit → the next pull heals the
+   local cache from server truth.
+9. Multi-step effects (cancel, close, bulk checklist save) are sequential,
+   NOT one DB transaction — a partway failure leaves local unchanged, the
+   user still sees the pre-action state, and retry is idempotent.
+   Invite-revoking effects revoke the invite row FIRST so a lookup failure
+   can never strand a live link on a live code.
+10. Server-authoritative identity data only: device links killed via a live
+    server link query, never by trusting locally held link ids. Client
+    redeem goes through the redeem_invite RPC as the single authority —
+    no local fallback (an offline client is never shown an escrow the
+    server does not recognize).
+11. Photo/banner uploads go to UNIQUE per-upload Storage paths; the row
+    upserts carrying nulled + new URLs; removed files are deleted only
+    after the row confirms. A row failure orphans an unreferenced object
+    instead of changing what clients see.
 - Failure records (sync errors) are identity-bound, persist across
   restarts, clear on successful retry, and wipe on logout.
 - Diagnosis discipline: reports separate CONFIRMED (with exact evidence)

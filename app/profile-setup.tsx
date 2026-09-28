@@ -33,6 +33,10 @@ export default function ProfileSetup() {
   const [keptBannerRemoteUrl, setKeptBannerRemoteUrl] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Synchronous writes (Sept 28, 2026): saveProfile throws when the
+  // profile (and its photo/banner) is not confirmed on the server — the
+  // failure must be visible on screen.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
@@ -80,6 +84,7 @@ export default function ProfileSetup() {
       return;
     }
     setSaving(true);
+    setSaveError(null);
     try {
       await store.saveProfile({
         name: draft.name.trim(),
@@ -98,7 +103,12 @@ export default function ProfileSetup() {
         rating: keptRating,
       });
       router.back();
-    } catch {
+    } catch (err) {
+      setSaveError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't save your profile. Check your connection and try again.",
+      );
       setSaving(false);
     }
   };
@@ -118,6 +128,7 @@ export default function ProfileSetup() {
 
       <ProfileForm value={draft} onChange={patch} nameError={nameError} />
 
+      {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
       <View style={styles.saveWrap}>
         <PrimaryButton title={saving ? 'Saving…' : 'Save profile'} onPress={onSave} disabled={saving} />
       </View>
@@ -150,5 +161,10 @@ const styles = StyleSheet.create({
   },
   saveWrap: {
     marginTop: 20,
+  },
+  error: {
+    fontSize: 13,
+    color: colors.red,
+    marginTop: 10,
   },
 });

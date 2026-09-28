@@ -36,7 +36,14 @@ export function CancelEscrowBody({ escrow, onClose, onCancelled }: CancelEscrowS
       onCancelled(updated);
     } catch (err) {
       console.warn('cancelEscrow failed', err);
-      setError('Could not cancel the escrow. Try again.');
+      // Synchronous writes (Sept 28, 2026): the store throws a
+      // plain-language reason when the cancel is not confirmed on the
+      // server — show it, so the realtor knows the escrow is NOT cancelled.
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not cancel the escrow. Try again.',
+      );
     } finally {
       setSaving(false);
     }

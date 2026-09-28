@@ -45,6 +45,8 @@ type Reject = (e: unknown) => void;
 export interface MockServer {
   links: Map<string, ServerLink>;
   invites: Map<string, ServerInvite>;
+  /** Server-side step rows by step id (bulk checklist apply, Sept 28, 2026). */
+  steps: Map<string, Record<string, unknown>>;
   pushedLinkRevocations: PushedLinkRevocation[];
   /**
    * Test-only failure injection: when true, the client_links live-link
@@ -52,12 +54,28 @@ export interface MockServer {
    * the converge op stays queued and retries instead of stranding a zombie.
    */
   failLinkSelect: boolean;
+  /**
+   * Test-only failure injection: when true, the steps delete throws,
+   * simulating a transient delete failure. Lets tests prove a bulk
+   * checklist apply fails loudly, leaves local state unchanged, and
+   * converges on retry.
+   */
+  failStepDelete: boolean;
+  /**
+   * Test-seeded rows returned by select() for tables the mock does not
+   * otherwise model (e.g. 'escrows' for pull-heal tests). The rows are
+   * returned verbatim (the test shapes them like real server rows).
+   */
+  seedRows: Record<string, unknown[]>;
+  /** Every upsert call, in order (lets tests assert what the server received). */
+  upsertLog: { table: string; rows: unknown }[];
   select(table: string, filters: Filter[]): { data: unknown; error: unknown };
   update(
     table: string,
     patch: Record<string, unknown>,
     filters: Filter[],
   ): { data: unknown; error: unknown };
+  remove(table: string, inFilters: { col: string; vals: unknown[] }[]): { data: unknown; error: unknown };
   upsert(table: string, rows: unknown): { data: unknown; error: unknown };
   rpc(name: string, params?: Record<string, unknown>): { data: unknown; error: unknown };
 }
@@ -66,8 +84,11 @@ export function createMockServer(): MockServer {
   const invites = new Map<string, ServerInvite>();
   const invitesByCode = new Map<string, string>();
   const links = new Map<string, ServerLink>();
+  const steps = new Map<string, Record<string, unknown>>();
   const pushedLinkRevocations: PushedLinkRevocation[] = [];
   let linkSeq = 0;
+  let regenSeq = 0;
+  const upsertLog: { table: string; rows: unknown }[] = [];
 
   function select(table: string, filters: Filter[]): { data: unknown; error: unknown } {
     if (table === 'client_links') {
@@ -80,7 +101,10 @@ export function createMockServer(): MockServer {
       }
       return { data: rows.map((r) => ({ id: r.id })), error: null };
     }
-    // Invites pull, realtor_profiles probe, etc.: nothing seeded server-side.
+    // Invites pull, realtor_profiles probe, etc.: nothing seeded server-side
+    // unless the test put rows in seedRows.
+    const seeded = server.seedRows[table];
+    if (seeded) return { data: seeded.map((r) => ({ ...(r as Record<string, unknown>) })), error: null };
     return { data: [], error: null };
   }
 
@@ -109,6 +133,10 @@ export function createMockServer(): MockServer {
 
   function upsert(table: string, rows: unknown): { data: unknown; error: unknown } {
     const arr = (Array.isArray(rows) ? rows : [rows]) as Record<string, unknown>[];
+    upsertLog.push({ table, rows });
+    if (table === 'steps') {
+      for (const r of arr) steps.set(String(r.id), { ...r });
+    }
     if (table === 'invites') {
       for (const r of arr) {
         const id = String(r.id);
@@ -160,16 +188,68 @@ export function createMockServer(): MockServer {
         error: null,
       };
     }
+    if (name === 'regenerate_invite') {
+      const inviteId = String(params?.p_invite_id ?? '');
+      const inv = invites.get(inviteId);
+      if (!inv || inv.revokedAt)
+        return { data: { ok: false, error: 'invite not found or already revoked' }, error: null };
+      // Atomic, like the real RPC: old code killed + old device links
+      // killed + fresh code issued in one transaction.
+      const now = new Date().toISOString();
+      inv.revokedAt = now;
+      for (const l of links.values()) {
+        if (l.inviteId === inviteId && l.revokedAt === null) {
+          l.revokedAt = now;
+          pushedLinkRevocations.push({ linkId: l.id, revokedAt: now });
+        }
+      }
+      const newId = `inv-regen-${++regenSeq}`;
+      const newCode = `RG${String(regenSeq).padStart(4, '0')}`;
+      invites.set(newId, {
+        id: newId,
+        code: newCode,
+        escrowId: inv.escrowId,
+        role: inv.role,
+        revokedAt: null,
+      });
+      invitesByCode.set(newCode, newId);
+      return {
+        data: { ok: true, new_code: newCode, old_code: inv.code, new_invite_id: newId },
+        error: null,
+      };
+    }
     return { data: null, error: null };
+  }
+
+  function remove(
+    table: string,
+    inFilters: { col: string; vals: unknown[] }[],
+  ): { data: unknown; error: unknown } {
+    if (table === 'steps') {
+      if (server.failStepDelete) throw new Error('injected steps delete failure');
+      const idIn = inFilters.find((f) => f.col === 'id');
+      const ids = new Set((idIn?.vals ?? []).map(String));
+      const deleted: { id: string }[] = [];
+      for (const id of ids) {
+        if (steps.delete(id)) deleted.push({ id });
+      }
+      return { data: deleted, error: null };
+    }
+    return { data: [], error: null };
   }
 
   const server: MockServer = {
     links,
     invites,
+    steps,
     pushedLinkRevocations,
     failLinkSelect: false,
+    failStepDelete: false,
+    seedRows: {},
+    upsertLog,
     select,
     update,
+    remove,
     upsert,
     rpc,
   };
@@ -179,6 +259,7 @@ export function createMockServer(): MockServer {
 // PostgREST-style chainable query surface over a MockServer.
 class SelectQuery {
   private filters: Filter[] = [];
+  private inFilters: { col: string; vals: unknown[] }[] = [];
   constructor(
     private server: MockServer,
     private table: string,
@@ -189,6 +270,10 @@ class SelectQuery {
   }
   is(col: string, val: unknown): this {
     this.filters.push({ col, op: 'is', val });
+    return this;
+  }
+  in(col: string, vals: unknown[]): this {
+    this.inFilters.push({ col, vals });
     return this;
   }
   limit(_n: number): this {
@@ -228,6 +313,29 @@ class UpdateQuery {
   }
 }
 
+class DeleteQuery {
+  private inFilters: { col: string; vals: unknown[] }[] = [];
+  constructor(
+    private server: MockServer,
+    private table: string,
+  ) {}
+  in(col: string, vals: unknown[]): this {
+    this.inFilters.push({ col, vals });
+    return this;
+  }
+  select(_cols?: string): this {
+    return this;
+  }
+  then(resolve: Resolve, reject?: Reject): void {
+    try {
+      resolve(this.server.remove(this.table, this.inFilters));
+    } catch (e) {
+      if (reject) reject(e);
+      else throw e;
+    }
+  }
+}
+
 const thenable = (result: { data: unknown; error: unknown }) => ({
   then: (resolve: Resolve, reject?: Reject) => {
     try {
@@ -242,6 +350,7 @@ const thenable = (result: { data: unknown; error: unknown }) => ({
 /** A mock supabase client backed by a MockServer. Pass the same server to
  *  every store under test so they share one "database". */
 export function mockCloudFromServer(server: MockServer): any {
+  const storageFiles = new Map<string, Uint8Array | string>();
   return () => ({
     auth: {
       getSession: async () => ({
@@ -249,13 +358,30 @@ export function mockCloudFromServer(server: MockServer): any {
         error: null,
       }),
     },
+    storage: {
+      from: (bucket: string) => ({
+        upload: async (p: string, body: unknown, _opts?: unknown) => {
+          storageFiles.set(`${bucket}/${p}`, body as Uint8Array);
+          return { error: null };
+        },
+        remove: async (paths: string[]) => {
+          for (const p of paths) storageFiles.delete(`${bucket}/${p}`);
+          return { error: null };
+        },
+        getPublicUrl: (p: string) => ({
+          data: { publicUrl: `https://cdn.test/${bucket}/${p}` },
+        }),
+      }),
+    },
     from: (table: string) => ({
       select: (_cols?: string) => new SelectQuery(server, table),
       update: (patch: Record<string, unknown>) => new UpdateQuery(server, table, patch),
+      delete: () => new DeleteQuery(server, table),
       upsert: (rows: unknown, _opts?: unknown) => ({
         select: (_cols?: string) => thenable(server.upsert(table, rows)),
       }),
     }),
     rpc: async (name: string, params?: Record<string, unknown>) => server.rpc(name, params),
+    __storageFiles: storageFiles,
   });
 }

@@ -45,3 +45,4 @@ __pycache__/
 
 # QA screenshots (agent verification output, not source)
 .screenshots/
+wt/

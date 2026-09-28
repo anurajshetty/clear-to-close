@@ -3,10 +3,24 @@
 // `realtor-media` bucket so client devices can see them. Previously photos
 // stayed device-local.
 //
-// Path convention (contractual — matches migration 0014):
-//   <userId>/photo.jpg
-//   <userId>/banner.jpg
-// Single overwrite files: every upload upserts the same path.
+// Path convention (Sept 28, 2026 revision — synchronous server-first
+// writes): uploads go to UNIQUE per-upload paths
+//   <userId>/photo-<uniqueId>.jpg
+//   <userId>/banner-<uniqueId>.jpg
+// and the profile row stores that path's public URL. The old single-
+// overwrite convention (<userId>/photo.jpg) uploaded new bytes over the
+// live file BEFORE the profile row confirmed, so a row failure left the
+// publicly visible image changed with no local record of it. Unique paths
+// never touch a live file: a row failure orphans an unreferenced file and
+// every client keeps seeing the previously confirmed image. Uniqueness
+// also replaces the old ?v= cache-buster: every upload is a distinct URL,
+// so client surfaces drop the stale cached image immediately.
+//
+// Migration 0014's RLS policy only requires the first path segment to be
+// auth.uid(), so unique paths under <uid>/ are permitted — no migration
+// change needed. Files at the old fixed paths keep working (their stored
+// URLs still resolve); the first save after this change moves the row to
+// a unique path and the orphaned fixed-path file is deleted best-effort.
 //
 // Everything here is best-effort: any failure returns null and the profile
 // stays local-only, exactly the old behavior. The local managed files
@@ -22,8 +36,30 @@ export const REALTOR_MEDIA_BUCKET = 'realtor-media';
 
 export type MediaKind = 'photo' | 'banner';
 
+/**
+ * Legacy fixed path for a kind (<userId>/photo.jpg). Kept as the delete
+ * fallback for files uploaded before the unique-path change and by tests.
+ */
 export function storagePathFor(userId: string, kind: MediaKind): string {
   return `${userId}/${kind === 'photo' ? 'photo.jpg' : 'banner.jpg'}`;
+}
+
+/** Random per-upload id (no node/RN-only deps, so this loads in tests). */
+function uniqueUploadId(): string {
+  const time = Date.now().toString(36);
+  const rand = Math.floor(Math.random() * 0xffffffff)
+    .toString(36)
+    .padStart(7, '0');
+  return `${time}${rand}`;
+}
+
+/**
+ * Unique per-upload path: <userId>/<kind>-<uniqueId>.jpg. Never overwrites
+ * a live file — a failed write orphans an unreferenced object instead of
+ * changing what clients see.
+ */
+export function stagedUploadPath(userId: string, kind: MediaKind): string {
+  return `${userId}/${kind}-${uniqueUploadId()}.jpg`;
 }
 
 /** Public URL for an uploaded file (no network call). */
@@ -34,6 +70,30 @@ export function publicUrlFor(client: Cloud, userId: string, kind: MediaKind): st
   } catch {
     return null;
   }
+}
+
+/** Public URL for an arbitrary object path in the bucket (no network call). */
+export function publicUrlForPath(client: Cloud, path: string): string | null {
+  try {
+    const { data } = client.storage.from(REALTOR_MEDIA_BUCKET).getPublicUrl(path);
+    return typeof data?.publicUrl === 'string' && data.publicUrl.length > 0 ? data.publicUrl : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract the bucket object path from a stored public URL
+ * (…/realtor-media/<path>[?query]). Returns null when the URL does not
+ * reference this bucket — callers fall back to the legacy fixed path.
+ */
+export function storagePathFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const marker = `/${REALTOR_MEDIA_BUCKET}/`;
+  const idx = url.indexOf(marker);
+  if (idx < 0) return null;
+  const rest = url.slice(idx + marker.length).split('?')[0].split('#')[0];
+  return rest.length > 0 ? rest : null;
 }
 
 /**
@@ -120,8 +180,11 @@ async function defaultNativeRead(uri: string): Promise<string | null> {
 
 /**
  * Upload the realtor's managed photo/banner to Storage and return its public
- * URL. Returns null when there is nothing to upload or the upload fails —
- * the caller keeps the profile local-only in that case.
+ * URL. Uploads go to a UNIQUE per-upload path (stagedUploadPath) — never
+ * over the live file — so a later row failure cannot change what clients
+ * see. The returned URL is unique per upload, which replaces the old ?v=
+ * cache-buster. Returns null when there is nothing to upload or the upload
+ * fails — the caller keeps the profile local-only in that case.
  */
 export async function uploadProfileMedia(
   client: Cloud,
@@ -134,15 +197,16 @@ export async function uploadProfileMedia(
   try {
     const bytes = await readImageBytes(localUri, readNativeBase64);
     if (!bytes || bytes.length === 0) return null;
+    const path = stagedUploadPath(userId, kind);
     const { error } = await client.storage.from(REALTOR_MEDIA_BUCKET).upload(
-      storagePathFor(userId, kind),
+      path,
       bytes,
-      { contentType: 'image/jpeg', upsert: true },
+      { contentType: 'image/jpeg', upsert: false },
     );
     if (error) return null;
-    // Cache-busted URL: every successful upload stamps a fresh version, so
-    // client surfaces drop the stale cached image immediately.
-    return versionedPublicUrl(client, userId, kind);
+    // Unique path => unique URL: client surfaces drop the stale cached
+    // image immediately, with no query-param cache-buster to maintain.
+    return publicUrlForPath(client, path);
   } catch {
     return null;
   }
@@ -154,23 +218,29 @@ function isNotFoundStorageError(error: unknown): boolean {
 }
 
 /**
- * Delete the realtor's photo/banner from Supabase Storage (Sept 28, 2026,
- * Anuraj: profile/banner image removal). This is the first delete path for
- * the `realtor-media` bucket — uploads were the only write before.
+ * Delete one object from the realtor-media bucket by path (Sept 28, 2026,
+ * Anuraj: profile/banner image removal).
  *
  * Loud, not best-effort: a failure throws so the caller surfaces it
  * (confirmed-or-loud) instead of reporting the removal silently
  * unconfirmed. A missing file counts as already deleted, never as a
- * failure — removal is idempotent, which also keeps outbox retries safe.
+ * failure — removal is idempotent, which also keeps retries safe.
+ */
+export async function deleteMediaAtPath(client: Cloud, path: string): Promise<void> {
+  if (!client || !path) throw new Error('deleteMediaAtPath: no client or path');
+  const { error } = await client.storage.from(REALTOR_MEDIA_BUCKET).remove([path]);
+  if (error && !isNotFoundStorageError(error)) throw error;
+}
+
+/**
+ * Delete the realtor's photo/banner at its legacy fixed path. Kept for the
+ * pre-unique-path files and for tests; new code deletes by the path parsed
+ * from the stored URL via deleteMediaAtPath.
  */
 export async function deleteProfileMedia(
   client: Cloud,
   userId: string,
   kind: MediaKind,
 ): Promise<void> {
-  if (!client || !userId) throw new Error('deleteProfileMedia: no client or user');
-  const { error } = await client.storage
-    .from(REALTOR_MEDIA_BUCKET)
-    .remove([storagePathFor(userId, kind)]);
-  if (error && !isNotFoundStorageError(error)) throw error;
+  await deleteMediaAtPath(client, storagePathFor(userId, kind));
 }

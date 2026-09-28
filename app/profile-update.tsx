@@ -48,6 +48,10 @@ export default function ProfileUpdate() {
   });
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Synchronous writes (Sept 28, 2026): saveProfile throws when the
+  // profile (and its photo/banner) is not confirmed on the server — the
+  // failure must be visible on screen.
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -133,6 +137,7 @@ export default function ProfileUpdate() {
       return;
     }
     setSaving(true);
+    setSaveError(null);
     try {
       // Clearing then picking a new image before saving = the new image
       // wins (normal replace): photoCleared/bannerCleared are false when
@@ -159,6 +164,16 @@ export default function ProfileUpdate() {
       await auth.setProfileSkipped(false);
       editedRef.current = false;
       router.back();
+    } catch (err) {
+      // The save threw: local state (including the managed files) is
+      // unchanged — show the plain-language reason so the realtor knows
+      // the save did not land.
+      setSaveError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't save your profile. Check your connection and try again.",
+      );
+      console.warn('saveProfile failed', err);
     } finally {
       setSaving(false);
     }
@@ -195,6 +210,7 @@ export default function ProfileUpdate() {
 
         <ProfileForm value={draft} onChange={patch} nameError={nameError} />
 
+        {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>
           <PrimaryButton
             title={saving ? 'Saving…' : 'Save'}
@@ -264,6 +280,7 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
   cta: { marginTop: 24 },
+  error: { fontSize: 13, color: colors.red, marginTop: 10 },
   // Quiet "Change password" row below Save (approved spec §2.8, Sept 26).
   pwlink: {
     marginTop: 6,

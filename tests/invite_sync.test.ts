@@ -11,8 +11,9 @@
 //     via the cloud RPC.
 //  4. pushInviteNow is idempotent: re-pushing an already-synced invite does
 //     not regenerate the code or throw (upsert on id).
-//  5. Resolve heals a local-only invite: if the cloud says 'invalid' but
-//     the invite exists locally, it is pushed and the resolve retried.
+//  5. Resolve never pushes: the local-invite push-and-retry fallback is
+//     retired — a server 'invalid' verdict stands and resolve performs no
+//     server write (the read-only local branding path may still answer).
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
@@ -53,21 +54,24 @@ function fakeCloud() {
         }
         return { error: null };
       },
-      upsert: (row: Record<string, unknown>, _opts?: unknown) => {
-        calls.push(`upsert ${table} ${row.code ?? ''}`);
+      upsert: (rowOrRows: unknown, _opts?: unknown) => {
+        // PostgREST returns one affected row per input row: normalize the
+        // single-object (pushInviteNow) and array (upsertAll) shapes.
+        const rows = (Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows]) as Record<string, unknown>[];
+        calls.push(`upsert ${table} ${rows.map((r) => r.code ?? '').join(',')}`);
         let result: { data?: unknown; error?: unknown };
         if (table === 'invites') {
-          if ([...invites.values()].some((r) => r.code === row.code && r.id !== row.id)) {
+          if ([...invites.values()].some((r) => rows.some((x) => x.code === r.code && x.id !== r.id))) {
             result = { error: { code: '23505', message: 'duplicate key value violates unique constraint "invites_code_key"' } };
           } else {
-            invites.set(row.id as string, { ...row });
-            result = { data: [{ id: row.id }], error: null };
+            for (const r of rows) invites.set(r.id as string, { ...r });
+            result = { data: rows.map((r) => ({ id: r.id })), error: null };
           }
         } else if (table === 'escrows') {
-          escrows.set(row.id as string, { ...row });
-          result = { data: [{ id: row.id }], error: null };
+          for (const r of rows) escrows.set(r.id as string, { ...r });
+          result = { data: rows.map((r) => ({ id: r.id })), error: null };
         } else {
-          result = { data: [{ id: row.id }], error: null };
+          result = { data: rows.map((r) => ({ id: r.id })), error: null };
         }
         return { select: () => Promise.resolve(result) };
       },
@@ -198,20 +202,29 @@ async function main(): Promise<void> {
       're-push uses upsert (no PK-conflict throw)');
   }
 
-  // 5. Resolve heals a local-only invite whose push failed.
+  // 5. Resolve NEVER pushes: the local-invite push-and-retry fallback is
+  // retired (Sept 28, 2026). createInvite is confirmed server-first, so a
+  // local-only invite cannot exist; a server 'invalid' verdict stands and
+  // resolve performs no server write. The read-only local branding path
+  // may still answer from the local cache without touching the server.
   {
     const { client, invites } = fakeCloud();
     const kvA = memoryKV();
     const { store, initCloudSync } = createSyncedStore(kvA, { cloudClient: () => client as never });
     await initCloudSync();
+    // The read-only local resolve answers branding from the local profile —
+    // seed one so the fall-through has something to return.
+    await store.saveProfile({ name: 'Rita Realtor', realty_group: 'Acme', photoUri: null, photoRemoteUrl: null, bannerRemoteUrl: null, banner_image: null } as never);
     const escrow = await newEscrow(store);
     const invite = await store.createInvite(escrow.id, 'buyer', 'Alice Buyer');
     await new Promise((r) => setTimeout(r, 300));
-    // Simulate the push having failed: wipe the server copy, keep the local.
+    // Simulate the impossible state: server copy wiped, local retained.
     invites.clear();
+    const before = JSON.stringify([...invites.entries()]);
     const res = await store.resolveInviteRealtor(invite.code);
-    assert(res.ok === true, 'resolve pushes a local-only invite and retries (heals)');
-    assert(invites.has(invite.id), 'healed invite is now on the server');
+    assert(invites.size === 0 && JSON.stringify([...invites.entries()]) === before,
+      'resolve performs no server write for a server-unknown code (no push-and-retry)');
+    assert(res.ok === true, 'resolve still answers from the read-only local cache');
   }
 
   summary('invite_sync');

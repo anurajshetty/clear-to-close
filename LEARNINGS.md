@@ -3,6 +3,132 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Synchronous writes (the rebuild, Sept 28, 2026)
+
+- **The local redeem fallback minted access the server never authorized.**
+  The synced-store `redeemInvite` fell back to `local.redeemInvite` when the
+  server was unreachable or rejected the code, so an offline client "redeemed"
+  an invite into an escrow the server did not recognize — with the realtor
+  never seeing the device. Practice: RPC is the single authority for
+  cross-identity actions; when it is unavailable, report the retryable error
+  and do NOTHING. A success the server didn't confirm is not a success.
+- **The branding resolver ran unbounded writes inside a read.** A local-only
+  invite fallback in `resolveInviteRealtor` pushed the invite and retried with
+  no timeout — unbounded network work outside any timed gate, triggered by a
+  screen render. Practice: reads never write; every network call belongs
+  inside a timeout. The fallback was deleted; the RPC verdict is final.
+- **A "locally created" premise outlived its model.** Both fallbacks above
+  were justified by "a local-only invite whose push failed or hasn't run
+  yet" — but `createInvite` is confirmed server-first, so a local-only
+  invite cannot exist. Practice: when the write model changes, re-audit every
+  code path that assumed the old model's states — dead premises in fallback
+  code become live bugs.
+- **Promise.race doesn't cancel the loser.** Prefetch and redeem races leave
+  the late promise running; a late RPC rejection becomes an unhandled
+  rejection. Practice: attach a no-op catch to every raced promise, and never
+  let a late loser mutate state.
+- **Timeout and offline must never produce a verdict.** A redeem timeout
+  reported `invalid` before the fix — the user would throw away a perfectly
+  good code. Practice: on timeout or transport failure, report the retryable
+  network error only; verdicts come exclusively from the authority.
+- **Multi-step server effects are sequential, not transactions.** Cancel,
+  close, and the bulk checklist save run steps one after another; a partway
+  failure leaves the server partially updated. Practice: design the window
+  fail-safe — local stays unchanged (the user still sees the pre-action
+  state and can retry), retry is idempotent, and the next pull converges.
+  Revoke the invite row FIRST so a lookup failure can never strand a live
+  link on a live code.
+- **Server-authoritative identity data only.** The old convergence enqueued
+  `revokeClientLink` ops from locally held link ids — but client_links rows
+  are created by the redeem RPC server-side, so local ids could never match.
+  Practice: kill server identity rows via a live server query (the invite_id
+  convergence), never by trusting locally held ids.
+- **Unique media paths on upload; delete only after the row confirms.**
+  Uploads to fixed filenames race and overwrite live files; a failed row
+  after a delete strands the client on a broken URL. Practice: upload to a
+  unique per-upload path, carry nulled + new URLs in the row upsert, delete
+  the removed file only after the row confirms. A row failure then orphans
+  an unreferenced object instead of changing what clients see.
+- **Interface conformance follows the preview/direct pattern.** Adding a new
+  previewed write (`applyChecklistEdits`) requires the `Store` interface
+  method, the local `createStore` direct implementation, the synced-store
+  `previewApplyChecklist` pass-through, and the test contract file's
+  implementation — tsc's TS2741 errors pin each missing piece, but check the
+  whole quartet before running.
+
+## Checklist edit mode (Sept 28, 2026)
+
+- **Upsert-only pushes resurrect deleted rows.** `pushEscrowNow` upserts the
+  escrow and every current step — it never deletes. A checklist save that
+  only upserts would leave removed steps on the server, and the next pull
+  would bring them back from the dead. Practice: any write that can remove
+  rows needs an explicit server-side delete (`deleteStepRowsNow`, running
+  inside the same confirmed write as the step upserts).
+- **The draft must be the only thing an edit mutates.** The edit screen
+  keeps its draft in component state; the saved escrow is untouched until
+  the tick. Practice: discard is then trivially correct (drop the draft),
+  and a failed save keeps the draft in place for retry — no partial local
+  state to unwind.
+- **Structural edits must not look like activity.** The bulk apply never
+  stamps `lastAction`: a reorder/add/remove is not a check-off or a reopen,
+  so it must not drive the client LATEST FROM card or a push notification.
+  Pinned by a test asserting `lastAction` is byte-identical before/after a
+  save. Practice: any new write path gets an explicit "does this count as
+  activity?" decision, not the default stamp.
+- **Closed-state survival is a lifecycle rule, not UI logic.** Removing a
+  checked step from a closed side keeps it closed only when every remaining
+  step is complete; any unchecked step (added, left, or unchecked in the
+  draft) reopens that side — the same as unchecking today. The other side
+  is untouched. Practice: lifecycle transitions live in the store compute,
+  tested at the store level (13 -> 12 keeps closed; +1 unchecked reopens).
+- **Client-generated ids make retried saves idempotent.** New draft steps
+  carry a client-generated id; unknown ids are treated as new steps and keep
+  the given id. A save retried after a failure reuses the same ids, so the
+  server upsert cannot duplicate the added steps. Practice: never mint the
+  row id inside the push — mint it before the first attempt.
+- **Sync seam (resolved in the release merge).** The synced store's tick was
+  a local-apply + fire-and-forget `bgPush` (TEMP on the feature branch).
+  The release merge replaced it with the real `applyChecklistEdits`
+  `confirmedWrite`: preview -> `pushEscrowNow` + `deleteStepRowsNow` ->
+  `commitPreview`, with failures thrown to the tick so the draft is kept
+  for retry. The confirmed-write error surface is plain-language by
+  architecture; the tick shows it verbatim with a generic fallback.
+  Practice: when building ahead of a sibling branch, mark the seam TEMP and
+  document the exact replacement — never silently ship the weaker semantics.
+- **Stale browser test.** `tests/rendered/share_button_removed.py` still
+  asserts the old view-mode reorder hint and view-mode drag reorder, both
+  removed by the edit-mode interaction model (reorder lives in edit mode;
+  the hint moved to the sticky footer). Not updated — browser tests are
+  Anuraj's pass; flagged for it.
+
+### Side-effect pass (checklist edit mode)
+- Removed checked steps: the row is deleted locally and server-side
+  (`removedStepIds` -> `deleteStepRowsNow`); the closed side stays closed only
+  while every remaining step is complete.
+- Progress counts: recomputed from the saved list (13 -> 12 on a pure
+  removal); the ring and "N of M" captions read the saved escrow after the
+  tick.
+- 100%/triumph state: the "All N steps complete" banner renders from the
+  saved list — an edit that completes the list surfaces the close banner;
+  an edit that breaks completion removes it. No confetti is tied to edits.
+- JUST NOW markers: recency markers derive from `completedAt`/`lastAction`;
+  the save preserves `completedAt` for steps that stay done and never stamps
+  `lastAction`, so no false "just now" appears from a structural edit.
+- Client views: update through the existing channel after the save (the
+  step rows upsert; removed rows are deleted). Structural edits send no
+  push — check-off push behavior is untouched and separate.
+- Deal-list counts: the deal list reads the escrow's steps, so counts and
+  status follow the save automatically.
+- Discard mid-edit: drops the draft; the saved escrow was never touched.
+- Save failure: the error shows in the sticky footer in plain language and
+  the draft is kept for retry. Under the confirmed-write wiring, the
+  local state is untouched until the server confirms.
+- Interaction with synchronous writes: the tick is one `confirmedWrite`
+  (preview -> push escrow + upsert steps + delete removed steps ->
+  commit). If the delete lands but the upsert fails (or vice versa), the
+  write throws, the local state is untouched, and the next pull converges
+  the server truth — documented, not claimed as a single DB transaction.
+
 ## Data sync (the big theme, Sept 27, 2026)
 
 - **Silent RLS rejections.** An upsert can affect zero rows and return no error —

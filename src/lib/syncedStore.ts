@@ -1,22 +1,35 @@
 // Clear to Close — synced store.
 //
-// Wraps the local KV store with the Store interface. Realtor mutations apply
-// locally first (offline-first), then push to Supabase in the background;
-// failures land in the persisted outbox and are retried on init.
+// Wraps the local KV store with the Store interface. Realtor mutations are
+// SYNCHRONOUS server-first writes (Anuraj, Sept 28, 2026): every
+// user-initiated write computes its candidate state against a cloned local
+// snapshot, pushes to Supabase with a per-write timeout, and applies the
+// snapshot locally ONLY after the server confirms. Any failure throws a
+// plain-language error immediately and leaves local state unchanged — there
+// is no background push, no user-action outbox enqueue, no fire-and-forget.
+// A crash before confirmation leaves local unchanged; a crash after server
+// confirmation but before the local apply is healed by the next pull.
 //
 // Reads prefer the cloud only when it is proven healthy:
 //   - redeemInvite: redeem_invite RPC when Supabase is configured (public
-//     gate — no realtor session needed), otherwise the local v1 path.
+//     gate — no realtor session needed), otherwise a retryable 'network'
+//     error. The old local v1 redeem path is deleted (Sept 28, 2026): the
+//     RPC is the single authority.
 //   - getBuyerView/getSellerView: get_client_view RPC when this device holds
 //     a cloud link for the escrow (public gate — works on client devices
 //     with no session), with a cached-view and local fallback.
 //   - validateClientLink: get_client_view authority under the public gate.
-// Realtor-owned pushes still require the email/password session (cloudOk()).
-// When the ping fails (offline / no realtor session / RLS blocking) the app
-// behaves exactly as the local-only v1 — sync stays dormant.
+// Realtor-owned writes still require the email/password session. A persisted
+// session resolves even offline, so an offline write fails fast with a plain
+// error instead of silently going local. Boot, foreground, and
+// pull-to-refresh are pure pull; when the ping fails (offline / no realtor
+// session / RLS blocking) the app behaves exactly as the local-only v1 —
+// sync stays dormant.
 
-import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type RevokedClientLink, type Store } from './store';
+import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type LocalSnapshot, type Preview, type RevokedClientLink, type Store } from './store';
 import type {
+  ApplyChecklistResult,
+  ChecklistDraftStep,
   ClientRole,
   ClientView,
   Escrow,
@@ -32,13 +45,11 @@ import {
   cloudClient,
   cloudConfigured,
   clearOutbox,
-  dequeueOutboxOp,
+  convergeInviteLinkRevokesNow,
   drainOutbox,
-  enqueueOutbox,
   ensureCloudUser,
   fetchCloudView,
   isCapViolation,
-  isClosedEscrowRejection,
   logConflict,
   mediaKindsRemoved,
   outboxOpKey,
@@ -51,16 +62,22 @@ import {
   pushInviteNow,
   pushProfileWithMedia,
   pushRevokeNow,
+  deleteStepRowsNow,
   readOutboxOps,
+  readPendingMediaRemovals,
+  clearPendingMediaRemovals,
   redeemViaCloud,
   regenerateInviteNow,
   resolveInviteRealtor as resolveInviteRealtorViaCloud,
+  isClosedEscrowRejection,
+  withWriteTimeout,
+  WriteTimeoutError,
   type Cloud,
   type OutboxOp,
   type PingResult,
-  writePendingMediaRemovals,
 } from './cloudSync';
 import type { MediaKind } from './mediaUpload';
+import { deleteMediaAtPath, storagePathFromUrl } from './mediaUpload';
 import {
   classifySyncError,
   clearAllSyncErrors,
@@ -76,6 +93,8 @@ import {
 
 const K_CLOUD_LINKS = 'ctc:cloudlinks';
 const K_CLOUD_VIEW_PREFIX = 'ctc:cloudview:';
+/** Marker: the retired user-action outbox got its one final drain. */
+const K_OUTBOX_RETIRED = 'ctc:outbox-retired';
 
 /**
  * Delete the realtor's managed photo/banner files (logout wipe, Sept 2026).
@@ -150,21 +169,6 @@ function timeoutMs(ms: number): Promise<never> {
   return new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
 }
 
-/**
- * A pushInvite failure that is authoritative and final: retrying would never
- * succeed. Returns the sync-error record kind to use, or null when the
- * failure is retryable. Two cases (Sept 2026):
- * - 'inviteCap': lost a cross-device creation race against the per-side cap.
- * - 'inviteClosed': the invite was created while the escrow was open but the
- *   escrow was closed/cancelled before the push landed (the 0018 server
- *   trigger rejected it).
- */
-function finalInviteRejection(error: unknown): 'inviteCap' | 'inviteClosed' | null {
-  if (isCapViolation(error)) return 'inviteCap';
-  if (isClosedEscrowRejection(error)) return 'inviteClosed';
-  return null;
-}
-
 export function createSyncedStore(
   kv: KV,
   deps?: {
@@ -172,6 +176,10 @@ export function createSyncedStore(
     cloudClient?: () => Cloud | null;
     /** Override the redeem RPC timeout (unit tests use a short timeout). */
     redeemTimeoutMs?: number;
+    /** Override the confirmed-write timeout (unit tests use a short timeout). */
+    writeTimeoutMs?: number;
+    /** Override the long confirmed-write timeout (profile media, close/cancel). */
+    writeTimeoutLongMs?: number;
   },
 ): { store: Store; initCloudSync: () => Promise<PingResult> } {
   const local = createStore(kv);
@@ -192,6 +200,215 @@ export function createSyncedStore(
   // of cloudOk() (realtor sync health), so a client device with no session
   // can still redeem an invite and validate its device link.
   const publicOk = (): boolean => cloudConfigured() && !!client();
+
+  /**
+   * Per-write deadline (Anuraj, Sept 28, 2026): every user-initiated
+   * server write has a timeout. Exceeding it fails exactly like a network
+   * failure — plain error, local state unchanged.
+   */
+  const WRITE_TIMEOUT_MS = deps?.writeTimeoutMs ?? 15000;
+  /** Multi-entity confirmed writes (profile media, close/cancel) get a longer deadline. */
+  const WRITE_TIMEOUT_LONG_MS = deps?.writeTimeoutLongMs ?? 30000;
+
+  /**
+   * Plain-language error for a failed synchronous write (Anuraj, Sept 28,
+   * 2026): the realtor sees immediately that the change was NOT saved, and
+   * local state is unchanged. No em dashes in user-facing copy.
+   */
+  function plainWriteError(error: unknown): Error {
+    if (isCapViolation(error)) {
+      return new Error(
+        'This escrow already has 2 active invite codes. Revoke an unused code first, then create a new one.',
+      );
+    }
+    // Closed-escrow race (Anuraj, Sept 28, 2026): the invite passed the
+    // app-level gate while the escrow was open, but the escrow was
+    // closed/cancelled before the push landed and the 0018 server trigger
+    // rejected it. Nothing local was created, so there is nothing to roll
+    // back — the realtor just needs the plain-words reason.
+    if (isClosedEscrowRejection(error)) {
+      return new Error(
+        'This escrow is closed or cancelled. The invite was not created.',
+      );
+    }
+    // Missing cloud/session (Sept 28, 2026): the message is already
+    // plain-language — pass it through unchanged.
+    if ((error as { code?: string } | null)?.code === NO_CLOUD_SESSION) {
+      return error as Error;
+    }
+    const kind = classifySyncError(error);
+    if (error instanceof WriteTimeoutError || kind === 'network') {
+      return new Error(
+        "Couldn't reach the server. Your change was not saved. Check your connection and try again.",
+      );
+    }
+    if (kind === 'rejected') {
+      return new Error('The server refused the update. Your change was not saved.');
+    }
+    return new Error("Couldn't save. Your change was not saved. Please try again.");
+  }
+
+  /**
+   * Rows with a user action's confirmed write currently in flight. Marked
+   * synchronously when the action fires (before any await), so a pull that
+   * is already in flight never overwrites a row whose server write has not
+   * confirmed yet. Cleared when the write settles. User actions never
+   * enqueue to the outbox anymore, so this is a pure in-memory guard — the
+   * write's own confirmation is the last word on the row.
+   */
+  const writeInflight = new Set<string>();
+
+  /**
+   * Resolve the session a confirmed write runs under. Null when sync is
+   * dormant (project unconfigured or no realtor session). confirmedWrite
+   * converts null into a plain "not saved" throw — it never commits
+   * locally unconfirmed. A persisted session resolves even when the ping
+   * never ran or the device is offline, so an offline write fails fast
+   * with a plain network error instead of silently going local.
+   */
+  const NO_CLOUD_SESSION = 'ctc:no-cloud-session';
+  async function serverSession(): Promise<{
+    c: NonNullable<ReturnType<typeof cloudClient>>;
+    uid: string;
+  } | null> {
+    if (!cloudConfigured()) return null;
+    const c = client();
+    if (!c) return null;
+    if (userId) return { c, uid: userId };
+    try {
+      const uid = await ensureCloudUser(c);
+      return uid ? { c, uid } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Synchronous server-first write (Anuraj, Sept 28, 2026):
+   *   1. wait for every earlier write to finish (single global chain);
+   *   2. compute the candidate state against a CLONED local snapshot
+   *      (preview) — live data and persisted keys are untouched;
+   *   3. require cloud + an authenticated realtor (else a plain
+   *      "not saved" throw — never a local-only commit);
+   *   4. push the candidate to the server with a per-write timeout;
+   *   5. ONLY on confirmation, commit the snapshot locally.
+   * Any failure (network, timeout, server rejection) throws a
+   * plain-language error and leaves local state byte-identical. The
+   * in-flight key guards concurrent pulls for the duration of the write.
+   *
+   * Concurrency: previews carry the whole snapshot, so confirmed writes
+   * run on a SINGLE global chain — each write computes its preview only
+   * after every earlier write committed, and commits before the next
+   * preview is computed. A per-key chain would still clobber: two writes
+   * to different keys (e.g. a profile save and a checklist toggle) could
+   * commit stale snapshots over each other. The `inflightKey` argument
+   * now only labels the timeout error and the write-inflight pull guard.
+   */
+  /**
+   * Exclusive state-mutation gate (Anuraj, Sept 28, 2026): confirmed writes
+   * AND pull merges serialize through one chain. A write's preview is
+   * computed from a cloned snapshot but its commit swaps whole collections,
+   * so a pull that merged between the preview compute and the commit would
+   * be silently overwritten; conversely a pull that fetched before a commit
+   * must not merge stale rows over it (the commitSeq guard covers that
+   * direction). Serializing both directions here means a pull either merges
+   * fully before a write's preview is computed (the preview sees the pulled
+   * state) or waits for the write to commit (its fetch is then stale for
+   * the written rows, which the commitSeq guard skips). The network fetch
+   * always happens OUTSIDE the gate; only the local mutation holds it.
+   * Callbacks must never re-enter this gate (no confirmedWrite inside a
+   * pull merge and vice versa).
+   */
+  let exclusiveChain: Promise<void> = Promise.resolve();
+  async function enqueueExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = exclusiveChain;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((res) => (release = res));
+    exclusiveChain = prev.then(() => gate);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+  // Commit-sequence guard against pull/write races (Anuraj, Sept 28,
+  // 2026): a pull that FETCHED before a confirmed write committed must not
+  // MERGE its stale rows over the fresh commit. confirmedWrite bumps
+  // writeSeq and records each key's commit seq; pull-apply sites record
+  // the seq before fetching and skip rows whose key committed after.
+  let writeSeq = 0;
+  const committedSeq = new Map<string, number>();
+  async function confirmedWrite<T>(
+    inflightKey: string,
+    preview: () => Promise<Preview<T>>,
+    push: (
+      session: { c: NonNullable<ReturnType<typeof cloudClient>>; uid: string },
+      result: T,
+      snapshot: LocalSnapshot,
+    ) => Promise<void>,
+    timeoutMs = WRITE_TIMEOUT_MS,
+  ): Promise<T> {
+    // Every confirmed write runs inside the exclusive gate: the preview is
+    // computed only after every earlier write committed AND every earlier
+    // pull merge finished, so it sees the latest committed state; the
+    // commit holds the gate so no pull can merge between confirmation and
+    // local apply.
+    return enqueueExclusive(async () => {
+      writeInflight.add(inflightKey);
+      let result: T;
+      let snapshot: LocalSnapshot;
+      try {
+        ({ result, snapshot } = await preview());
+      } catch (e) {
+        // App-level validation gates (the closed/cancelled-escrow invite
+        // block, the per-role invite cap, ...) throw from the preview
+        // BEFORE any server contact. Their messages are already
+        // plain-language for the on-screen surface — surface them
+        // unchanged, never remapped to a generic "couldn't save".
+        throw e;
+      }
+      try {
+        // Session resolution is part of the bounded write: ensureCloudUser
+        // may hit the network, and every network operation in a user action
+        // must sit inside the timeout. Required cloud + authenticated
+        // realtor: a missing session throws a plain "not saved" error —
+        // never a local-only commit that would look saved while the server
+        // never saw the write.
+        await withWriteTimeout(
+          (async () => {
+            const session = await serverSession();
+            if (!session) {
+              const e = new Error(
+                "Couldn't save. You're signed out or the cloud isn't set up. Sign in and try again.",
+              );
+              (e as { code?: string }).code = NO_CLOUD_SESSION;
+              throw e;
+            }
+            await push(session, result, snapshot);
+          })(),
+          timeoutMs,
+          inflightKey,
+        );
+        // Commit ONLY after the server confirmed. No awaits between the
+        // timeout resolving and this call, so a pull cannot interleave a
+        // stale convergence between confirmation and local apply. The
+        // commit seq lets pulls that fetched earlier skip this row instead
+        // of merging stale server data over the fresh commit.
+        const committed = await local.commitPreview({ result, snapshot });
+        writeSeq += 1;
+        committedSeq.set(inflightKey, writeSeq);
+        return committed;
+      } catch (e) {
+        // Failure (server error, offline, timeout, crash-before-confirm):
+        // local state is unchanged — the preview was never committed.
+        // The error is plain-language for the on-screen surface.
+        throw plainWriteError(e);
+      } finally {
+        writeInflight.delete(inflightKey);
+      }
+    });
+  }
 
   /**
    * Build a persisted failure record for a write that did not reach the
@@ -215,39 +432,6 @@ export function createSyncedStore(
     };
   }
 
-  /** Fire-and-forget cloud push; failures (or a not-yet-healthy cloud) go
-   *  to the outbox for retry, so the system self-heals when connectivity or
-   *  the project configuration is fixed later.
-   *
-   *  Server-is-truth (Anuraj, Sept 2026): bgPush is the ONLY push entry
-   *  point, and it fires only from explicit user actions (Save, check-off,
-   *  invite generate/regenerate, close, revoke). There are no background
-   *  pushes — boot and foreground return are pure pull. */
-  // Throttle for background re-inits kicked off when ops are queued while
-  // the cloud isn't healthy: at most one re-init per minute, so a burst of
-  // offline mutations doesn't hammer the ping endpoint.
-  let lastBgReinit = 0;
-  /**
-   * Rows with a user action's push currently in flight. Marked
-   * SYNCHRONOUSLY when the action fires (before any await), so a pull that
-   * is already in flight sees the row as dirty and never overwrites it —
-   * the explicit push is the row's only writer, and its confirmation is
-   * the last word. Cleared when the push settles; the persisted outbox op
-   * covers a crash mid-push (the boot drain retries it — boot itself never
-   * pushes).
-   */
-  const dirtyInflight = new Set<string>();
-  /**
-   * Dirty-row check: true while an explicit user action's push for this row
-   * is in flight (memory flag, set synchronously when the action fires) or
-   * queued for retry (persisted outbox). Pulls must never overwrite a dirty
-   * row.
-   */
-  async function isDirty(key: string): Promise<boolean> {
-    if (dirtyInflight.has(key)) return true;
-    const ops = await readOutboxOps(kv);
-    return ops.some((o) => outboxOpKey(o) === key);
-  }
   /**
    * Canonical snapshots for conflict detection (ARCHITECTURE.md principle
    * 5): a pull that replaces a clean local snapshot with a DIFFERENT
@@ -288,82 +472,7 @@ export function createSyncedStore(
       steps(e.sellerSteps),
     ]);
   }
-  function bgPush(
-    run: (c: NonNullable<ReturnType<typeof cloudClient>>, uid: string) => Promise<void>,
-    op: { op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke'; escrowId?: string; inviteId?: string } | null,
-  ): void {
-    if (!cloudConfigured()) return; // truly local build: nothing to queue
-    if (cloudOk()) {
-      const c = client();
-      const uid = userId;
-      if (!c || !uid) return;
-      // The user's explicit action dirties the row synchronously — before
-      // any await — so a concurrent pull can never interleave a stale
-      // overwrite between the tap and the push.
-      const key = op ? outboxOpKey(op) : null;
-      if (key) dirtyInflight.add(key);
-      void (async () => {
-        try {
-          // Enqueue BEFORE the push is attempted: the row stays dirty for
-          // the whole flight, so pulls skip it; and a crash mid-push
-          // leaves the op queued for the boot drain (a pure-pull boot must
-          // never wipe an unconfirmed local edit).
-          if (op) await enqueueOutbox(kv, { ...op, attempts: 0 });
-          await run(c, uid);
-          // Confirmed on the server: the row is clean again.
-          if (op) await dequeueOutboxOp(kv, op);
-        } catch (e) {
-          // Sync-failure surface (Anuraj, Sept 2026): the write did not
-          // reach the server. It is already queued for retry (above), AND
-          // the failure is recorded so the realtor sees it on screen
-          // immediately — no silent queueing, no "looks saved but wasn't".
-          if (op) {
-            await recordSyncError(kv, syncErrorForOp(op, e));
-          }
-        } finally {
-          if (key) dirtyInflight.delete(key);
-        }
-      })();
-      return;
-    }
-    // Ping pending or failed: queue the op, then kick off a background
-    // re-init (throttled) so the outbox drains as soon as the cloud is
-    // reachable again — without waiting for the next app reload. This
-    // covers the "boot ping failed transiently, user stays in the app and
-    // creates an invite" case.
-    //
-    // Sync-failure surface (Anuraj, Sept 2026): when sync is NOT dormant,
-    // a queued-but-unsent write is still a write that is not on the
-    // server, and the realtor must see it. Dormant sync (no session yet,
-    // or the project unconfigured) is the designed local-only path, not
-    // a failure — nothing is recorded there.
-    const dormant =
-      !userId && (!ping || /no realtor session|not configured/i.test(ping.error ?? ''));
-    if (op && !dormant) {
-      void (async () => {
-        await enqueueOutbox(kv, { ...op, attempts: 0 });
-        // Same visibility rule as an immediate push failure: the write is
-        // queued but not on the server, and the realtor must know.
-        await recordSyncError(kv, syncErrorForOp(op, new Error('network: cloud not reachable')));
-      })();
-    } else if (op) {
-      void enqueueOutbox(kv, { ...op, attempts: 0 });
-    }
-    const now = Date.now();
-    if (now - lastBgReinit > 60_000) {
-      lastBgReinit = now;
-      void initCloudSync().catch(() => {});
-    }
-  }
 
-  /**
-   * Best-effort immediate outbox drain (fire-and-forget). enqueueOutbox
-   * alone never pushes — without this, ops queued from an already-open app
-   * sit until the next boot (the only other drain is in initCloudSync).
-   * Anuraj bug (Sept 2026): closing an escrow left the server's
-   * client_links row live, so the client kept access. Failures stay queued
-   * for the boot-time drain, so this is purely additive.
-   */
   /**
    * Drain the outbox and reconcile the failure records (Sept 2026
    * sync-failure surface): every op that fails during the drain is
@@ -387,23 +496,23 @@ export function createSyncedStore(
       saveProfile: (prof: RealtorProfile) => local.saveProfile(prof),
       manual,
       onOpError: async (op: OutboxOp, error: unknown) => {
-        // A cap or closed-escrow rejection is authoritative and final:
-        // retrying it would never succeed, so it gets the final
-        // (dismissable) copy instead of the retryable one.
-        const final = op.op === 'pushInvite' ? finalInviteRejection(error) : null;
-        const copy = final
-          ? syncErrorCopy(final, 'rejected')
-          : syncErrorForOp(
-              { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
-              error,
-            );
+        // A cap rejection is authoritative and final: retrying it would
+        // never succeed, so it gets the final (dismissable) copy instead
+        // of the retryable one.
+        const copy =
+          op.op === 'pushInvite' && isCapViolation(error)
+            ? syncErrorCopy('inviteCap', 'rejected')
+            : syncErrorForOp(
+                { op: op.op, escrowId: op.escrowId, inviteId: op.inviteId, linkId: op.linkId },
+                error,
+              );
         // Awaited (not fire-and-forget): the drain awaits onOpError, so
         // two ops failing in the same drain record sequentially. A void
         // call here raced concurrent read-modify-writes on the persisted
         // error map and silently dropped one record (Sept 28 2026).
         await recordSyncError(kv, {
           key: opErrorKey(op),
-          op: final ?? op.op,
+          op: op.op === 'pushInvite' && isCapViolation(error) ? 'inviteCap' : op.op,
           escrowId: op.escrowId,
           inviteId: op.inviteId,
           linkId: op.linkId,
@@ -427,54 +536,6 @@ export function createSyncedStore(
           await clearSyncError(kv, err.key);
         }
       }
-    }
-  }
-
-  async function drainOutboxNow(): Promise<void> {
-    if (!cloudOk()) return;
-    const c = client();
-    const uid = userId;
-    if (!c || !uid) return;
-    try {
-      await drainAndReconcileErrors(c, uid);
-    } catch {
-      // Stays queued; the boot-time drain retries.
-    }
-  }
-
-  /**
-   * Server-authoritative link convergence (Sept 28, 2026): the redeem_invite
-   * RPC creates client_links rows server-side, which the realtor's device
-   * never holds locally — so the killed links are converged from the
-   * server, not from local data.links (a local-state-only convergence is a
-   * no-op in production: tests that seed local data.links pass for the
-   * wrong reason).
-   *
-   * This enqueues one retryable `convergeLinkRevokes` op per revoked
-   * invite; the drain runs the live server query and stamps revoked_at.
-   * A failed query stays queued (attempts/manualOnly) and retries on the
-   * next drain instead of stranding a zombie link with no recovery path —
-   * the Sept 28 side-effect pass caught that a one-shot query-then-enqueue
-   * here recorded a sync error but left nothing to retry. The immediate
-   * drain after each action runs the op now; failures surface via the
-   * drain's onOpError recording.
-   *
-   * NOTE: no direct `revokeClientLink` ops are enqueued for local
-   * data.links ids — local ids are minted by the offline redeem fallback
-   * and never exist as server rows, so pushing revokes for them would only
-   * produce permanent SyncNotAppliedError records. Server links are
-   * discovered by the converge op's invite_id query.
-   */
-  async function convergeServerLinks(
-    revokedInvites: { id: string; revokedAt: string }[],
-  ): Promise<void> {
-    for (const inv of revokedInvites) {
-      await enqueueOutbox(kv, {
-        op: 'convergeLinkRevokes',
-        inviteId: inv.id,
-        revokedAt: inv.revokedAt,
-        attempts: 0,
-      });
     }
   }
 
@@ -504,10 +565,46 @@ export function createSyncedStore(
     }
     if (result.ok && result.userId) {
       userId = result.userId;
+      // FINAL drain of the retired user-action outbox (Anuraj, Sept 28,
+      // 2026): installs upgrading from the background-push model get one
+      // last drain of already-queued operations, then the outbox is
+      // retired — user actions never enqueue again, so no later boot
+      // drains. Failures are recorded on the sync-failure surface;
+      // whatever remains is user-retryable via retrySync.
       try {
-        await drainAndReconcileErrors(c, userId);
+        const retired = await kv.getItem(K_OUTBOX_RETIRED).catch(() => null);
+        if (!retired) {
+          await drainAndReconcileErrors(c, userId);
+          // Pending media removals queued by the old model (removal flags
+          // without a surviving op): converge them once, then clear. The
+          // retired marker is set ONLY after the media convergence
+          // succeeded — a failure leaves the marker unset so the next boot
+          // retries, and the flags are cleared only after a successful
+          // convergence (a failed delete must not strand an orphaned
+          // Storage file with no flag left to retry it).
+          const pendingRemoval = await readPendingMediaRemovals(kv);
+          if (pendingRemoval.length) {
+            const p = await local.getProfile();
+            if (p) {
+              // Run through a preview so the media helpers mutate a
+              // draft, never the live profile, and the converged URLs
+              // persist in one commit after confirmation.
+              const preview = await local.previewSaveProfile(p);
+              const draft = preview.snapshot.profile;
+              if (draft) await pushProfileWithMedia(c, userId, kv, draft, pendingRemoval);
+              // The one-time legacy commit joins the exclusive gate like
+              // every other local mutation.
+              await enqueueExclusive(async () => {
+                await local.commitPreview(preview);
+              });
+              await clearPendingMediaRemovals(kv);
+            }
+          }
+          await kv.setItem(K_OUTBOX_RETIRED, '1');
+        }
       } catch {
-        // Outbox drain is best-effort; ops stay queued for next time.
+        // Outbox drain is best-effort; the retired marker stays unset so
+        // ops and flags stay queued for the next boot.
       }
       // Deal-list hydration: a realtor logging in on a device/browser whose
       // local KV was never seeded must see the escrows that already exist
@@ -523,11 +620,25 @@ export function createSyncedStore(
       // listInvites only merges states for invites already present. Pull
       // the full rows and insert the missing ones, so the client list
       // survives a logout/login round-trip.
+      // Commit-seq guard (Sept 28, 2026): an invite write that committed
+      // after this fetch started already applied its fresh state locally —
+      // merging the stale fetched rows would resurrect pre-write codes.
+      const inviteStaleAfter = (escrowId: string, rows: { id: string }[], seq0: number): boolean => {
+        if ((committedSeq.get(`invite:${escrowId}`) ?? 0) > seq0) return true;
+        return rows.some((r) => (committedSeq.get(`invite:${r.id}`) ?? 0) > seq0);
+      };
       try {
         if (c) {
           for (const escrow of await local.listEscrows()) {
+            const seq0 = writeSeq;
             const rows = await pullFullInvitesNow(c, escrow.id);
-            if (rows.length) await local.mergeInvites(rows);
+            if (rows.length && !inviteStaleAfter(escrow.id, rows, seq0)) {
+              // Inside the exclusive gate: a confirmed invite write's
+              // commit can never be overwritten mid-merge.
+              await enqueueExclusive(async () => {
+                await local.mergeInvites(rows);
+              });
+            }
           }
         }
       } catch {
@@ -538,10 +649,9 @@ export function createSyncedStore(
       // reconcile is deleted as a pattern — pushing clean local snapshots
       // on boot is what let a stale device overwrite newer server data
       // (Sept 27 profile rollback: the server's "jimmy ola" was replaced by
-      // a stale local "Jimmy"). Pushes happen only as the direct result of
-      // an explicit user action (Save, check-off, invite generate/regenerate,
-      // close, revoke); a failed action's op stays queued in the outbox and
-      // the boot drain above retries it.
+      // a stale local "Jimmy"). User-initiated writes push synchronously
+      // (confirmedWrite) and fail loudly; a failed write never touches
+      // local state, so there is nothing for boot to retry or reconcile.
     }
     return result;
   }
@@ -559,31 +669,47 @@ export function createSyncedStore(
       if (!cloudConfigured()) return;
       const c = client();
       if (!c) return;
-      // Never clobber a local edit that is still awaiting push: a dirty
-      // profile (in-flight or queued pushProfile op) means the local
-      // snapshot is the explicit user intent — the pull must not touch it.
-      if (await isDirty(outboxOpKey({ op: 'pushProfile' }))) return; // local is ahead
+      // Never clobber a confirmed write that is still in flight: a write
+      // in progress means its server confirmation is the last word on the
+      // row — the pull must not touch it. (New user actions never enqueue
+      // outbox ops, so the in-memory set is the write-in-flight check; a
+      // LEGACY queued pushProfile still means the local snapshot is dirty,
+      // so its key is checked against the outbox for the one final drain.)
+      if (writeInflight.has('profile')) return; // local write in flight
+      const legacyOps = await readOutboxOps(kv);
+      const legacyProfileKey = outboxOpKey({ op: 'pushProfile' });
+      if (legacyOps.some((o) => outboxOpKey(o) === legacyProfileKey)) return;
+      const seq0 = writeSeq;
       const uid = await ensureCloudUser(c);
       if (!uid) return;
       const pulled = await pullProfileNow(c, uid);
       if (!pulled) return;
       // Re-check just before overwriting: a user Save that landed while
-      // the fetch was in flight marks the row dirty, and its explicit push
-      // is the only writer — the save's confirmation is the last word.
-      if (await isDirty(outboxOpKey({ op: 'pushProfile' }))) return;
-      const localProfile = await local.getProfile();
-      if (localProfile && profileCanon(localProfile) !== profileCanon(pulled)) {
-        // Genuine two-writer divergence (e.g. another device saved newer
-        // values): the server row wins — log the resolution for audit
-        // (ARCHITECTURE.md principle 5).
-        await logConflict(kv, {
-          entity: 'profile',
-          id: uid,
-          resolution: 'server-wins',
-          detail: 'pull replaced a diverged clean snapshot with the server row (last committed push wins)',
-        });
-      }
-      await local.saveProfile(pulled);
+      // the fetch was in flight marks the row in-flight, and its explicit
+      // confirmation is the only writer — the save's confirmation is the
+      // last word. A save that COMMITTED after our fetch started is
+      // covered by the commit-seq check: merging our stale row over its
+      // fresh commit would resurrect the pre-save profile.
+      if (writeInflight.has('profile')) return;
+      if (legacyOps.some((o) => outboxOpKey(o) === legacyProfileKey)) return;
+      if ((committedSeq.get('profile') ?? 0) > seq0) return;
+      // The local apply runs inside the exclusive gate so a confirmed
+      // profile write's commit can never be overwritten mid-apply.
+      await enqueueExclusive(async () => {
+        const localProfile = await local.getProfile();
+        if (localProfile && profileCanon(localProfile) !== profileCanon(pulled)) {
+          // Genuine two-writer divergence (e.g. another device saved newer
+          // values): the server row wins — log the resolution for audit
+          // (ARCHITECTURE.md principle 5).
+          await logConflict(kv, {
+            entity: 'profile',
+            id: uid,
+            resolution: 'server-wins',
+            detail: 'pull replaced a diverged clean snapshot with the server row (last committed push wins)',
+          });
+        }
+        await local.saveProfile(pulled);
+      });
     } catch {
       // Fail open: the local snapshot keeps rendering.
     }
@@ -607,33 +733,44 @@ export function createSyncedStore(
       if (!cloudConfigured()) return existing;
       const c = client();
       if (!c) return existing;
+      const seq0 = writeSeq;
       const cloud = await pullEscrowsNow(c);
       if (cloud === null) return existing;
-      // Re-read AFTER the fetch: a user Save that landed while the fetch
-      // was in flight marks its row dirty, and its explicit push is the
-      // only writer — the pull must not clobber it. The memory flag is
-      // checked per row (synchronously) so even a save that lands mid-merge
-      // is seen.
-      const ops = await readOutboxOps(kv);
-      for (const e of cloud) {
-        const key = outboxOpKey({ op: 'pushEscrow', escrowId: e.id });
-        const dirty = dirtyInflight.has(key) || ops.some((o) => outboxOpKey(o) === key);
-        if (dirty) continue;
-        const prev = existing.find((x) => x.id === e.id);
-        if (prev && escrowCanon(prev) !== escrowCanon(e)) {
-          // Genuine two-writer divergence (e.g. another device pushed a
-          // newer escrow unit): the server unit wins — log the resolution
-          // for audit (ARCHITECTURE.md principle 5).
-          await logConflict(kv, {
-            entity: 'escrow',
-            id: e.id,
-            resolution: 'server-wins',
-            detail:
-              'pull replaced a diverged clean escrow with the server unit (last committed push wins)',
-          });
+      // Re-check per row AFTER the fetch: a user write that landed while
+      // the fetch was in flight marks its row in the in-flight set, and
+      // its server confirmation is the only writer — the pull must not
+      // clobber it. A write that already COMMITTED after our fetch started
+      // is covered by the commit-seq check: merging our stale rows over its
+      // fresh commit would resurrect pre-write server data. The set is
+      // checked per row (synchronously) so even a write that lands
+      // mid-merge is seen. New user actions never enqueue outbox ops, but
+      // a LEGACY queued pushEscrow (one final drain for existing installs)
+      // still means the local row is dirty — its edits never reached the
+      // server, so the pull must not clobber it before the drain runs.
+      const legacyOps = await readOutboxOps(kv);
+      await enqueueExclusive(async () => {
+        for (const e of cloud) {
+          const key = `escrow:${e.id}`;
+          if (writeInflight.has(key)) continue;
+          if ((committedSeq.get(key) ?? 0) > seq0) continue;
+          const legacyKey = outboxOpKey({ op: 'pushEscrow', escrowId: e.id });
+          if (legacyOps.some((o) => outboxOpKey(o) === legacyKey)) continue;
+          const prev = existing.find((x) => x.id === e.id);
+          if (prev && escrowCanon(prev) !== escrowCanon(e)) {
+            // Genuine two-writer divergence (e.g. another device pushed a
+            // newer escrow unit): the server unit wins — log the resolution
+            // for audit (ARCHITECTURE.md principle 5).
+            await logConflict(kv, {
+              entity: 'escrow',
+              id: e.id,
+              resolution: 'server-wins',
+              detail:
+                'pull replaced a diverged clean escrow with the server unit (last committed push wins)',
+            });
+          }
+          await local.replaceEscrow(e);
         }
-        await local.replaceEscrow(e);
-      }
+      });
       return local.listEscrows();
     } catch {
       try {
@@ -644,20 +781,33 @@ export function createSyncedStore(
     }
   }
 
-  // Re-resolve the session user if the ping hasn't run yet but a push is
-  // attempted (e.g. init hasn't completed). Returns null when dormant.
-  async function lazyUser(): Promise<string | null> {
-    if (userId) return userId;
-    if (ping && !ping.ok) return null;
-    const c = client();
-    if (!c) return null;
-    const uid = await ensureCloudUser(c);
-    if (uid && ping?.ok) userId = uid;
-    return ping?.ok === true ? uid : null;
-  }
-
   const store: Store = {
     getProfile: () => local.getProfile(),
+
+    // Preview/commit surface (synchronous server-first writes, Anuraj,
+    // Sept 28, 2026): pass-throughs to the local store. The synced write
+    // methods above use these to compute candidates against a cloned
+    // snapshot and commit only after server confirmation.
+    previewSaveProfile: (p) => local.previewSaveProfile(p),
+    previewCreateEscrow: (input) => local.previewCreateEscrow(input),
+    previewToggleStep: (escrowId, role, stepId) => local.previewToggleStep(escrowId, role, stepId),
+    previewAddCustomStep: (escrowId, role, title) => local.previewAddCustomStep(escrowId, role, title),
+    previewReorderSteps: (escrowId, role, orderedIds) =>
+      local.previewReorderSteps(escrowId, role, orderedIds),
+    previewApplyChecklist: (escrowId, role, steps) =>
+      local.previewApplyChecklist(escrowId, role, steps),
+    previewUpdateTargetDate: (escrowId, closeDate) =>
+      local.previewUpdateTargetDate(escrowId, closeDate),
+    previewUpdateEscrow: (escrowId, input) => local.previewUpdateEscrow(escrowId, input),
+    previewActivateEscrow: (escrowId, input) => local.previewActivateEscrow(escrowId, input),
+    previewCancelEscrow: (escrowId) => local.previewCancelEscrow(escrowId),
+    previewCloseEscrow: (escrowId, role) => local.previewCloseEscrow(escrowId, role),
+    previewCreateInvite: (escrowId, role, partyName) =>
+      local.previewCreateInvite(escrowId, role, partyName),
+    previewRevokeInvite: (inviteId) => local.previewRevokeInvite(inviteId),
+    previewRegenerateInvite: (inviteId, codeOverride, newId) =>
+      local.previewRegenerateInvite(inviteId, codeOverride, newId),
+    commitPreview: (p) => local.commitPreview(p),
 
     /**
      * Logout wipe (Sept 2026): drop every account-scoped artifact so a
@@ -794,30 +944,60 @@ export function createSyncedStore(
     saveProfile: async (p: RealtorProfile): Promise<void> => {
       // Media-removal detection (Sept 28, 2026, Anuraj: profile/banner
       // image removal): compare against the STORED profile before
-      // overwriting — a kind the user cleared in the form (X button) must
-      // delete its Storage file and null the server URL. The pending flags
-      // are written BEFORE the push so a failed push retries the removal
-      // instead of silently keeping the old photo_url/banner_image.
-      const prev = await local.getProfile();
-      const removed = mediaKindsRemoved(prev, p);
-      if (removed.length > 0) await writePendingMediaRemovals(kv, removed);
-      await local.saveProfile(p);
-      bgPush(
-        async (c, uid) => {
-          // Photo/banner convergence (Sept 2026 stale-client-photo fix):
-          // the managed media upload whenever the local image changed
-          // since the last successful upload (fingerprint-guarded, so a
-          // name-only edit does not re-upload or churn the ?v= cache
-          // buster). Every profile-push path funnels through
-          // pushProfileWithMedia — never pushProfileNow alone — so a save
-          // that converges via the outbox or the boot reconcile still
-          // uploads the new image instead of stranding the old photo_url
-          // on the server. Removed kinds converge the same way: Storage
-          // delete + explicit URL nulls (see cloudSync.removeProfileMediaNow).
-          await pushProfileWithMedia(c, uid, kv, p, (next) => local.saveProfile(next), removed, deleteLocalMedia);
+      // computing — a kind the user cleared in the form (X button) must
+      // delete its Storage file and null the server URL as part of the
+      // confirmed write. The detection runs INSIDE the write chain so a
+      // concurrent save cannot compute against a stale profile. Under the
+      // synchronous model the removal is not flagged for a later retry:
+      // upload + profile row + Storage delete are ONE confirmed write, and
+      // a failure leaves local state — including the managed files —
+      // unchanged. The row upserts BEFORE any Storage delete, so a row
+      // failure can never delete a file the confirmed row still
+      // references; uploads go to unique per-upload paths, so a row
+      // failure orphans an unreferenced file instead of changing what
+      // clients see.
+      let removed: MediaKind[] = [];
+      let prev: RealtorProfile | null = null;
+      await confirmedWrite<void>(
+        'profile',
+        async () => {
+          prev = await local.getProfile();
+          removed = mediaKindsRemoved(prev, p);
+          return local.previewSaveProfile(p);
         },
-        { op: 'pushProfile' },
+        async ({ c, uid }, _result, snapshot) => {
+          // Media convergence mutates the preview draft's remote URLs in
+          // place, so the commit persists the confirmed URLs. It never
+          // persists locally itself and never touches the device files —
+          // those are deleted below, only after confirmation.
+          const draft = snapshot.profile;
+          if (!draft) throw new Error('saveProfile: profile vanished mid-write');
+          await pushProfileWithMedia(c, uid, kv, draft, removed);
+          // Best-effort orphan cleanup (never throws, never fails the
+          // write): a replaced kind's old unique-path file is unreferenced
+          // now that the row points at the new upload. Removed kinds are
+          // deleted by the write itself, not here.
+          try {
+            const kinds: MediaKind[] = ['photo', 'banner'];
+            for (const kind of kinds) {
+              if (removed.includes(kind)) continue;
+              const oldUrl = kind === 'photo' ? prev?.photoRemoteUrl : prev?.bannerRemoteUrl;
+              const newUrl = kind === 'photo' ? draft.photoRemoteUrl : draft.bannerRemoteUrl;
+              if (oldUrl && newUrl && oldUrl !== newUrl) {
+                const path = storagePathFromUrl(oldUrl);
+                if (path) await deleteMediaAtPath(c, path);
+              }
+            }
+          } catch {
+            // Orphan cleanup must not fail a confirmed save.
+          }
+        },
+        WRITE_TIMEOUT_LONG_MS,
       );
+      // Only after the server confirmed: delete the device-local managed
+      // files for removed kinds. On failure they are kept, so a retry
+      // still has the upload source.
+      for (const kind of removed) await deleteLocalMedia(kind);
     },
 
     listEscrows: () => local.listEscrows(),
@@ -825,74 +1005,134 @@ export function createSyncedStore(
     replaceEscrow: (e: Escrow) => local.replaceEscrow(e),
 
     createEscrow: async (input): Promise<Escrow> => {
-      const e = await local.createEscrow(input);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId: e.id });
-      return e;
+      return confirmedWrite<Escrow>(
+        'escrow:new',
+        () => local.previewCreateEscrow(input),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     toggleStep: async (escrowId, role, stepId): Promise<Escrow> => {
-      const e = await local.toggleStep(escrowId, role, stepId);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewToggleStep(escrowId, role, stepId),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     addCustomStep: async (escrowId, role, title): Promise<Escrow> => {
-      const e = await local.addCustomStep(escrowId, role, title);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewAddCustomStep(escrowId, role, title),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     reorderSteps: async (escrowId, role, orderedIds): Promise<Escrow> => {
-      const e = await local.reorderSteps(escrowId, role, orderedIds);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewReorderSteps(escrowId, role, orderedIds),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
+    },
+
+    /**
+     * Bulk checklist apply for edit mode (Sept 28, 2026): the draft is the
+     * full new step list for one side — adds, removes, and reorders land
+     * in ONE confirmed synchronous server write (upsert escrow + all step
+     * rows, then delete the rows the edit removed). Server first, local
+     * commit only on confirmation; any failure throws a plain-language
+     * error and leaves local state unchanged. Structural edits send no
+     * push notification (lastAction untouched) and the closed-side rules
+     * from the spec apply (remove-checked-from-complete keeps closed; an
+     * unchecked step reopens the side).
+     */
+    applyChecklistEdits: async (
+      escrowId: string,
+      role: ClientRole,
+      steps: ChecklistDraftStep[],
+    ): Promise<Escrow> => {
+      const { escrow } = await confirmedWrite<ApplyChecklistResult>(
+        `escrow:${escrowId}`,
+        () => local.previewApplyChecklist(escrowId, role, steps),
+        async ({ c, uid }, { escrow: candidate, removedStepIds }) => {
+          await pushEscrowNow(c, uid, candidate);
+          await deleteStepRowsNow(c, removedStepIds);
+        },
+      );
+      return escrow;
     },
 
     updateTargetDate: async (escrowId, closeDate): Promise<Escrow> => {
-      const e = await local.updateTargetDate(escrowId, closeDate);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewUpdateTargetDate(escrowId, closeDate),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     updateEscrow: async (escrowId, input): Promise<Escrow> => {
-      const e = await local.updateEscrow(escrowId, input);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewUpdateEscrow(escrowId, input),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     activateEscrow: async (escrowId, input): Promise<Escrow> => {
-      const e = await local.activateEscrow(escrowId, input);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      return e;
+      return confirmedWrite<Escrow>(
+        `escrow:${escrowId}`,
+        () => local.previewActivateEscrow(escrowId, input),
+        async ({ c, uid }, escrow) => {
+          await pushEscrowNow(c, uid, escrow);
+        },
+      );
     },
 
     cancelEscrow: async (escrowId): Promise<CancelEscrowResult> => {
-      const { escrow: e, revokedInvites } = await local.cancelEscrow(escrowId);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      // The invite revocations must reach the server now — a cancelled
-      // escrow's codes die with it (Anuraj, Sept 28, 2026).
-      if (cloudConfigured()) {
-        for (const inv of revokedInvites) {
-          await enqueueOutbox(kv, {
-            op: 'pushRevoke',
-            inviteId: inv.id,
-            revokedAt: inv.revokedAt,
-            attempts: 0,
-          });
-        }
-        // Zombie-link fix (Sept 28, 2026): cancelling must kill the
-        // server-side device links too, exactly like closeEscrow — the
-        // redeem_invite RPC creates client_links rows server-side, which
-        // the realtor's device never holds locally, so the killed links
-        // are converged from the server via a retryable converge op
-        // (local revokeActiveInvites only kills the local copies).
-        await convergeServerLinks(revokedInvites);
-        // Same immediate-drain rationale as closeEscrow: the revocation must
-        // reach the server now, not at next boot. Non-blocking; failures
-        // stay queued for the boot drain.
-        void drainOutboxNow();
-      }
-      return { escrow: e, revokedInvites };
+      // Cancel is one confirmed write (Anuraj, Sept 28, 2026): the escrow
+      // row, every invite revocation, and the server-side device-link kills
+      // all run inside the awaited server effect, and the local preview
+      // commits only after every step returned successfully. This is NOT a
+      // database transaction — the steps run sequentially, so a failure
+      // partway can leave the server partially updated (e.g. the escrow
+      // row cancelled but one invite's links still live). That window is
+      // by design fail-safe: local state is unchanged (the user sees the
+      // escrow as still open and can retry the cancel), and the next
+      // invite/pull cycle converges the server truth locally — a live
+      // invite the server already revoked arrives as revoked, a cancelled
+      // escrow row arrives as cancelled. Nothing applies locally until the
+      // whole effect confirms.
+      return confirmedWrite<CancelEscrowResult>(
+        `escrow:${escrowId}`,
+        () => local.previewCancelEscrow(escrowId),
+        async ({ c, uid }, { escrow: e, revokedInvites }) => {
+          await pushEscrowNow(c, uid, e);
+          for (const inv of revokedInvites) {
+            await pushRevokeNow(c, inv.id, inv.revokedAt);
+            // Zombie-link convergence, server-authoritative (Sept 28,
+            // 2026): the redeem_invite RPC creates client_links rows
+            // server-side, which this device never holds locally — the
+            // killed links are discovered with a live server query per
+            // invite and stamped revoked_at inline, inside the same
+            // confirmed write.
+            await convergeInviteLinkRevokesNow(c, inv.id, inv.revokedAt);
+          }
+        },
+        WRITE_TIMEOUT_LONG_MS,
+      );
     },
 
     // Per-side close (escrow lifecycle, Sept 2026): closing is per side —
@@ -901,135 +1141,123 @@ export function createSyncedStore(
     // to the cloud (client_links.revoked_at) so the public gate rejects
     // them and the client lands on the dead-link screen.
     closeEscrow: async (escrowId, role): Promise<CloseEscrowResult> => {
-      const { escrow: e, revokedLinks, revokedInvites } = await local.closeEscrow(escrowId, role);
-      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
-      if (cloudConfigured()) {
-        // Invite codes die with the close (Anuraj, Sept 28, 2026): converge
-        // the revocations to the cloud so the codes are dead on the server
-        // too (redeem path reads invite.revoked_at).
-        for (const inv of revokedInvites) {
-          await enqueueOutbox(kv, {
-            op: 'pushRevoke',
-            inviteId: inv.id,
-            revokedAt: inv.revokedAt,
-            attempts: 0,
-          });
-        }
-        // Zombie-link fix (Sept 28, 2026): the killed device links are
-        // converged server-authoritatively via a retryable converge op.
-        // No revokeClientLink ops are enqueued for the local revokedLinks:
-        // local link ids are minted by the offline redeem fallback and
-        // never exist as server rows, so pushing revokes for them would
-        // only produce permanent SyncNotAppliedError records. The local
-        // kills already happened in local.closeEscrow above.
-        await convergeServerLinks(revokedInvites);
-        // The revocation must reach the server now — the outbox otherwise
-        // only drains at next boot, leaving the client's link live (Anuraj,
-        // Sept 2026). Non-blocking; failures stay queued for the boot drain.
-        void drainOutboxNow();
-      }
-      return { escrow: e, revokedLinks, revokedInvites };
+      // Close is one confirmed write (Anuraj, Sept 28, 2026): the escrow
+      // row, the per-side invite revocations, and the server-side
+      // device-link kills all run inside the awaited server effect, and the
+      // local preview commits only after every step returned successfully.
+      // This is NOT a database transaction — the steps run sequentially, so
+      // a failure partway can leave the server partially updated. That
+      // window is by design fail-safe: local state is unchanged (the user
+      // sees the side as still open and can retry the close), and the next
+      // pull converges the server truth locally. Nothing applies locally
+      // until the whole effect confirms.
+      return confirmedWrite<CloseEscrowResult>(
+        `escrow:${escrowId}`,
+        () => local.previewCloseEscrow(escrowId, role),
+        async ({ c, uid }, { escrow: e, revokedInvites }) => {
+          await pushEscrowNow(c, uid, e);
+          for (const inv of revokedInvites) {
+            await pushRevokeNow(c, inv.id, inv.revokedAt);
+            await convergeInviteLinkRevokesNow(c, inv.id, inv.revokedAt);
+          }
+        },
+        WRITE_TIMEOUT_LONG_MS,
+      );
     },
 
     createInvite: async (escrowId, role, partyName): Promise<Invite> => {
       // Stale-cache path (Sept 2026): the local invite cache can lag behind
       // the server (initCloudSync hydrates on a best-effort pull), so the
       // local cap check could see fewer than two active invites and
-      // optimistically create a third. Refresh the full server rows first
-      // when the cloud is reachable — the local cap check below then enforces
-      // the real cap at creation time.
-      if (cloudOk()) {
-        const c = client();
-        if (c) {
-          try {
-            const rows = await Promise.race([pullFullInvitesNow(c, escrowId), timeoutMs(4000)]);
-            await local.mergeInvites(rows);
-          } catch {
-            // Offline/slow: fall through to the local cap check — offline
-            // creation keeps working, and the authoritative cap still applies.
-          }
+      // optimistically create a third. Refresh the full server rows and
+      // merge them into the PREVIEW DRAFT — never into live local state —
+      // so the cap check sees server truth while a failure still leaves
+      // local byte-identical. The DB trigger enforces the cap
+      // authoritatively at push time regardless.
+      let serverRows: Invite[] | null = null;
+      const session = await serverSession();
+      if (session) {
+        try {
+          const rows = await Promise.race([
+            pullFullInvitesNow(session.c, escrowId),
+            timeoutMs(4000),
+          ]);
+          if (Array.isArray(rows)) serverRows = rows;
+        } catch {
+          // Offline/slow: fall through to the local cap check — the
+          // authoritative DB cap still applies at push time.
         }
       }
-      const invite = await local.createInvite(escrowId, role, partyName);
-      bgPush(
-        async (c) => {
-          const uid = await lazyUser();
-          if (!uid) throw new Error('cloud dormant');
-          const before = invite.code;
-          try {
-            await pushInviteNow(c, invite);
-          } catch (e) {
-            const final = finalInviteRejection(e);
-            if (final) {
-              // Lost creation race with another device (cap), or the escrow
-              // was closed/cancelled between local creation and the push
-              // (closed-escrow trigger): the server rejected the insert as
-              // authoritative and final. Roll back the optimistic local row
-              // so no phantom invite survives in the UI, and do NOT enqueue
-              // the push — retrying it would never succeed.
-              //
-              // Sync-failure surface (Anuraj, Sept 2026): this is a final
-              // server rejection the realtor must see on screen (what
-              // failed, why, next step) — not just a console warning.
-              await local.revokeInvite(invite.id);
-              const copy = syncErrorCopy(final, 'rejected');
-              await recordSyncError(kv, {
-                key: `${final}:${invite.id}`,
-                op: final,
-                escrowId,
-                inviteId: invite.id,
-                kind: 'rejected',
-                ...copy,
-                at: Date.now(),
-              });
-              return;
+      // The DB trigger enforces the cap authoritatively: a creation race
+      // lost to another device surfaces as a cap violation from the push,
+      // which throws the plain-language cap error below. No local row is
+      // created on failure — there is nothing to roll back. pushInviteNow
+      // may regenerate the code on a global 6-char collision; it mutates
+      // the preview's invite in place, so the commit carries the final
+      // code.
+      return confirmedWrite<Invite>(
+        `invite:${escrowId}`,
+        async () => {
+          const preview = await local.previewCreateInvite(escrowId, role, partyName);
+          if (serverRows) {
+            // Merge server-fresh invite states into the draft only (same
+            // merge rule as mergeInvites: server is the authority on
+            // revoked/redeemed timestamps; server-only rows are inserted).
+            for (const row of serverRows) {
+              const inv = preview.snapshot.invites.find((i) => i.id === row.id);
+              if (!inv) {
+                preview.snapshot.invites.push({ ...row });
+              } else {
+                if (row.revokedAt && !inv.revokedAt) inv.revokedAt = row.revokedAt;
+                if (row.redeemedAt && !inv.redeemedAt) inv.redeemedAt = row.redeemedAt;
+              }
             }
-            throw e;
+            const cap = role === 'tc' ? 1 : 2;
+            const active = preview.snapshot.invites.filter(
+              (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
+            ).length;
+            if (active > cap) {
+              // Plain-language: preview errors surface unchanged through
+              // confirmedWrite (sync-writes, Sept 28, 2026), so this IS the
+              // user-facing copy. Unified with the push-time cap rejection
+              // copy (plainWriteError / syncErrorCopy inviteCap) for both
+              // roles.
+              throw new Error(
+                'This escrow already has 2 active invite codes. Revoke an unused code first, then create a new one.',
+              );
+            }
           }
-          if (invite.code !== before) {
-            await local.updateInviteCode(invite.id, invite.code);
-          }
+          return preview;
         },
-        { op: 'pushInvite', inviteId: invite.id },
+        async ({ c }, invite) => {
+          await pushInviteNow(c, invite);
+        },
       );
-      return invite;
     },
 
     revokeInvite: async (inviteId: string): Promise<{ revokedLinks: RevokedClientLink[] }> => {
-      const { revokedLinks } = await local.revokeInvite(inviteId);
-      const inv = await local.getInvite(inviteId);
-      const revokedAt = inv?.revokedAt ?? new Date().toISOString();
-      if (!cloudConfigured()) return { revokedLinks };
-      // Zombie-link fix (Sept 28, 2026): killing only the invite row leaves
-      // the device link live on the server, and the unique live-link index
-      // then blocks that device from joining any other escrow. Converge the
-      // killed links too — server-authoritatively, because the redeem_invite
-      // RPC creates client_links rows server-side (the realtor's device
-      // never holds them locally). Same "code invalidated + device link
-      // killed at the same moment" semantics.
-      //
-      // Single coordinated outbox writer: both convergence ops are enqueued
-      // awaited and in order. bgPush's dormant branch enqueues fire-and-
-      // forget, and two concurrent enqueueOutbox calls read-then-write —
-      // the last write clobbers the other op (and the drain's reconcile
-      // then clears its sync-error record). So bgPush gets op: null here:
-      // it still attempts the immediate push and kicks the background
-      // re-init when dormant, but never touches the outbox.
-      bgPush((c) => pushRevokeNow(c, inviteId, revokedAt), null);
-      await enqueueOutbox(kv, { op: 'pushRevoke', inviteId, attempts: 0 });
-      // Server-authoritative link convergence (Sept 28, 2026): the killed
-      // device links are converged from the server via a retryable
-      // converge op — the local revokedLinks above are empty in production
-      // (the redeem_invite RPC creates client_links rows server-side,
-      // which the realtor's device never holds locally). Tests must seed
-      // the server side, not local data.links, or they pass for the wrong
-      // reason.
-      await convergeServerLinks([{ id: inviteId, revokedAt }]);
-      // The device must lose access now, not at next boot (Anuraj, Sept
-      // 2026): immediate drain, same rationale as closeEscrow. Failures
-      // stay queued and surface via the drain's onOpError recording.
-      void drainOutboxNow();
-      return { revokedLinks };
+      // One confirmed write (Anuraj, Sept 28, 2026): the invite row
+      // revocation and the server-side device-link kill run inside the same
+      // awaited server effect and confirm together before anything applies
+      // locally. The killed links are converged server-authoritatively —
+      // the redeem_invite RPC creates client_links rows server-side, which
+      // this device never holds locally, so a local-state-only convergence
+      // would be a no-op in production. The invite row revokes FIRST:
+      // get_client_view locks the client out via the invite check even if
+      // the link kill never runs, so a lookup failure can never strand a
+      // live link on a live code. A failure anywhere throws and leaves
+      // local state unchanged — the retry is idempotent (the invite revoke
+      // re-lands, the link kill converges).
+      return confirmedWrite<{ revokedLinks: RevokedClientLink[] }>(
+        `invite:${inviteId}`,
+        () => local.previewRevokeInvite(inviteId),
+        async ({ c }, _result, snapshot) => {
+          const inv = snapshot.invites.find((i) => i.id === inviteId);
+          const revokedAt = inv?.revokedAt ?? new Date().toISOString();
+          await pushRevokeNow(c, inviteId, revokedAt);
+          await convergeInviteLinkRevokesNow(c, inviteId, revokedAt);
+        },
+      );
     },
 
     updateInviteCode: (inviteId: string, code: string) => local.updateInviteCode(inviteId, code),
@@ -1043,8 +1271,22 @@ export function createSyncedStore(
         const c = client();
         if (c) {
           try {
+            const seq0 = writeSeq;
             const rows = await Promise.race([pullInvitesNow(c, escrowId), timeoutMs(4000)]);
-            await local.mergeInviteStates(rows as { id: string; revoked_at: string | null; redeemed_at: string | null }[]);
+            const list = rows as { id: string; revoked_at: string | null; redeemed_at: string | null }[];
+            // Commit-seq guard: an invite write that committed after this
+            // fetch started already applied its fresh state — don't merge
+            // stale rows over it.
+            const stale =
+              (committedSeq.get(`invite:${escrowId}`) ?? 0) > seq0 ||
+              list.some((r) => (committedSeq.get(`invite:${r.id}`) ?? 0) > seq0);
+            if (!stale) {
+              // Inside the exclusive gate: a confirmed invite write's
+              // commit can never be overwritten mid-merge.
+              await enqueueExclusive(async () => {
+                await local.mergeInviteStates(list);
+              });
+            }
           } catch {
             // Best-effort: local state is still returned below.
           }
@@ -1054,60 +1296,41 @@ export function createSyncedStore(
     },
 
     redeemInvite: async (code: string, name: string, deviceId?: string): Promise<RedeemResult> => {
-      if (publicOk()) {
-        const c = client();
-        if (c) {
-          try {
-            // Attach a no-op catch so a late RPC rejection after our timeout
-            // never becomes an unhandled rejection.
-            const rpcP = redeemViaCloud(c, code.trim().toUpperCase(), name, deviceId ?? null).then(
-              (res) => res,
-            );
-            rpcP.catch(() => {});
-            const res = (await Promise.race([rpcP, timeoutMs(redeemTimeoutMs)])) as
-              | (RedeemResult & { linkId?: string })
-              | undefined;
-            // Timeout or RPC failure: the code may be perfectly good — report
-            // a retryable network error, never 'invalid'.
-            if (!res) return { ok: false, error: 'network' };
-            if (res.ok && res.linkId) {
-              await saveCloudLink(res.escrowId, { linkId: res.linkId, role: res.role });
-            }
-            if (res.ok || res.error !== 'invalid') return res;
-            // Server doesn't know the code, but we might hold a local-only
-            // invite whose push failed. Push it and retry the redeem once.
-            const localInvite = await local.getInviteByCode(code);
-            if (localInvite && !localInvite.revokedAt && !localInvite.redeemedAt) {
-              try {
-                const uid = await lazyUser();
-                if (uid) {
-                  const before = localInvite.code;
-                  await pushInviteNow(c, localInvite);
-                  if (localInvite.code !== before) {
-                    await local.updateInviteCode(localInvite.id, localInvite.code);
-                  }
-                  const retry = await redeemViaCloud(
-                    c,
-                    localInvite.code,
-                    name,
-                    deviceId ?? null,
-                  );
-                  if (retry.ok && retry.linkId) {
-                    await saveCloudLink(retry.escrowId, { linkId: retry.linkId, role: retry.role });
-                  }
-                  if (retry.ok || retry.error !== 'invalid') return retry;
-                }
-              } catch {
-                // Push failed; fall through to the local redeem below.
-              }
-            }
-            return local.redeemInvite(code, name, deviceId);
-          } catch {
-            return { ok: false, error: 'network' };
-          }
+      // Synchronous server-first redeem (Anuraj, Sept 28, 2026): the
+      // redeem_invite RPC is the single authority. There is NO local
+      // fallback — the old local.redeemInvite path minted a device link the
+      // server never authorized, which violates "confirmed by the server or
+      // fail loudly" (an offline client would see an escrow the server does
+      // not recognize, with the realtor never seeing the device). Offline /
+      // unconfigured / RPC failure all report the retryable 'network'
+      // error ("Something went wrong on our end. Check your connection and
+      // try again."); a genuine bad code reports the server's verdict.
+      // The local-invite push-and-retry fallback is gone too: createInvite
+      // is confirmed server-first, so a local-only invite cannot exist, and
+      // that path ran unbounded network work outside any timeout.
+      if (!publicOk()) return { ok: false, error: 'network' };
+      const c = client();
+      if (!c) return { ok: false, error: 'network' };
+      try {
+        // Attach a no-op catch so a late RPC rejection after our timeout
+        // never becomes an unhandled rejection.
+        const rpcP = redeemViaCloud(c, code.trim().toUpperCase(), name, deviceId ?? null).then(
+          (res) => res,
+        );
+        rpcP.catch(() => {});
+        const res = (await Promise.race([rpcP, timeoutMs(redeemTimeoutMs)])) as
+          | (RedeemResult & { linkId?: string })
+          | undefined;
+        // Timeout or RPC failure: the code may be perfectly good — report
+        // a retryable network error, never 'invalid'.
+        if (!res) return { ok: false, error: 'network' };
+        if (res.ok && res.linkId) {
+          await saveCloudLink(res.escrowId, { linkId: res.linkId, role: res.role });
         }
+        return res;
+      } catch {
+        return { ok: false, error: 'network' };
       }
-      return local.redeemInvite(code, name, deviceId);
     },
 
     resolveInviteRealtor: async (
@@ -1126,27 +1349,12 @@ export function createSyncedStore(
             // a code verdict — the code may be perfectly good.
             if (!res) return { ok: false, error: 'network' };
             if (res.ok || res.error !== 'invalid') return res;
-            // The server doesn't know this code, but we might hold a
-            // local-only invite whose push failed or hasn't run yet. Push it
-            // now and retry once, so a freshly created code never reads as
-            // invalid on the creating device.
-            const localInvite = await local.getInviteByCode(code);
-            if (localInvite && !localInvite.revokedAt && !localInvite.redeemedAt) {
-              try {
-                const uid = await lazyUser();
-                if (uid) {
-                  const before = localInvite.code;
-                  await pushInviteNow(c, localInvite);
-                  if (localInvite.code !== before) {
-                    await local.updateInviteCode(localInvite.id, localInvite.code);
-                  }
-                  const retry = await resolveInviteRealtorViaCloud(c, localInvite.code);
-                  if (retry.ok) return retry;
-                }
-              } catch {
-                // Push failed; fall through to the local resolve below.
-              }
-            }
+            // The server doesn't know this code. The old local-invite
+            // push-and-retry fallback is gone (Sept 28, 2026): createInvite
+            // is confirmed server-first, so a local-only invite cannot
+            // exist, and that path ran unbounded network work outside any
+            // timeout. Fall through to the read-only local resolve, which
+            // serves the offline branding case without touching the server.
             return local.resolveInviteRealtor(code);
           } catch {
             return { ok: false, error: 'network' };
@@ -1158,10 +1366,14 @@ export function createSyncedStore(
 
     /**
      * Regenerate an invite code ("Regenerate code" in the share sheet).
-     * Cloud path: the regenerate_invite RPC does it atomically; the result
-     * is mirrored locally. Local/dormant path: local regenerate + outbox
-     * convergence (pushRevoke old invite, pushInvite new invite,
-     * revokeClientLink old device link).
+     * Synchronous server-first (Anuraj, Sept 28, 2026): the
+     * regenerate_invite RPC kills the old code + the old device link and
+     * issues the fresh code in ONE atomic server transaction. The local
+     * mirror applies ONLY after the RPC confirms; a failure throws the
+     * plain-language error and leaves local state byte-identical. There is
+     * no local-only fallback — a half-regenerated invite must be
+     * impossible. The RPC's authoritative new code/id replaces the
+     * preview's placeholder before commit.
      */
     regenerateInvite: async (
       inviteId: string,
@@ -1171,39 +1383,26 @@ export function createSyncedStore(
       invite: Invite;
       revokedLink: { id: string; revokedAt: string } | null;
     }> => {
-      if (cloudOk() && !codeOverride) {
-        const c = client();
-        const uid = userId;
-        if (c && uid) {
-          try {
-            const { newCode, newInviteId } = await regenerateInviteNow(c, inviteId);
-            // Mirror locally with the RPC's invite id so local and cloud
-            // rows share one id (no local/cloud id divergence).
-            return await local.regenerateInvite(inviteId, newCode, newInviteId);
-          } catch {
-            // Fall through to the local + outbox path below.
+      if (codeOverride) {
+        throw new Error(
+          "Couldn't reach the server. Your change was not saved. Check your connection and try again.",
+        );
+      }
+      return confirmedWrite(
+        `invite:${inviteId}`,
+        () => local.previewRegenerateInvite(inviteId),
+        async ({ c }, result, snapshot) => {
+          const { newCode, newInviteId } = await regenerateInviteNow(c, inviteId);
+          // Swap the preview's placeholder code/id for the server's
+          // authoritative values before committing.
+          const placeholderId = result.invite.id;
+          const idx = snapshot.invites.findIndex((i) => i.id === placeholderId);
+          if (idx >= 0) {
+            snapshot.invites[idx] = { ...snapshot.invites[idx], id: newInviteId, code: newCode };
           }
-        }
-      }
-      const res = await local.regenerateInvite(inviteId, codeOverride);
-      if (cloudConfigured()) {
-        // Converge the cloud: revoke the old invite, push the new one, and
-        // kill the old device link (drain retries each until it lands).
-        await enqueueOutbox(kv, { op: 'pushRevoke', inviteId, attempts: 0 });
-        await enqueueOutbox(kv, { op: 'pushInvite', inviteId: res.invite.id, attempts: 0 });
-        const oldInvite = await local.getInvite(inviteId);
-        const revokedAt = oldInvite?.revokedAt ?? new Date().toISOString();
-        // Server-authoritative link convergence (Sept 28, 2026): the old
-        // device link is converged from the server via a retryable
-        // converge op — the local revokedLink above is null in production
-        // (the redeem_invite RPC creates client_links rows server-side,
-        // which the realtor's device never holds locally).
-        await convergeServerLinks([{ id: inviteId, revokedAt }]);
-        // Same immediate-drain rationale as closeEscrow: the old device must
-        // lose access now, not at next boot (Anuraj, Sept 2026).
-        void drainOutboxNow();
-      }
-      return res;
+          result.invite = { ...result.invite, id: newInviteId, code: newCode };
+        },
+      );
     },
 
     getLinkForInvite: (inviteId: string) => local.getLinkForInvite(inviteId),
@@ -1270,12 +1469,12 @@ export function createSyncedStore(
      * Records clear as their writes land.
      */
     retrySync: async (): Promise<void> => {
-      if (!cloudConfigured()) return;
-      if (cloudOk()) {
-        const c = client();
-        const uid = userId;
-        if (!c || !uid) return;
-        await drainAndReconcileErrors(c, uid, true);
+      // Legacy-drain only: user actions never enqueue new ops under the
+      // synchronous model, so this only retries failures left by the
+      // retired background-push model (surfaced on the SyncErrorBar).
+      const session = await serverSession();
+      if (session) {
+        await drainAndReconcileErrors(session.c, session.uid, true);
         return;
       }
       await initCloudSync();

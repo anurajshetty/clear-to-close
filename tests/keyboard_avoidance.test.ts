@@ -8,8 +8,10 @@
 // Fix: one shared pattern everywhere — the exported useKeyboardHeight()
 // hook; screens add bottom padding equal to the keyboard height so the
 // focused field can scroll into view above it (the same lift idea the
-// shared Sheet uses). The detail screen additionally scrolls its custom-step
-// footer into view on focus. This test pins the inventory.
+// shared Sheet uses). The detail screen's custom-step form additionally
+// lives in a sticky pinned footer (checklist edit mode, Sept 2026): it is
+// always visible above the keyboard, so no scroll-into-view is needed.
+// This test pins the inventory.
 import { assert, summary } from './assert';
 
 declare const require: any;
@@ -113,22 +115,16 @@ assert(
   /\{\s*paddingBottom:\s*kbHeight\s*\}/.test(detail),
   'detail screen lifts its content by the keyboard height',
 );
+// Checklist edit mode (Sept 2026): the add-step form moved from the list
+// footer into the sticky pinned footer — it is always visible above the
+// keyboard, so the old scroll-into-view is obsolete by design.
 assert(
-  /onFocus=\{\(\) => scrollAddFormIntoView\(r\)\}/.test(detail),
-  'focusing the custom-step field scrolls it into view',
+  /renderStickyAdd/.test(detail) && /styles\.stickyAdd/.test(detail),
+  'the custom-step form lives in the sticky pinned footer (always visible, no focus scroll)',
 );
 assert(
-  /scrollToEnd/.test(detail),
-  'the scroll targets the end of the checklist (the add-step footer)',
-);
-assert(
-  /listRef=\{\(el: any\) => \{\s*listRefs\.current\[r\] = el;\s*\}\}/.test(detail) ||
-    /listRefs\.current\[r\] = el/.test(detail),
-  'the tabbed checklist exposes its list ref for the focus scroll',
-);
-assert(
-  /listRefs\.current\[role\] = el/.test(detail),
-  'the single-side checklist exposes its list ref for the focus scroll',
+  /position:\s*'absolute'/.test(detail),
+  'the sticky footer is pinned to the bottom of the list area',
 );
 
 summary('keyboard_avoidance');

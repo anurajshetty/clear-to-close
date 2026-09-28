@@ -44,10 +44,12 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/clientView.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
+  "$ROOT/tests/outbox_seed.ts" \
   "$ROOT/tests/invite.test.ts" \
   "$ROOT/tests/sync.test.ts" \
   "$ROOT/tests/uniqueness.test.ts" \
   "$ROOT/tests/checklist.test.ts" \
+  "$ROOT/tests/checklist_edit.test.ts" \
   "$ROOT/tests/sidepicker.test.ts" \
   "$ROOT/tests/editcancel.test.ts" \
   "$ROOT/tests/persistence.test.ts" \
@@ -65,6 +67,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/reviews.test.ts" \
   "$ROOT/tests/invite_resolve.test.ts" \
   "$ROOT/tests/invite_sync.test.ts" \
+  "$ROOT/tests/redeem_no_local_fallback.test.ts" \
   "$ROOT/tests/media_upload.test.ts" \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
@@ -86,6 +89,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/triumph_removed.test.ts" \
   "$ROOT/tests/close_revokes_links.test.ts" \
   "$ROOT/tests/close_revoke_converges.test.ts" \
+  "$ROOT/tests/cancel_sync_writes.test.ts" \
   "$ROOT/tests/account_isolation.test.ts" \
   "$ROOT/tests/photo_cropper.test.ts" \
   "$ROOT/tests/profile_form_fields.test.ts" \
@@ -103,6 +107,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/keyboard_avoidance.test.ts" \
   "$ROOT/tests/cancel_escrow_confirm.test.ts" \
   "$ROOT/tests/header_top_gap.test.ts" \
+  "$ROOT/tests/sync_writes.test.ts" \
   "$ROOT/tests/realtor_home_banner.test.ts" \
   "$ROOT/tests/recovery.test.ts" \
   "$ROOT/tests/password_eye_toggle.test.ts" \
@@ -115,6 +120,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/revoke_invite_kills_link.test.ts" \
   "$ROOT/tests/revoke_links_server_authoritative.test.ts" \
   "$ROOT/tests/outbox_concurrency.test.ts" \
+  "$ROOT/tests/checklist_bulk_apply.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -133,6 +139,7 @@ node "$OUT/tests/invite.test.js"
 node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
 node "$OUT/tests/checklist.test.js"
+node "$OUT/tests/checklist_edit.test.js"
 node "$OUT/tests/sidepicker.test.js"
 node "$OUT/tests/editcancel.test.js"
 node "$OUT/tests/persistence.test.js"
@@ -153,6 +160,7 @@ node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"
 node "$OUT/tests/invite_resolve.test.js"
 node "$OUT/tests/invite_sync.test.js"
+node "$OUT/tests/redeem_no_local_fallback.test.js"
 node "$OUT/tests/invite_cap_sync.test.js"
 node "$OUT/tests/invite_closed_block.test.js"
 node "$OUT/tests/celebration_kicker.test.js"
@@ -173,10 +181,12 @@ node "$OUT/tests/escrowpull.test.js"
 node "$OUT/tests/triumph_removed.test.js"
 node "$OUT/tests/close_revokes_links.test.js"
 node "$OUT/tests/close_revoke_converges.test.js"
+node "$OUT/tests/cancel_sync_writes.test.js"
 node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
 node "$OUT/tests/photo_stale_client_chain.test.js"
+node "$OUT/tests/sync_writes.test.js"
 node "$OUT/tests/sync_chain_broad.test.js"
 node "$OUT/tests/client_refresh_foreground.test.js"
 node "$OUT/tests/profile_boot_converge.test.js"
@@ -202,6 +212,7 @@ node "$OUT/tests/clients_kicker.test.js"
 node "$OUT/tests/revoke_invite_kills_link.test.js"
 node "$OUT/tests/revoke_links_server_authoritative.test.js"
 node "$OUT/tests/outbox_concurrency.test.js"
+node "$OUT/tests/checklist_bulk_apply.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

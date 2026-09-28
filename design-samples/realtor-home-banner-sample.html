@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Realtor home — banner section sample v3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+    background: #E9E2D4; color: #211D17;
+    display: flex; gap: 40px; justify-content: center; align-items: flex-start;
+    padding: 40px 20px; flex-wrap: wrap;
+  }
+  .frame-label { text-align: center; margin-bottom: 14px; max-width: 390px; }
+  .frame-label h2 { font-size: 17px; font-weight: 700; }
+  .frame-label p { font-size: 13px; color: #5F574C; margin-top: 4px; line-height: 1.45; }
+  .phone {
+    width: 390px; height: 760px; background: #F5F1EA;
+    border-radius: 48px; border: 12px solid #1c1a17;
+    overflow: hidden; position: relative; flex-shrink: 0;
+    box-shadow: 0 24px 60px rgba(0,0,0,.25);
+  }
+  .notch {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    width: 120px; height: 30px; background: #1c1a17; border-radius: 16px; z-index: 5;
+  }
+  .screen { height: 100%; overflow-y: auto; padding: 58px 18px 30px; }
+  .screen::-webkit-scrollbar { display: none; }
+
+  /* ---- NEW: banner section, full-bleed above the existing header ----
+     Same strip geometry as the client card: 118px tall, cover-cropped
+     banner, 88px photo at right 18, 3px white ring, vertically centered. */
+  .banner-section {
+    margin: -58px -18px 14px; height: 118px; position: relative; overflow: hidden;
+    background: #0E3B36;
+  }
+  .banner-section img.banner { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .banner-section .fallback {
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, #0E3B36 0%, #175E54 55%, #2A7A6C 100%);
+  }
+  .photo-btn {
+    position: absolute; top: 50%; right: 18px; transform: translateY(-50%);
+    width: 88px; height: 88px; border-radius: 50%; padding: 0; cursor: pointer;
+    border: 3px solid #FFFFFF; overflow: hidden; background: #A86A12;
+    box-shadow: 0 4px 12px rgba(0,0,0,.25);
+  }
+  .photo-btn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+  /* ---- Existing header: UNCHANGED (avatar removed — it lives on the banner now) ---- */
+  .kicker {
+    font-size: 13px; font-weight: 700; letter-spacing: 2.4px;
+    color: #2A7A6C; margin-bottom: 2px;
+  }
+  .title { font-size: 34px; font-weight: 800; letter-spacing: -0.4px; margin-bottom: 4px; }
+  .count { font-size: 14.5px; color: #8A8175; margin-bottom: 16px; }
+
+  /* ---- Rest of page: UNCHANGED ---- */
+  .new-btn {
+    display: block; width: 100%; border: none; border-radius: 16px;
+    background: #2F5D50; color: #FFFFFF; font-size: 17px; font-weight: 700;
+    padding: 17px; margin-bottom: 14px; cursor: pointer;
+  }
+  .section {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #FFFFFF; border-radius: 18px;
+    padding: 20px 20px; margin-bottom: 12px;
+    box-shadow: 0 3px 10px rgba(33,29,23,.05);
+  }
+  .section b { font-size: 17px; }
+  .section .n { color: #8A8175; font-weight: 700; }
+  .section .chev { color: #5F574C; font-size: 16px; }
+  .deal {
+    background: #FFFFFF; border-radius: 18px;
+    padding: 16px 18px; margin-bottom: 12px;
+    box-shadow: 0 3px 10px rgba(33,29,23,.05);
+  }
+  .side-tag {
+    display: inline-block; font-size: 11.5px; font-weight: 800; letter-spacing: 1.4px;
+    padding: 5px 10px; border-radius: 8px; margin-bottom: 8px;
+  }
+  .buy { background: #DDEBE4; color: #2F5D50; }
+  .sell { background: #F3E8CF; color: #A86A12; }
+  .deal .addr { font-size: 16.5px; font-weight: 800; line-height: 1.3; margin-bottom: 4px; padding-right: 64px; }
+  .deal .icons { float: right; display: flex; gap: 18px; font-size: 18px; margin-top: -32px; }
+  .deal .icons .ed { color: #2F5D50; }
+  .deal .icons .cx { color: #B23B3B; }
+  .deal .party { font-size: 14px; color: #8A8175; margin: 6px 0 10px; }
+  .deal .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .pill {
+    font-size: 13.5px; font-weight: 700; color: #2F5D50;
+    background: #DDEBE4; border-radius: 16px; padding: 6px 12px;
+  }
+  .frac { font-size: 14.5px; font-weight: 700; color: #5F574C; }
+  .bar { height: 8px; border-radius: 4px; background: #EDE6D6; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: #2F5D50; border-radius: 4px; }
+  .notes {
+    max-width: 820px; background: #FFFFFF; border: 1px solid #E7E0D3;
+    border-radius: 14px; padding: 18px 20px; font-size: 14px; line-height: 1.6;
+    color: #5F574C; align-self: stretch;
+  }
+  .notes b { color: #211D17; }
+  .notes ul { margin: 8px 0 0 18px; }
+  .notes li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<div>
+  <div class="frame-label">
+    <h2>With your banner</h2>
+    <p>New banner section above the existing header. Photo on the banner opens your profile. Header, counts, and everything below untouched.</p>
+  </div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="banner-section">
+        <img class="banner" src="client-banner-crop.jpg" alt="Banner">
+        <button class="photo-btn" aria-label="Your profile"><img src="client-photo-crop.jpg" alt=""></button>
+      </div>
+
+      <div class="kicker">HI JIMMY</div>
+      <div class="title">Escrows</div>
+      <div class="count">4 open · 1 closed · 1 cancelled</div>
+
+      <button class="new-btn">+ New escrow</button>
+      <div class="section"><b>Active escrows <span class="n">· 4</span></b><span class="chev">▾</span></div>
+      <div class="deal">
+        <span class="side-tag buy">BUY SIDE</span>
+        <div class="icons"><span class="ed">✎</span><span class="cx">✕</span></div>
+        <div class="addr">4187 oak mont drive, Valencia, california, 91355</div>
+        <div class="party">Buyer: Rory</div>
+        <div class="row"><span class="pill">24 days to close</span><span class="frac">13 / 13 steps</span></div>
+        <div class="bar"><i style="width:100%"></i></div>
+      </div>
+      <div class="deal">
+        <span class="side-tag buy">BUY SIDE</span>
+        <div class="icons"><span class="ed">✎</span><span class="cx">✕</span></div>
+        <div class="addr">2567 nutmeg ave, santa clarita, CA, 91355</div>
+        <div class="party">Buyer: cindy</div>
+        <div class="row"><span class="pill">25 days to close</span><span class="frac">14 / 14 steps</span></div>
+        <div class="bar"><i style="width:100%"></i></div>
+      </div>
+      <div class="deal">
+        <span class="side-tag sell">SELL SIDE</span>
+        <div class="icons"><span class="ed">✎</span><span class="cx">✕</span></div>
+        <div class="addr">26203 Mc bean, santa clarita, CA 91355</div>
+        <div class="party">Seller: Ana</div>
+        <div class="row"><span class="pill">25 days to close</span><span class="frac">0 / 13 steps</span></div>
+        <div class="bar"><i style="width:0%"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div>
+  <div class="frame-label">
+    <h2>No banner uploaded</h2>
+    <p>Brand-teal gradient fallback, same as the client side.</p>
+  </div>
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="screen">
+      <div class="banner-section">
+        <div class="fallback"></div>
+        <button class="photo-btn" aria-label="Your profile"><img src="client-photo-crop.jpg" alt=""></button>
+      </div>
+
+      <div class="kicker">HI JIMMY</div>
+      <div class="title">Escrows</div>
+      <div class="count">4 open · 1 closed · 1 cancelled</div>
+
+      <button class="new-btn">+ New escrow</button>
+      <div class="section"><b>Active escrows <span class="n">· 4</span></b><span class="chev">▾</span></div>
+      <div class="deal">
+        <span class="side-tag buy">BUY SIDE</span>
+        <div class="icons"><span class="ed">✎</span><span class="cx">✕</span></div>
+        <div class="addr">4187 oak mont drive, Valencia, california, 91355</div>
+        <div class="party">Buyer: Rory</div>
+        <div class="row"><span class="pill">24 days to close</span><span class="frac">13 / 13 steps</span></div>
+        <div class="bar"><i style="width:100%"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="notes">
+  <b>What changed:</b>
+  <ul>
+    <li><b>Added:</b> full-bleed banner section (118px, client strip geometry) above the header, with your photo on the right. Tap photo → your profile.</li>
+    <li><b>Moved:</b> the small avatar is gone from the header row — it now lives on the banner, so there's only one photo.</li>
+    <li><b>Untouched:</b> "HI JIMMY", "Escrows", the count line, + New escrow, sections, and deal cards are exactly as they are today.</li>
+  </ul>
+</div>
+
+</body>
+</html>

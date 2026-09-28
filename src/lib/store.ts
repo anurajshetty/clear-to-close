@@ -10,6 +10,8 @@ import { BUY_STEPS, SELL_STEPS, type StepTemplate } from './steps';
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import type {
+  ApplyChecklistResult,
+  ChecklistDraftStep,
   ClientLink,
   ClientRole,
   ClientView,
@@ -58,6 +60,27 @@ export interface CloseEscrowResult {
 export interface CancelEscrowResult {
   escrow: Escrow;
   revokedInvites: RevokedInvite[];
+}
+
+/**
+ * The local collections as one deep-cloned unit (Sept 2026, synchronous
+ * server-first writes). A preview computes a mutation against a cloned
+ * snapshot — the live in-memory data and the persisted keys are untouched
+ * until the server confirms the write, at which point commitPreview swaps
+ * the snapshot in and persists it.
+ */
+export interface LocalSnapshot {
+  profile: RealtorProfile | null;
+  escrows: Escrow[];
+  invites: Invite[];
+  links: ClientLink[];
+}
+
+/** A computed-but-unapplied local mutation: the result plus the snapshot
+ * carrying it. Pass to commitPreview to apply after server confirmation. */
+export interface Preview<T> {
+  result: T;
+  snapshot: LocalSnapshot;
 }
 
 export interface Store {
@@ -135,6 +158,17 @@ export interface Store {
   toggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Escrow>;
   addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow>;
   reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow>;
+  /**
+   * Bulk checklist apply for edit mode (Sept 28, 2026): the draft is the
+   * full new step list for one side — adds, removes, and reorders land in
+   * one confirmed synchronous server write. Throws a plain-language error
+   * and leaves local state unchanged on any failure.
+   */
+  applyChecklistEdits(
+    escrowId: string,
+    role: ClientRole,
+    steps: ChecklistDraftStep[],
+  ): Promise<Escrow>;
   updateTargetDate(escrowId: string, closeDate: string): Promise<Escrow>;
   /**
    * Close one side of an escrow (per-side lifecycle). Dual-agency sides
@@ -227,6 +261,58 @@ export interface Store {
    * cloud caches, the unsynced outbox, and the managed photo/banner files.
    */
   clearLocalAccountData(): Promise<void>;
+
+  // ------------------------------------------------------- confirmed writes --
+  /**
+   * Synchronous server-first writes (Anuraj, Sept 28, 2026): every
+   * user-initiated write computes its candidate state against a CLONED
+   * snapshot (preview*), pushes to the server, and only then applies the
+   * snapshot locally (commitPreview). A preview never touches the live
+   * data or the persisted keys, so a failed or timed-out write leaves
+   * local state byte-identical. The plain (non-preview) mutations keep
+   * their apply-immediately semantics for the dormant local-only build.
+   */
+  previewSaveProfile(p: RealtorProfile): Promise<Preview<void>>;
+  previewCreateEscrow(input: CreateEscrowInput): Promise<Preview<Escrow>>;
+  previewToggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Preview<Escrow>>;
+  previewAddCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Preview<Escrow>>;
+  previewReorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Preview<Escrow>>;
+  /**
+   * Bulk checklist apply for edit mode (Sept 28, 2026): replace one side's
+   * step list with the draft (adds, removes, reorders, done-state edits in
+   * one shot). Returns the escrow plus the ids of steps the edit removed
+   * (computed against the snapshot's confirmed state) so the server effect
+   * can delete exactly those rows.
+   */
+  previewApplyChecklist(
+    escrowId: string,
+    role: ClientRole,
+    steps: ChecklistDraftStep[],
+  ): Promise<Preview<ApplyChecklistResult>>;
+  previewUpdateTargetDate(escrowId: string, closeDate: string): Promise<Preview<Escrow>>;
+  previewUpdateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Preview<Escrow>>;
+  previewActivateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Preview<Escrow>>;
+  previewCancelEscrow(escrowId: string): Promise<Preview<CancelEscrowResult>>;
+  previewCloseEscrow(escrowId: string, role: ClientRole): Promise<Preview<CloseEscrowResult>>;
+  previewCreateInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Preview<Invite>>;
+  previewRevokeInvite(inviteId: string): Promise<Preview<{ revokedLinks: RevokedClientLink[] }>>;
+  previewRegenerateInvite(
+    inviteId: string,
+    codeOverride?: string,
+    newId?: string,
+  ): Promise<
+    Preview<{
+      oldCode: string;
+      invite: Invite;
+      revokedLink: { id: string; revokedAt: string } | null;
+    }>
+  >;
+  /**
+   * Apply a confirmed preview: swap the snapshot's collections into the
+   * live data, persist, and return the preview's result. Call ONLY after
+   * the server has confirmed the write.
+   */
+  commitPreview<T>(p: Preview<T>): Promise<T>;
 }
 
 const K_PROFILE = 'ctc:profile';
@@ -252,7 +338,7 @@ export const MAX_CLIENTS_PER_SIDE = 2;
  */
 export const MAX_TC_PER_ESCROW = 1;
 
-function uid(): string {
+export function uid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = Math.floor(Math.random() * 16);
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -396,10 +482,32 @@ export function createStore(kv: KV): Store {
     ]);
   }
 
-  function findEscrowOrThrow(escrowId: string): Escrow {
-    const e = data.escrows.find((x) => x.id === escrowId);
+  /**
+   * The mutable collections a write computes against. `data` itself
+   * extends this shape; previews operate on a deep clone so the live
+   * data and the persisted keys stay untouched until commitPreview.
+   */
+  type Holder = LocalSnapshot;
+
+  function cloneSnapshot(): LocalSnapshot {
+    return JSON.parse(
+      JSON.stringify({
+        profile: data.profile,
+        escrows: data.escrows,
+        invites: data.invites,
+        links: data.links,
+      }),
+    ) as LocalSnapshot;
+  }
+
+  function findEscrowIn(h: Holder, escrowId: string): Escrow {
+    const e = h.escrows.find((x) => x.id === escrowId);
     if (!e) throw new Error(`Escrow not found: ${escrowId}`);
     return e;
+  }
+
+  function findEscrowOrThrow(escrowId: string): Escrow {
+    return findEscrowIn(data, escrowId);
   }
 
   // Mutations must return NEW object references: screens hold the previous
@@ -412,11 +520,15 @@ export function createStore(kv: KV): Store {
     };
   }
 
-  function replaceEscrow(next: Escrow): Escrow {
-    const i = data.escrows.findIndex((x) => x.id === next.id);
+  function replaceEscrowIn(h: Holder, next: Escrow): Escrow {
+    const i = h.escrows.findIndex((x) => x.id === next.id);
     if (i < 0) throw new Error(`Escrow not found: ${next.id}`);
-    data.escrows[i] = next;
+    h.escrows[i] = next;
     return next;
+  }
+
+  function replaceEscrow(next: Escrow): Escrow {
+    return replaceEscrowIn(data, next);
   }
 
   function sortedByOrder(steps: StepT[]): StepT[] {
@@ -459,15 +571,15 @@ export function createStore(kv: KV): Store {
    * a blank screen. Already-revoked invites are untouched (already dead).
    * Single persist is left to the caller.
    */
-  function revokeActiveInvites(escrowId: string, roles?: ClientRole[]): RevokedInvite[] {
+  function revokeActiveInvites(h: Holder, escrowId: string, roles?: ClientRole[]): RevokedInvite[] {
     const now = new Date().toISOString();
     const revoked: RevokedInvite[] = [];
-    for (const inv of data.invites) {
+    for (const inv of h.invites) {
       if (inv.escrowId !== escrowId || inv.revokedAt) continue;
       if (roles && !roles.includes(inv.role)) continue;
       const next = { ...inv, revokedAt: now };
-      data.invites[data.invites.indexOf(inv)] = next;
-      for (const link of data.links) {
+      h.invites[h.invites.indexOf(inv)] = next;
+      for (const link of h.links) {
         if (link.inviteId === inv.id && !link.revokedAt) {
           link.revokedAt = now;
         }
@@ -475,6 +587,437 @@ export function createStore(kv: KV): Store {
       revoked.push({ id: inv.id, revokedAt: now });
     }
     return revoked;
+  }
+
+  /** Compute a profile save against the holder (no load, no persist). */
+  function computeSaveProfile(h: Holder, p: RealtorProfile): void {
+    h.profile = { ...p };
+  }
+
+  /**
+   * Run a compute against a cloned snapshot and return it as a Preview.
+   * The live data and the persisted keys are untouched.
+   */
+  async function previewFor<T>(compute: (h: Holder) => T): Promise<Preview<T>> {
+    await ensureLoaded();
+    const snapshot = cloneSnapshot();
+    const result = compute(snapshot);
+    return { result, snapshot };
+  }
+
+  /** Compute an escrow creation against the holder (no load, no persist). */
+  function computeCreateEscrow(h: Holder, input: CreateEscrowInput): Escrow {
+    const address = input.address.trim();
+    // City is no longer collected (Sept 28, 2026): new escrows store ''.
+    const city = (input.city ?? '').trim();
+    if (!address) throw new Error('createEscrow: address is required');
+    assertDate(input.openDate, 'openDate');
+    assertDate(input.closeDate, 'closeDate');
+    if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
+      throw new Error('createEscrow: closeDate cannot be before openDate');
+    }
+    const trimName = (n?: string) => {
+      const t = (n ?? '').trim();
+      return t ? t : null;
+    };
+    const escrow: Escrow = {
+      id: uid(),
+      address,
+      city,
+      side: input.side,
+      buyerName: trimName(input.buyerName),
+      sellerName: trimName(input.sellerName),
+      openDate: input.openDate,
+      closeDate: input.closeDate,
+      buyerSteps: buildSteps(BUY_STEPS),
+      sellerSteps: buildSteps(SELL_STEPS),
+      status: 'open',
+      buyerClosedAt: null,
+      sellerClosedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    h.escrows.push(escrow);
+    return escrow;
+  }
+
+  /** Compute a step toggle against the holder (no load, no persist). */
+  function computeToggleStep(h: Holder, escrowId: string, role: ClientRole, stepId: string): Escrow {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    const step = roleSteps(e, role).find((s) => s.id === stepId);
+    if (!step) throw new Error(`Step not found: ${stepId}`);
+    step.done = !step.done;
+    const nowISO = new Date().toISOString();
+    step.completedAt = step.done ? nowISO : null;
+    // The client home's "LATEST FROM" card shows the single most recent
+    // realtor action — forward AND backward moves. An uncheck leaves no
+    // completedAt behind, so the action is stamped explicitly here.
+    e.lastAction = {
+      kind: step.done ? 'checked' : 'reopened',
+      stepTitle: step.title,
+      at: nowISO,
+    };
+    if (!step.done) {
+      // Unchecking any step in a closed side moves that side back to
+      // Active (approved escrow lifecycle, Sept 2026). Only that side
+      // reopens — the other side of a dual-agency escrow is untouched.
+      if (role === 'buyer') e.buyerClosedAt = null;
+      else e.sellerClosedAt = null;
+    }
+    applyDerivedStatus(e);
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute a custom-step add against the holder (no load, no persist). */
+  function computeAddCustomStep(h: Holder, escrowId: string, role: ClientRole, title: string): Escrow {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    const steps = roleSteps(e, role);
+    const maxOrder = steps.reduce((m, s) => Math.max(m, s.order), -1);
+    steps.push({
+      id: uid(),
+      title: title.trim(),
+      subtitle: '',
+      done: false,
+      custom: true,
+      order: maxOrder + 1,
+      completedAt: null,
+    });
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute a step reorder against the holder (no load, no persist). */
+  function computeReorderSteps(
+    h: Holder,
+    escrowId: string,
+    role: ClientRole,
+    orderedIds: string[],
+  ): Escrow {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    const steps = roleSteps(e, role);
+    const current = new Set(steps.map((s) => s.id));
+    if (orderedIds.length !== current.size || !orderedIds.every((id) => current.has(id))) {
+      throw new Error('reorderSteps: orderedIds must contain exactly the current step ids');
+    }
+    const byId = new Map(steps.map((s) => [s.id, s]));
+    const next = orderedIds.map((id, index) => ({ ...byId.get(id)!, order: index }));
+    if (role === 'buyer') e.buyerSteps = next; else e.sellerSteps = next;
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute a bulk checklist apply against the holder (no load, no persist). */
+  function computeApplyChecklist(
+    h: Holder,
+    escrowId: string,
+    role: ClientRole,
+    drafts: ChecklistDraftStep[],
+  ): ApplyChecklistResult {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    const before = roleSteps(e, role);
+    const beforeIds = new Set(before.map((s) => s.id));
+    const prevById = new Map(before.map((s) => [s.id, s]));
+    const seen = new Set<string>();
+    const nowISO = new Date().toISOString();
+    const next: StepT[] = drafts.map((d, index) => {
+      const title = d.title.trim();
+      if (!title) throw new Error('applyChecklistEdits: step titles cannot be empty');
+      let id = (d.id ?? '').trim();
+      if (!id) id = uid();
+      if (seen.has(id)) throw new Error('applyChecklistEdits: duplicate step id in draft');
+      seen.add(id);
+      const prev = prevById.get(id);
+      return {
+        id,
+        title,
+        subtitle: (d.subtitle ?? prev?.subtitle ?? '').trim(),
+        done: d.done,
+        custom: d.custom,
+        order: index,
+        completedAt: d.done ? (d.completedAt ?? prev?.completedAt ?? nowISO) : null,
+      };
+    });
+    if (role === 'buyer') e.buyerSteps = next;
+    else e.sellerSteps = next;
+    const afterIds = new Set(next.map((s) => s.id));
+    const removedStepIds = [...beforeIds].filter((id) => !afterIds.has(id));
+    // Closed-side semantics (approved checklist edit mode, Sept 28, 2026):
+    // removing a checked step from a closed, still-complete side keeps it
+    // closed; the edit reopens the side only when an unchecked step
+    // remains. Matches toggleStep's uncheck-reopens rule for the add case.
+    const wasClosed = role === 'buyer' ? e.buyerClosedAt != null : e.sellerClosedAt != null;
+    if (wasClosed && next.some((s) => !s.done)) {
+      if (role === 'buyer') e.buyerClosedAt = null;
+      else e.sellerClosedAt = null;
+    }
+    applyDerivedStatus(e);
+    replaceEscrowIn(h, e);
+    return { escrow: e, removedStepIds };
+  }
+
+  /** Compute a target-date update against the holder (no load, no persist). */
+  function computeUpdateTargetDate(h: Holder, escrowId: string, closeDate: string): Escrow {    assertDate(closeDate, 'closeDate');
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    if (parseLocalMidnight(closeDate) < parseLocalMidnight(e.openDate)) {
+      throw new Error('updateTargetDate: closeDate cannot be before openDate');
+    }
+    e.closeDate = closeDate;
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute a side close against the holder (no load, no persist). */
+  function computeCloseEscrow(h: Holder, escrowId: string, role: ClientRole): CloseEscrowResult {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    const steps = roleSteps(e, role);
+    if (steps.length === 0 || steps.some((s) => !s.done)) {
+      throw new Error('closeEscrow: every step on the side must be complete');
+    }
+    const today = todayLocalISO();
+    if (role === 'buyer') e.buyerClosedAt = today;
+    else e.sellerClosedAt = today;
+    applyDerivedStatus(e);
+    // Anuraj (Sept 2026): an explicit close kills client access, same as a
+    // revoked invite. The closed side's live client links die now; the TC
+    // links die once the whole escrow is closed (every side closed). A
+    // side that stays active keeps its clients' access (dual agency).
+    // validateClientLink reads link.revokedAt, so the killed clients land
+    // on the dead-link screen.
+    const now = new Date().toISOString();
+    const rolesToKill: ClientRole[] = [role];
+    if (e.status === 'closed') rolesToKill.push('tc');
+    const revokedLinks: RevokedClientLink[] = [];
+    for (const link of h.links) {
+      if (link.escrowId === escrowId && !link.revokedAt && rolesToKill.includes(link.role)) {
+        link.revokedAt = now;
+        revokedLinks.push({ id: link.id, revokedAt: now });
+      }
+    }
+    // Invite codes die with the close (Anuraj, Sept 28, 2026): the closed
+    // side's active invites are revoked with the same rolesToKill scope —
+    // a per-side close kills only that side's invites (the other side and
+    // the TC stay live), while a whole-escrow close kills buyer, seller,
+    // and TC. Same revoke semantics as revokeInvite: code invalidated +
+    // device link killed at the same moment.
+    const revokedInvites = revokeActiveInvites(h, escrowId, rolesToKill);
+    const next = replaceEscrowIn(h, e);
+    return { escrow: next, revokedLinks, revokedInvites };
+  }
+
+  /** Compute an escrow field edit against the holder (no load, no persist). */
+  function computeUpdateEscrow(h: Holder, escrowId: string, input: UpdateEscrowInput): Escrow {
+    const address = input.address.trim();
+    if (!address) throw new Error('updateEscrow: address is required');
+    assertDate(input.openDate, 'openDate');
+    assertDate(input.closeDate, 'closeDate');
+    if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
+      throw new Error('updateEscrow: closeDate cannot be before openDate');
+    }
+    const trimName = (n?: string) => {
+      const t = (n ?? '').trim();
+      return t ? t : null;
+    };
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    e.address = address;
+    // City is no longer edited (Sept 28, 2026): a supplied value still
+    // applies, otherwise the stored city is preserved.
+    if (input.city !== undefined) e.city = input.city.trim();
+    e.side = input.side;
+    e.buyerName = trimName(input.buyerName);
+    e.sellerName = trimName(input.sellerName);
+    e.openDate = input.openDate;
+    e.closeDate = input.closeDate;
+    // Status and steps are never touched by an update: editing a closed
+    // or cancelled escrow keeps it closed/cancelled with its steps intact.
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute an escrow reactivation against the holder (no load, no persist). */
+  function computeActivateEscrow(h: Holder, escrowId: string, input: UpdateEscrowInput): Escrow {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    if (e.status === 'open') {
+      throw new Error('activateEscrow: escrow is already open');
+    }
+    const address = input.address.trim();
+    if (!address) throw new Error('activateEscrow: address is required');
+    assertDate(input.openDate, 'openDate');
+    assertDate(input.closeDate, 'closeDate');
+    if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
+      throw new Error('activateEscrow: closeDate cannot be before openDate');
+    }
+    const trimName = (n?: string) => {
+      const t = (n ?? '').trim();
+      return t ? t : null;
+    };
+    e.address = address;
+    // City is no longer edited (Sept 28, 2026): a supplied value still
+    // applies, otherwise the stored city is preserved.
+    if (input.city !== undefined) e.city = input.city.trim();
+    e.side = input.side;
+    e.buyerName = trimName(input.buyerName);
+    e.sellerName = trimName(input.sellerName);
+    e.openDate = input.openDate;
+    e.closeDate = input.closeDate;
+    // Reopen: status back to 'open' and the per-side close dates cleared.
+    // The deal list reads closed from those dates (isClosedRow), so
+    // flipping status alone would leave the card in Closed. Steps,
+    // invites, and client links are untouched — reactivation resumes
+    // where it left off.
+    e.status = 'open';
+    e.buyerClosedAt = null;
+    e.sellerClosedAt = null;
+    return replaceEscrowIn(h, e);
+  }
+
+  /** Compute an escrow cancel against the holder (no load, no persist). */
+  function computeCancelEscrow(h: Holder, escrowId: string): CancelEscrowResult {
+    const e = cloneEscrow(findEscrowIn(h, escrowId));
+    if (e.status === 'closed') {
+      throw new Error('cancelEscrow: a closed escrow cannot be cancelled');
+    }
+    e.status = 'cancelled';
+    // Invite codes die with the escrow (Anuraj, Sept 28, 2026): every
+    // active invite — buyer, seller, and TC — is revoked. Same revoke
+    // semantics as revokeInvite: code invalidated + device link killed at
+    // the same moment, so affected devices land on the dead-code state,
+    // never a blank screen. Already-revoked invites are untouched.
+    const revokedInvites = revokeActiveInvites(h, escrowId);
+    const next = replaceEscrowIn(h, e);
+    return { escrow: next, revokedInvites };
+  }
+
+  /** Compute an invite creation against the holder (no load, no persist). */
+  function computeCreateInvite(
+    h: Holder,
+    escrowId: string,
+    role: ClientRole,
+    partyName: string,
+  ): Invite {
+    const escrow = findEscrowIn(h, escrowId);
+    // No new invites on a dead escrow (Anuraj, Sept 28, 2026): a closed
+    // or cancelled escrow must not offer invite creation for any role.
+    // The server enforces the same rule with a trigger (migration 0018);
+    // this is the app-level gate. Per-side-closed sides (status still
+    // 'open') are not blocked — this rule is status-based by design.
+    // The gate lives in the compute path so the preview (and therefore
+    // every confirmed write) rejects before any server attempt.
+    if (escrow.status === 'closed' || escrow.status === 'cancelled') {
+      throw new Error(
+        `createInvite: cannot create invites for a ${escrow.status} escrow`,
+      );
+    }
+    // Per-role cap: two per buyer/seller side, exactly one transaction
+    // coordinator per escrow. Revoking frees a slot, so only live invites
+    // count. (The DB trigger enforces the same caps authoritatively.)
+    const cap = role === 'tc' ? MAX_TC_PER_ESCROW : MAX_CLIENTS_PER_SIDE;
+    const activeForRole = h.invites.filter(
+      (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
+    ).length;
+    if (activeForRole >= cap) {
+      // Plain-language: preview errors surface unchanged through
+      // confirmedWrite (sync-writes, Sept 28, 2026), so this IS the
+      // user-facing copy. Unified with the push-time cap rejection copy
+      // (plainWriteError / syncErrorCopy inviteCap) for both roles.
+      throw new Error(
+        'This escrow already has 2 active invite codes. Revoke an unused code first, then create a new one.',
+      );
+    }
+    const existing = new Set(h.invites.map((i) => i.code));
+    let code = '';
+    let attempts = 0;
+    for (; attempts < MAX_CODE_ATTEMPTS; attempts++) {
+      const candidate = randomCode();
+      if (!existing.has(candidate)) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) {
+      throw new Error('createInvite: could not generate a unique code after 100 attempts');
+    }
+    const invite: Invite = {
+      id: uid(),
+      code,
+      escrowId,
+      role,
+      partyName: partyName.trim(),
+      createdAt: new Date().toISOString(),
+      revokedAt: null,
+      redeemedAt: null,
+    };
+    h.invites.push(invite);
+    return invite;
+  }
+
+  /** Compute an invite revocation against the holder (no load, no persist). */
+  function computeRevokeInvite(h: Holder, inviteId: string): { revokedLinks: RevokedClientLink[] } {
+    const inv = h.invites.find((i) => i.id === inviteId);
+    if (!inv) throw new Error(`Invite not found: ${inviteId}`);
+    const now = new Date().toISOString();
+    inv.revokedAt = now;
+    const next = { ...inv };
+    h.invites[h.invites.indexOf(inv)] = next;
+    // The client link dies with the invite: a revoked client can never get
+    // back in on the old link (their access is killed, not just future
+    // redemption). validateClientLink reads link.revokedAt. The killed
+    // links are returned for cloud convergence — without this, a single
+    // invite revoke leaves a zombie live device link on the server that
+    // blocks the device from joining any other escrow (Sept 28, 2026).
+    const revokedLinks: RevokedClientLink[] = [];
+    for (const link of h.links) {
+      if (link.inviteId === inviteId && !link.revokedAt) {
+        link.revokedAt = now;
+        revokedLinks.push({ id: link.id, revokedAt: now });
+      }
+    }
+    return { revokedLinks };
+  }
+
+  /** Compute an invite regeneration against the holder (no load, no persist). */
+  function computeRegenerateInvite(
+    h: Holder,
+    inviteId: string,
+    codeOverride?: string,
+    newId?: string,
+  ): {
+    oldCode: string;
+    invite: Invite;
+    revokedLink: { id: string; revokedAt: string } | null;
+  } {
+    const inv = h.invites.find((i) => i.id === inviteId);
+    if (!inv) throw new Error(`regenerateInvite: invite not found: ${inviteId}`);
+    if (inv.revokedAt) throw new Error('regenerateInvite: invite already revoked');
+    const oldCode = inv.code;
+    // Fresh, globally unique single-use code for the same escrow/role/party.
+    const taken = new Set(h.invites.map((i) => i.code));
+    let code = (codeOverride ?? '').trim().toUpperCase();
+    if (code) {
+      if (taken.has(code)) throw new Error('regenerateInvite: code collision');
+    } else {
+      do {
+        code = randomCode();
+      } while (taken.has(code));
+    }
+    const now = new Date().toISOString();
+    // Atomic within the in-memory critical section: kill the old code and
+    // its device link at the same moment the replacement is issued.
+    inv.revokedAt = now;
+    const link = h.links.find((l) => l.inviteId === inviteId && !l.revokedAt);
+    let revokedLink: { id: string; revokedAt: string } | null = null;
+    if (link) {
+      link.revokedAt = now;
+      revokedLink = { id: link.id, revokedAt: now };
+    }
+    const next: Invite = {
+      // The cloud mirror passes the RPC's new_invite_id so local and
+      // cloud rows share one id; the local-only path mints its own.
+      id: newId ?? uid(),
+      code,
+      escrowId: inv.escrowId,
+      role: inv.role,
+      partyName: inv.partyName,
+      createdAt: now,
+      revokedAt: null,
+      redeemedAt: null,
+    };
+    h.invites.push(next);
+    return { oldCode, invite: { ...next }, revokedLink };
   }
 
   const store: Store = {
@@ -537,8 +1080,12 @@ export function createStore(kv: KV): Store {
 
     async saveProfile(p: RealtorProfile): Promise<void> {
       await ensureLoaded();
-      data.profile = { ...p };
+      computeSaveProfile(data, p);
       await persist();
+    },
+
+    async previewSaveProfile(p: RealtorProfile): Promise<Preview<void>> {
+      return previewFor((h) => computeSaveProfile(h, p));
     },
 
     async listEscrows(): Promise<Escrow[]> {
@@ -554,115 +1101,97 @@ export function createStore(kv: KV): Store {
 
     async createEscrow(input: CreateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
-      const address = input.address.trim();
-      // City is no longer collected (Sept 28, 2026): new escrows store ''.
-      const city = (input.city ?? '').trim();
-      if (!address) throw new Error('createEscrow: address is required');
-      assertDate(input.openDate, 'openDate');
-      assertDate(input.closeDate, 'closeDate');
-      if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
-        throw new Error('createEscrow: closeDate cannot be before openDate');
-      }
-      const trimName = (n?: string) => {
-        const t = (n ?? '').trim();
-        return t ? t : null;
-      };
-      const escrow: Escrow = {
-        id: uid(),
-        address,
-        city,
-        side: input.side,
-        buyerName: trimName(input.buyerName),
-        sellerName: trimName(input.sellerName),
-        openDate: input.openDate,
-        closeDate: input.closeDate,
-        buyerSteps: buildSteps(BUY_STEPS),
-        sellerSteps: buildSteps(SELL_STEPS),
-        status: 'open',
-        buyerClosedAt: null,
-        sellerClosedAt: null,
-        createdAt: new Date().toISOString(),
-      };
-      data.escrows.push(escrow);
+      const escrow = computeCreateEscrow(data, input);
       await persist();
       return escrow;
     },
 
+    async previewCreateEscrow(input: CreateEscrowInput): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeCreateEscrow(h, input));
+    },
+
     async toggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Escrow> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      const step = roleSteps(e, role).find((s) => s.id === stepId);
-      if (!step) throw new Error(`Step not found: ${stepId}`);
-      step.done = !step.done;
-      const nowISO = new Date().toISOString();
-      step.completedAt = step.done ? nowISO : null;
-      // The client home's "LATEST FROM" card shows the single most recent
-      // realtor action — forward AND backward moves. An uncheck leaves no
-      // completedAt behind, so the action is stamped explicitly here.
-      e.lastAction = {
-        kind: step.done ? 'checked' : 'reopened',
-        stepTitle: step.title,
-        at: nowISO,
-      };
-      if (!step.done) {
-        // Unchecking any step in a closed side moves that side back to
-        // Active (approved escrow lifecycle, Sept 2026). Only that side
-        // reopens — the other side of a dual-agency escrow is untouched.
-        if (role === 'buyer') e.buyerClosedAt = null;
-        else e.sellerClosedAt = null;
-      }
-      applyDerivedStatus(e);
-      const next = replaceEscrow(e);
+      const next = computeToggleStep(data, escrowId, role, stepId);
       await persist();
       return next;
+    },
+
+    async previewToggleStep(
+      escrowId: string,
+      role: ClientRole,
+      stepId: string,
+    ): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeToggleStep(h, escrowId, role, stepId));
     },
 
     async addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      const steps = roleSteps(e, role);
-      const maxOrder = steps.reduce((m, s) => Math.max(m, s.order), -1);
-      steps.push({
-        id: uid(),
-        title: title.trim(),
-        subtitle: '',
-        done: false,
-        custom: true,
-        order: maxOrder + 1,
-        completedAt: null,
-      });
-      const next = replaceEscrow(e);
+      const next = computeAddCustomStep(data, escrowId, role, title);
       await persist();
       return next;
+    },
+
+    async previewAddCustomStep(
+      escrowId: string,
+      role: ClientRole,
+      title: string,
+    ): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeAddCustomStep(h, escrowId, role, title));
     },
 
     async reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      const steps = roleSteps(e, role);
-      const current = new Set(steps.map((s) => s.id));
-      if (orderedIds.length !== current.size || !orderedIds.every((id) => current.has(id))) {
-        throw new Error('reorderSteps: orderedIds must contain exactly the current step ids');
-      }
-      const byId = new Map(steps.map((s) => [s.id, s]));
-      const next = orderedIds.map((id, index) => ({ ...byId.get(id)!, order: index }));
-      if (role === 'buyer') e.buyerSteps = next; else e.sellerSteps = next;
-      const replaced = replaceEscrow(e);
+      const next = computeReorderSteps(data, escrowId, role, orderedIds);
       await persist();
-      return replaced;
+      return next;
+    },
+
+    async applyChecklistEdits(
+      escrowId: string,
+      role: ClientRole,
+      steps: ChecklistDraftStep[],
+    ): Promise<Escrow> {
+      await ensureLoaded();
+      const { escrow } = computeApplyChecklist(data, escrowId, role, steps);
+      await persist();
+      return escrow;
+    },
+
+    async previewReorderSteps(
+      escrowId: string,
+      role: ClientRole,
+      orderedIds: string[],
+    ): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeReorderSteps(h, escrowId, role, orderedIds));
+    },
+
+    /**
+     * Bulk checklist apply (edit mode, Sept 28, 2026): the draft is the
+     * full new step list for one role. New steps (no id) get one minted;
+     * order is the array order. Closed-side semantics per the approved
+     * spec: removing a checked step from a closed, still-complete side
+     * keeps it closed; adding (or leaving) an unchecked step reopens that
+     * side. lastAction is untouched — structural edits send no push and
+     * the LATEST FROM card keeps the last check/uncheck.
+     */
+    async previewApplyChecklist(
+      escrowId: string,
+      role: ClientRole,
+      steps: ChecklistDraftStep[],
+    ): Promise<Preview<ApplyChecklistResult>> {
+      return previewFor((h) => computeApplyChecklist(h, escrowId, role, steps));
     },
 
     async updateTargetDate(escrowId: string, closeDate: string): Promise<Escrow> {
       await ensureLoaded();
-      assertDate(closeDate, 'closeDate');
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      if (parseLocalMidnight(closeDate) < parseLocalMidnight(e.openDate)) {
-        throw new Error('updateTargetDate: closeDate cannot be before openDate');
-      }
-      e.closeDate = closeDate;
-      const next = replaceEscrow(e);
+      const next = computeUpdateTargetDate(data, escrowId, closeDate);
       await persist();
       return next;
+    },
+
+    async previewUpdateTargetDate(escrowId: string, closeDate: string): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeUpdateTargetDate(h, escrowId, closeDate));
     },
 
     /**
@@ -674,208 +1203,75 @@ export function createStore(kv: KV): Store {
      */
     async closeEscrow(escrowId: string, role: ClientRole): Promise<CloseEscrowResult> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      const steps = roleSteps(e, role);
-      if (steps.length === 0 || steps.some((s) => !s.done)) {
-        throw new Error('closeEscrow: every step on the side must be complete');
-      }
-      const today = todayLocalISO();
-      if (role === 'buyer') e.buyerClosedAt = today;
-      else e.sellerClosedAt = today;
-      applyDerivedStatus(e);
-      // Anuraj (Sept 2026): an explicit close kills client access, same as a
-      // revoked invite. The closed side's live client links die now; the TC
-      // links die once the whole escrow is closed (every side closed). A
-      // side that stays active keeps its clients' access (dual agency).
-      // validateClientLink reads link.revokedAt, so the killed clients land
-      // on the dead-link screen.
-      const now = new Date().toISOString();
-      const rolesToKill: ClientRole[] = [role];
-      if (e.status === 'closed') rolesToKill.push('tc');
-      const revokedLinks: RevokedClientLink[] = [];
-      for (const link of data.links) {
-        if (link.escrowId === escrowId && !link.revokedAt && rolesToKill.includes(link.role)) {
-          link.revokedAt = now;
-          revokedLinks.push({ id: link.id, revokedAt: now });
-        }
-      }
-      // Invite codes die with the close (Anuraj, Sept 28, 2026): the closed
-      // side's active invites are revoked with the same rolesToKill scope —
-      // a per-side close kills only that side's invites (the other side and
-      // the TC stay live), while a whole-escrow close kills buyer, seller,
-      // and TC. Same revoke semantics as revokeInvite: code invalidated +
-      // device link killed at the same moment.
-      const revokedInvites = revokeActiveInvites(escrowId, rolesToKill);
-      const next = replaceEscrow(e);
+      const result = computeCloseEscrow(data, escrowId, role);
       await persist();
-      return { escrow: next, revokedLinks, revokedInvites };
+      return result;
+    },
+
+    async previewCloseEscrow(escrowId: string, role: ClientRole): Promise<Preview<CloseEscrowResult>> {
+      return previewFor((h) => computeCloseEscrow(h, escrowId, role));
     },
 
     async updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
-      const address = input.address.trim();
-      if (!address) throw new Error('updateEscrow: address is required');
-      assertDate(input.openDate, 'openDate');
-      assertDate(input.closeDate, 'closeDate');
-      if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
-        throw new Error('updateEscrow: closeDate cannot be before openDate');
-      }
-      const trimName = (n?: string) => {
-        const t = (n ?? '').trim();
-        return t ? t : null;
-      };
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      e.address = address;
-      // City is no longer edited (Sept 28, 2026): a supplied value still
-      // applies, otherwise the stored city is preserved.
-      if (input.city !== undefined) e.city = input.city.trim();
-      e.side = input.side;
-      e.buyerName = trimName(input.buyerName);
-      e.sellerName = trimName(input.sellerName);
-      e.openDate = input.openDate;
-      e.closeDate = input.closeDate;
-      // Status and steps are never touched by an update: editing a closed
-      // or cancelled escrow keeps it closed/cancelled with its steps intact.
-      const next = replaceEscrow(e);
+      const next = computeUpdateEscrow(data, escrowId, input);
       await persist();
       return next;
+    },
+
+    async previewUpdateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeUpdateEscrow(h, escrowId, input));
     },
 
     async activateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      if (e.status === 'open') {
-        throw new Error('activateEscrow: escrow is already open');
-      }
-      const address = input.address.trim();
-      if (!address) throw new Error('activateEscrow: address is required');
-      assertDate(input.openDate, 'openDate');
-      assertDate(input.closeDate, 'closeDate');
-      if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
-        throw new Error('activateEscrow: closeDate cannot be before openDate');
-      }
-      const trimName = (n?: string) => {
-        const t = (n ?? '').trim();
-        return t ? t : null;
-      };
-      e.address = address;
-      // City is no longer edited (Sept 28, 2026): a supplied value still
-      // applies, otherwise the stored city is preserved.
-      if (input.city !== undefined) e.city = input.city.trim();
-      e.side = input.side;
-      e.buyerName = trimName(input.buyerName);
-      e.sellerName = trimName(input.sellerName);
-      e.openDate = input.openDate;
-      e.closeDate = input.closeDate;
-      // Reopen: status back to 'open' and the per-side close dates cleared.
-      // The deal list reads closed from those dates (isClosedRow), so
-      // flipping status alone would leave the card in Closed. Steps,
-      // invites, and client links are untouched — reactivation resumes
-      // where it left off.
-      e.status = 'open';
-      e.buyerClosedAt = null;
-      e.sellerClosedAt = null;
-      const next = replaceEscrow(e);
+      const next = computeActivateEscrow(data, escrowId, input);
       await persist();
       return next;
     },
 
+    async previewActivateEscrow(
+      escrowId: string,
+      input: UpdateEscrowInput,
+    ): Promise<Preview<Escrow>> {
+      return previewFor((h) => computeActivateEscrow(h, escrowId, input));
+    },
+
     async cancelEscrow(escrowId: string): Promise<CancelEscrowResult> {
       await ensureLoaded();
-      const e = cloneEscrow(findEscrowOrThrow(escrowId));
-      if (e.status === 'closed') {
-        throw new Error('cancelEscrow: a closed escrow cannot be cancelled');
-      }
-      e.status = 'cancelled';
-      // Invite codes die with the escrow (Anuraj, Sept 28, 2026): every
-      // active invite — buyer, seller, and TC — is revoked. Same revoke
-      // semantics as revokeInvite: code invalidated + device link killed at
-      // the same moment, so affected devices land on the dead-code state,
-      // never a blank screen. Already-revoked invites are untouched.
-      const revokedInvites = revokeActiveInvites(escrowId);
-      const next = replaceEscrow(e);
+      const result = computeCancelEscrow(data, escrowId);
       await persist();
-      return { escrow: next, revokedInvites };
+      return result;
+    },
+
+    async previewCancelEscrow(escrowId: string): Promise<Preview<CancelEscrowResult>> {
+      return previewFor((h) => computeCancelEscrow(h, escrowId));
     },
 
     async createInvite(escrowId: string, role: ClientRole, partyName: string): Promise<Invite> {
       await ensureLoaded();
-      const escrow = findEscrowOrThrow(escrowId);
-      // No new invites on a dead escrow (Anuraj, Sept 28, 2026): a closed
-      // or cancelled escrow must not offer invite creation for any role.
-      // The server enforces the same rule with a trigger (migration 0018);
-      // this is the app-level gate. Per-side-closed sides (status still
-      // 'open') are not blocked — this rule is status-based by design.
-      if (escrow.status === 'closed' || escrow.status === 'cancelled') {
-        throw new Error(
-          `createInvite: cannot create invites for a ${escrow.status} escrow`,
-        );
-      }
-      // Per-role cap: two per buyer/seller side, exactly one transaction
-      // coordinator per escrow. Revoking frees a slot, so only live invites
-      // count. (The DB trigger enforces the same caps authoritatively.)
-      const cap = role === 'tc' ? MAX_TC_PER_ESCROW : MAX_CLIENTS_PER_SIDE;
-      const activeForRole = data.invites.filter(
-        (i) => i.escrowId === escrowId && i.role === role && !i.revokedAt,
-      ).length;
-      if (activeForRole >= cap) {
-        throw new Error(
-          role === 'tc'
-            ? 'createInvite: one transaction coordinator per escrow max. Revoke the existing invite to invite someone new'
-            : 'createInvite: two clients per side max. Revoke one to invite someone new',
-        );
-      }
-      const existing = new Set(data.invites.map((i) => i.code));
-      let code = '';
-      let attempts = 0;
-      for (; attempts < MAX_CODE_ATTEMPTS; attempts++) {
-        const candidate = randomCode();
-        if (!existing.has(candidate)) {
-          code = candidate;
-          break;
-        }
-      }
-      if (!code) {
-        throw new Error('createInvite: could not generate a unique code after 100 attempts');
-      }
-      const invite: Invite = {
-        id: uid(),
-        code,
-        escrowId,
-        role,
-        partyName: partyName.trim(),
-        createdAt: new Date().toISOString(),
-        revokedAt: null,
-        redeemedAt: null,
-      };
-      data.invites.push(invite);
+      const invite = computeCreateInvite(data, escrowId, role, partyName);
       await persist();
       return invite;
     },
 
+    async previewCreateInvite(
+      escrowId: string,
+      role: ClientRole,
+      partyName: string,
+    ): Promise<Preview<Invite>> {
+      return previewFor((h) => computeCreateInvite(h, escrowId, role, partyName));
+    },
+
     async revokeInvite(inviteId: string): Promise<{ revokedLinks: RevokedClientLink[] }> {
       await ensureLoaded();
-      const inv = data.invites.find((i) => i.id === inviteId);
-      if (!inv) throw new Error(`Invite not found: ${inviteId}`);
-      const now = new Date().toISOString();
-      inv.revokedAt = now;
-      const next = { ...inv };
-      data.invites[data.invites.indexOf(inv)] = next;
-      // The client link dies with the invite: a revoked client can never get
-      // back in on the old link (their access is killed, not just future
-      // redemption). validateClientLink reads link.revokedAt. The killed
-      // links are returned for cloud convergence — without this, a single
-      // invite revoke leaves a zombie live device link on the server that
-      // blocks the device from joining any other escrow (Sept 28, 2026).
-      const revokedLinks: RevokedClientLink[] = [];
-      for (const link of data.links) {
-        if (link.inviteId === inviteId && !link.revokedAt) {
-          link.revokedAt = now;
-          revokedLinks.push({ id: link.id, revokedAt: now });
-        }
-      }
+      const result = computeRevokeInvite(data, inviteId);
       await persist();
-      return { revokedLinks };
+      return result;
+    },
+
+    async previewRevokeInvite(inviteId: string): Promise<Preview<{ revokedLinks: RevokedClientLink[] }>> {
+      return previewFor((h) => computeRevokeInvite(h, inviteId));
     },
 
     async updateInviteCode(inviteId: string, code: string): Promise<Invite> {
@@ -1017,45 +1413,23 @@ export function createStore(kv: KV): Store {
       revokedLink: { id: string; revokedAt: string } | null;
     }> {
       await ensureLoaded();
-      const inv = data.invites.find((i) => i.id === inviteId);
-      if (!inv) throw new Error(`regenerateInvite: invite not found: ${inviteId}`);
-      if (inv.revokedAt) throw new Error('regenerateInvite: invite already revoked');
-      const oldCode = inv.code;
-      // Fresh, globally unique single-use code for the same escrow/role/party.
-      const taken = new Set(data.invites.map((i) => i.code));
-      let code = (codeOverride ?? '').trim().toUpperCase();
-      if (code) {
-        if (taken.has(code)) throw new Error('regenerateInvite: code collision');
-      } else {
-        do {
-          code = randomCode();
-        } while (taken.has(code));
-      }
-      const now = new Date().toISOString();
-      // Atomic within the in-memory critical section: kill the old code and
-      // its device link at the same moment the replacement is issued.
-      inv.revokedAt = now;
-      const link = data.links.find((l) => l.inviteId === inviteId && !l.revokedAt);
-      let revokedLink: { id: string; revokedAt: string } | null = null;
-      if (link) {
-        link.revokedAt = now;
-        revokedLink = { id: link.id, revokedAt: now };
-      }
-      const next: Invite = {
-        // The cloud mirror passes the RPC's new_invite_id so local and
-        // cloud rows share one id; the local-only path mints its own.
-        id: newId ?? uid(),
-        code,
-        escrowId: inv.escrowId,
-        role: inv.role,
-        partyName: inv.partyName,
-        createdAt: now,
-        revokedAt: null,
-        redeemedAt: null,
-      };
-      data.invites.push(next);
+      const result = computeRegenerateInvite(data, inviteId, codeOverride, newId);
       await persist();
-      return { oldCode, invite: { ...next }, revokedLink };
+      return result;
+    },
+
+    async previewRegenerateInvite(
+      inviteId: string,
+      codeOverride?: string,
+      newId?: string,
+    ): Promise<
+      Preview<{
+        oldCode: string;
+        invite: Invite;
+        revokedLink: { id: string; revokedAt: string } | null;
+      }>
+    > {
+      return previewFor((h) => computeRegenerateInvite(h, inviteId, codeOverride, newId));
     },
 
     async getLinkForInvite(inviteId: string): Promise<ClientLink | null> {
@@ -1121,6 +1495,16 @@ export function createStore(kv: KV): Store {
 
     /** The local store holds no cloud caches: the full wipe is clear(). */
     clearLocalAccountData: () => store.clear(),
+
+    async commitPreview<T>(p: Preview<T>): Promise<T> {
+      await ensureLoaded();
+      data.profile = p.snapshot.profile;
+      data.escrows = p.snapshot.escrows;
+      data.invites = p.snapshot.invites;
+      data.links = p.snapshot.links;
+      await persist();
+      return p.result;
+    },
   };
 
   return store;

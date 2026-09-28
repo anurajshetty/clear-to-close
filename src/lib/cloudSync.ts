@@ -41,7 +41,7 @@ import { isSupabaseConfigured } from './supabase';
 import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
 import { applyDerivedStatus } from './lifecycle';
-import { deleteProfileMedia, uploadProfileMedia, type MediaKind } from './mediaUpload';
+import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMedia, type MediaKind } from './mediaUpload';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -83,8 +83,10 @@ interface OutboxOp {
   /**
    * Set once automatic attempts hit MAX_PUSH_ATTEMPTS (Sept 2026
    * sync-failure surface): the op stays queued so a MANUAL Retry still
-   * has something to retry, but automatic drains stop hammering it. A
-   * fresh user edit re-arms it via enqueueOutbox.
+   * has something to retry, but automatic drains stop hammering it. Under
+   * the synchronous-write model nothing re-arms an op — a retry either
+   * lands it (it drains) or leaves it manual-only until the user
+   * dismisses it.
    */
   manualOnly?: boolean;
 }
@@ -899,6 +901,20 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
 }
 
 /**
+ * Delete step rows a checklist edit removed (bulk apply, Sept 28, 2026).
+ * Runs inside the same confirmed write as the step upserts, after them.
+ * Idempotent: a row already gone server-side is converged, not an error
+ * (a step added and removed within one draft never reached the server —
+ * such ids never appear here, but absence is never treated as failure).
+ * Transport/RLS errors still throw and fail the write loudly.
+ */
+export async function deleteStepRowsNow(client: Cloud, stepIds: string[]): Promise<void> {
+  if (stepIds.length === 0) return;
+  const { error } = await client.from('steps').delete().in('id', stepIds).select('id');
+  if (error) throw error;
+}
+
+/**
  * True when a PostgREST error means a not-yet-applied migration's columns
  * don't exist yet on this database (per-side close dates, last-action,
  * realty group / banner / reviews columns).
@@ -1005,10 +1021,11 @@ export async function writePendingMediaRemovals(kv: KV, kinds: MediaKind[]): Pro
   await writeJson(kv, K_MEDIA_REMOVED, cur);
 }
 
-async function clearPendingMediaRemovals(kv: KV, kinds: MediaKind[]): Promise<void> {
+export async function clearPendingMediaRemovals(kv: KV, kinds?: MediaKind[]): Promise<void> {
   const cur = (await readJson<MediaRemovedFlags>(kv, K_MEDIA_REMOVED)) ?? {};
   let changed = false;
-  for (const k of kinds) {
+  const list: MediaKind[] = kinds ?? (Object.keys(cur) as MediaKind[]);
+  for (const k of list) {
     if (cur[k]) {
       delete cur[k];
       changed = true;
@@ -1018,63 +1035,90 @@ async function clearPendingMediaRemovals(kv: KV, kinds: MediaKind[]): Promise<vo
 }
 
 /**
- * Converge media removals to the cloud (Sept 28, 2026, Anuraj:
- * profile/banner image removal): delete each removed kind's Storage file,
- * clear its upload fingerprint (the file is gone, so a later re-pick of
- * the same image must re-upload instead of matching the cache), null the
- * profile's remote URLs, and persist via saveProfile.
+ * Profile photo/banner convergence (Sept 28, 2026; synchronous
+ * server-first writes, Anuraj): these helpers run INSIDE a confirmed
+ * write, before the local snapshot commits. They mutate ONLY the preview
+ * draft passed in (never persist locally) and throw on any failure, so a
+ * failed save leaves local state — including the device-local managed
+ * files and the displayed photo/banner — unchanged.
  *
- * Loud, not best-effort: a Storage failure throws, so the caller's bgPush
- * records a sync error and keeps the op queued — a removal is never
- * reported silently unconfirmed (confirmed-or-loud). The delete itself is
- * idempotent (missing file = already deleted), which keeps retries safe.
+ * Ordering is the safety property (Sept 28, 2026 redesign):
+ * - removeProfileMediaNow (phase 1, local-only): captures the old remote
+ *   URLs and nulls the draft's URLs. No server side effects.
+ * - ensureProfileMedia: uploads changed managed media to UNIQUE per-upload
+ *   paths (fingerprint-guarded, so a name-only edit never re-uploads).
+ *   Never overwrites a live file: a later row failure orphans an
+ *   unreferenced object instead of changing what clients see. An upload
+ *   failure THROWS — the save is never reported as saved with a stale URL.
+ * - The profile row upserts NEXT, carrying the nulled URLs and the new
+ *   unique-path URLs.
+ * - deleteRemovedMediaFiles (phase 2): only AFTER the row confirmed, the
+ *   removed files are deleted from Storage (by the path parsed from their
+ *   old URLs, falling back to the legacy fixed path). A delete failure
+ *   throws — the server row is already nulled so clients are correct, and
+ *   the next pull heals the local snapshot.
  *
- * `deleteLocal` removes the device-local managed file. It is injectable
- * because photoFile.ts statically imports react-native and cannot load in
- * plain node; the app passes the real deleters, tests inject fakes. Local
- * cleanup stays best-effort: a failed local delete must never block the
- * server-side removal.
+ * Device-local managed-file deletion is NOT done here: the synced store
+ * deletes the files only after the server confirmed, so a failed save
+ * never strands a retry without its upload source.
  */
 export async function removeProfileMediaNow(
   client: Cloud,
   userId: string,
   kv: KV,
   kinds: MediaKind[],
-  saveProfile: (next: RealtorProfile) => Promise<void>,
   p: RealtorProfile,
-  deleteLocal?: (kind: MediaKind) => Promise<void>,
-): Promise<RealtorProfile> {
+): Promise<{ profile: RealtorProfile; oldUrls: { photo: string | null; banner: string | null } }> {
+  void client;
+  void userId;
+  void kv;
+  // Phase 1 is local-only on purpose: the row must null the URLs BEFORE
+  // any Storage file is deleted, so a row failure can never delete a file
+  // the confirmed row still references. Mutate the preview draft in place
+  // so the commit persists the nulled URLs alongside everything else.
+  // Never persist locally from here.
+  const oldUrls = { photo: p.photoRemoteUrl, banner: p.bannerRemoteUrl };
+  if (kinds.includes('photo')) p.photoRemoteUrl = null;
+  if (kinds.includes('banner')) p.bannerRemoteUrl = null;
+  return { profile: p, oldUrls };
+}
+
+/**
+ * Phase 2 of a media removal: delete the removed kinds' Storage files,
+ * called ONLY after the profile row confirmed with the URLs nulled.
+ * Deletes by the path parsed from each kind's old URL (unique per-upload
+ * paths), falling back to the legacy fixed path for pre-change files.
+ * Also clears the upload fingerprints for the removed kinds. Loud: a
+ * failure throws — the server row is already nulled (clients are correct)
+ * and the next pull heals the local snapshot, while the failure surfaces
+ * instead of reporting a silent success.
+ */
+export async function deleteRemovedMediaFiles(
+  client: Cloud,
+  userId: string,
+  kv: KV,
+  kinds: MediaKind[],
+  oldUrls: { photo: string | null; banner: string | null },
+): Promise<void> {
   for (const kind of kinds) {
-    if (deleteLocal) {
-      try {
-        await deleteLocal(kind);
-      } catch {
-        // Local cleanup is best-effort; the server removal below is not.
-      }
-    }
-    await deleteProfileMedia(client, userId, kind);
+    const path = storagePathFromUrl(oldUrls[kind]) ?? storagePathFor(userId, kind);
+    await deleteMediaAtPath(client, path);
   }
   const uploaded = (await readJson<{ photo?: string; banner?: string }>(kv, K_MEDIA_UPLOADED)) ?? {};
   for (const k of kinds) delete uploaded[k];
   await writeJson(kv, K_MEDIA_UPLOADED, uploaded);
-  const out: RealtorProfile = {
-    ...p,
-    photoRemoteUrl: kinds.includes('photo') ? null : p.photoRemoteUrl,
-    bannerRemoteUrl: kinds.includes('banner') ? null : p.bannerRemoteUrl,
-  };
-  await saveProfile(out);
-  return out;
 }
 
 // ------------------------------------------------- profile media convergence --
 
 /**
  * Fingerprints of the managed photo/banner at the last successful upload
- * (KV `ctc:media-uploaded`). The managed files are single-overwrite paths,
- * so the URI alone never changes — the fingerprint captures the content:
- * web managed files are data: URIs (the URI embeds the bytes), native
- * managed files are fingerprinted by size+mtime via expo-file-system
- * (dynamically imported so plain node never loads it).
+ * (KV `ctc:media-uploaded`). Uploads go to unique per-upload paths, so a
+ * changed file always needs a fresh upload — the fingerprint captures the
+ * content to skip re-uploading unchanged files: web managed files are
+ * data: URIs (the URI embeds the bytes), native managed files are
+ * fingerprinted by size+mtime via expo-file-system (dynamically imported
+ * so plain node never loads it).
  */
 const K_MEDIA_UPLOADED = 'ctc:media-uploaded';
 
@@ -1122,33 +1166,31 @@ async function mediaFingerprint(uri: string | null): Promise<string | null> {
 }
 
 /**
- * Ensure the profile's managed photo/banner are uploaded to Storage,
- * uploading ONLY media whose content changed since the last successful
- * upload (fingerprint guard — a name-only edit must not re-upload or churn
- * the ?v= cache-buster). Fresh ?v=-versioned public URLs are stamped onto
- * the returned profile, which is persisted via saveProfile; the server row
- * push itself is the caller's job (see pushProfileWithMedia).
+ * Converge one profile's media to the cloud (Sept 2026 stale-client-photo
+ * fix, now synchronous): uploads each managed kind whose content changed
+ * since the last successful upload (fingerprint-guarded, so a name-only
+ * edit never re-uploads or mints a new URL) and sets the draft's remote
+ * URLs in place. Uploads go to unique per-upload paths — never over a
+ * live file — so a later row failure orphans an unreferenced object
+ * instead of changing what clients see. Throws on upload failure — the
+ * caller is a confirmed write, so the failure leaves local state
+ * unchanged instead of stranding the old photo_url on the server. Never
+ * persists locally.
  *
- * This is the Sept 2026 stale-client-photo convergence fix. The media
- * upload used to run ONLY inside saveProfile's live bgPush: any save that
- * converged through the outbox (offline / ping failed / the live run threw)
- * or through the boot-time background reconcile pushed the profile row
- * WITHOUT uploading the new image — the server kept the old photo_url
- * forever while the realtor's device showed the new photo from its local
- * managed file, so clients kept seeing the old photo even after refresh.
- * Every profile-push path now funnels through here. A failed upload keeps
- * the previous URL and records nothing, so the next convergence retries.
+ * The upload fingerprints are RETURNED, not persisted here: the caller
+ * persists them only after the profile row confirms. A row failure after
+ * a successful upload must not mark an unconfirmed URL as uploaded — the
+ * retry would then skip the upload and push the stale URL back onto the
+ * row.
  */
 export async function ensureProfileMedia(
   client: Cloud,
   userId: string,
   kv: KV,
   p: RealtorProfile,
-  saveProfile: (next: RealtorProfile) => Promise<void>,
-): Promise<RealtorProfile> {
+): Promise<{ profile: RealtorProfile; fingerprints: { photo?: string; banner?: string } | null }> {
   const uploaded =
     (await readJson<{ photo?: string; banner?: string }>(kv, K_MEDIA_UPLOADED)) ?? {};
-  let out = p;
   let dirty = false;
   const slots = [
     { kind: 'photo' as const, uri: p.photoUri },
@@ -1159,48 +1201,116 @@ export async function ensureProfileMedia(
     if (!fp || fp === uploaded[s.kind]) continue;
     if (!fp.startsWith('remote:')) {
       const url = await uploadProfileMedia(client, userId, s.kind, s.uri);
-      if (!url) continue; // upload failed: keep the old URL, retry next time
-      out =
-        s.kind === 'photo' ? { ...out, photoRemoteUrl: url } : { ...out, bannerRemoteUrl: url };
+      if (!url) throw new Error(`ensureProfileMedia: ${s.kind} upload failed`);
+      if (s.kind === 'photo') p.photoRemoteUrl = url;
+      else p.bannerRemoteUrl = url;
     }
     uploaded[s.kind] = fp;
     dirty = true;
   }
-  if (dirty) {
-    await saveProfile(out);
-    await writeJson(kv, K_MEDIA_UPLOADED, uploaded);
-  }
-  return out;
+  return { profile: p, fingerprints: dirty ? uploaded : null };
 }
 
 /**
- * Converge one profile to the cloud: upload changed managed media first
- * (fresh ?v= URLs), then upsert the profile row. Use this on EVERY path
- * that pushes the profile — the live save, the outbox drain, and the
- * boot-time background reconcile — never pushProfileNow alone.
+ * Converge one profile to the cloud: null removed URLs (local-only),
+ * upload changed managed media to unique paths, upsert the profile row,
+ * then delete the removed Storage files — all inside the caller's
+ * confirmed write. The row upsert runs BEFORE any Storage delete, so a
+ * row failure can never delete a file the confirmed row still references.
+ * Use this on EVERY path that pushes the profile — never pushProfileNow
+ * alone.
  */
 export async function pushProfileWithMedia(
   client: Cloud,
   userId: string,
   kv: KV,
   p: RealtorProfile,
-  saveProfile: (next: RealtorProfile) => Promise<void>,
   removed: MediaKind[] = [],
-  deleteLocal?: (kind: MediaKind) => Promise<void>,
 ): Promise<void> {
-  // Media removals converge here too, not just on the live save: the
-  // pending KV flags survive a failed push, so the outbox drain and the
-  // boot reconcile re-run the Storage delete + URL null instead of
-  // silently keeping the old photo_url/banner_image on the server.
-  const pending = await readPendingMediaRemovals(kv);
-  const kinds = Array.from(new Set<MediaKind>([...removed, ...pending]));
-  let out = p;
-  if (kinds.length > 0) {
-    out = await removeProfileMediaNow(client, userId, kv, kinds, saveProfile, p, deleteLocal);
+  // Removals converge from the explicit removed list computed against the
+  // stored profile before the write (mediaKindsRemoved). Phase 1 only
+  // nulls the draft's URLs — the row below carries the nulls.
+  let oldUrls = { photo: null as string | null, banner: null as string | null };
+  if (removed.length > 0) {
+    ({ oldUrls } = await removeProfileMediaNow(client, userId, kv, removed, p));
   }
-  const withRemote = await ensureProfileMedia(client, userId, kv, out, saveProfile);
-  await pushProfileNow(client, userId, withRemote, kinds);
-  await clearPendingMediaRemovals(kv, kinds);
+  const { fingerprints } = await ensureProfileMedia(client, userId, kv, p);
+  await pushProfileNow(client, userId, p, removed);
+  // Only after the row confirmed: delete the removed files, then mark the
+  // fingerprints uploaded. A row failure leaves the files referenced and
+  // the fingerprints unmarked, so the retry re-uploads and carries the
+  // fresh URL onto the row instead of skipping to a stale one.
+  if (removed.length > 0) {
+    await deleteRemovedMediaFiles(client, userId, kv, removed, oldUrls);
+  }
+  if (fingerprints) await writeJson(kv, K_MEDIA_UPLOADED, fingerprints);
+}
+
+/**
+ * Server-authoritative link convergence for one invite revocation (Sept
+ * 28, 2026): kill every live server-side device link for the invite.
+ * The redeem_invite RPC creates client_links rows server-side, which the
+ * realtor's device never holds locally — so the killed links are
+ * discovered with a live server query and stamped revoked_at inline,
+ * inside the caller's confirmed write. A failure throws, leaving local
+ * state unchanged.
+ */
+export async function convergeInviteLinkRevokesNow(
+  client: Cloud,
+  inviteId: string,
+  revokedAt: string,
+): Promise<void> {
+  const ids = await fetchLiveServerLinkIds(client, inviteId);
+  for (const id of ids) {
+    const { data, error } = await client
+      .from('client_links')
+      .update({ revoked_at: revokedAt })
+      .eq('id', id)
+      .select('id');
+    if (error) throw error;
+    // A silent no-op (RLS owner policy rejected the write) must surface as
+    // a failure, never as a silent success: a link read as "killed" that
+    // still works would let a revoked client back in.
+    const affected = Array.isArray(data) ? data.length : 0;
+    if (affected < 1) throw new SyncNotAppliedError('client_links', 1, affected);
+  }
+}
+
+/** Timeout error for confirmed writes: the server never confirmed. */
+export class WriteTimeoutError extends Error {
+  readonly label: string;
+  readonly timeoutMs: number;
+  constructor(label: string, timeoutMs: number) {
+    super(`Timed out waiting for the server (${label})`);
+    this.name = 'WriteTimeoutError';
+    this.label = label;
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Await a server write with a hard timeout. On expiry the promise rejects
+ * with WriteTimeoutError — the caller's confirmed write then fails without
+ * touching local state. A late rejection after the timeout never becomes
+ * an unhandled rejection.
+ */
+export async function withWriteTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeoutP = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new WriteTimeoutError(label, ms)), ms);
+    });
+    // Attach a no-op catch so a late rejection after the timeout never
+    // becomes an unhandled rejection.
+    promise.catch(() => {});
+    return await Promise.race([promise, timeoutP]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -1387,24 +1497,24 @@ export async function fetchCloudView(client: Cloud, linkId: string): Promise<Clo
   }
 }
 
-// ------------------------------------------------------------------ outbox --
+// ------------------------------------------------- retired outbox --
+// RETIRED user-action outbox (Anuraj, Sept 28, 2026): user actions never
+// enqueue push ops anymore — every write is a synchronous server-first
+// confirmed write (see confirmedWrite in syncedStore.ts). The machinery
+// below exists ONLY to drain legacy ops that the retired background-push
+// model left queued on upgraded installs: one final drain runs on boot
+// (guarded by the ctc:outbox-retired marker in syncedStore), and the user
+// can manually Retry surfaced failures. Nothing below may be called by a
+// user-action path. enqueueOutbox/dequeueOutboxOp were deleted with the
+// retirement — there is no way to add or remove single ops anymore.
 
 /**
- * Outbox serialization (Sept 28, 2026): every outbox read-modify-write
- * runs on a per-KV promise chain, so a fire-and-forget drain and a bgPush
- * completion can never interleave a stale read between another writer's
- * read and write. Without this, a stale dequeueOutboxOp — from an earlier
- * bgPush whose push finished late — could read the outbox, then write
- * back its filtered snapshot AFTER a newer enqueue landed, silently
- * dropping the newer op with no error and an empty outbox. That is
- * exactly the Sept 28 zombie-link failure: a close's buyer converge op
- * vanished between its enqueue and the drain's read, the server link
- * stayed live, and nothing remained queued to retry it.
- *
- * The chain survives rejections: a failed op must not stall every later
- * outbox writer forever. The drain holds the chain for its whole
- * read-process-write cycle; enqueues behind a running drain simply wait
- * their turn on the fresh state instead of racing it.
+ * Outbox serialization (Sept 28, 2026): every remaining outbox
+ * read-modify-write runs on a per-KV promise chain, so the final drain's
+ * read-process-write cycle can never interleave a stale read between
+ * another reader's read and write. The chain survives rejections: a failed
+ * op must not stall every later outbox reader forever. The drain holds the
+ * chain for its whole read-process-write cycle.
  */
 const outboxChains = new WeakMap<KV, Promise<void>>();
 
@@ -1430,9 +1540,12 @@ async function readOutbox(kv: KV): Promise<OutboxOp[]> {
   }
 }
 
-/** Queued push ops (exported so the escrow pull-merge can skip dirty rows). */
+/** Legacy queued push ops (exported so pulls can skip rows a pending legacy op owns). */
 export async function readOutboxOps(kv: KV): Promise<OutboxOp[]> {
-  return readOutbox(kv);
+  // Serialized with the drain and the logout-wipe: a pull reading the
+  // skip-set mid-drain must see a consistent snapshot, never a half-drained
+  // list.
+  return withOutboxChain(kv, () => readOutbox(kv));
 }
 
 /**
@@ -1454,21 +1567,12 @@ async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
   try {
     await kv.setItem(K_OUTBOX, JSON.stringify(ops));
   } catch {
-    // Outbox persistence is best-effort; the local write already succeeded.
+    // Best-effort: the drain records the failure on the sync-failure
+    // surface either way.
   }
 }
 
-export async function enqueueOutbox(kv: KV, op: OutboxOp): Promise<void> {
-  return withOutboxChain(kv, async () => {
-    const ops = await readOutbox(kv);
-    // Coalesce: one pending op per (op, escrowId, inviteId, linkId).
-    const next = ops.filter((o) => outboxOpKey(o) !== outboxOpKey(op));
-    next.push({ ...op, attempts: 0 });
-    await writeOutbox(kv, next);
-  });
-}
-
-/** Coalescing key for one queued push op. */
+/** Coalescing key for one queued push op (legacy ops only, see above). */
 export function outboxOpKey(o: {
   op: string;
   escrowId?: string;
@@ -1476,25 +1580,6 @@ export function outboxOpKey(o: {
   linkId?: string;
 }): string {
   return `${o.op}:${o.escrowId ?? ''}:${o.inviteId ?? ''}:${o.linkId ?? ''}`;
-}
-
-/**
- * Drop one queued push op (server-is-truth, Anuraj Sept 2026): the live
- * save path enqueues its op BEFORE attempting the push, so a crash
- * mid-push leaves the op queued for the boot drain (a pure-pull boot must
- * never wipe an unconfirmed local edit). On success the op is dequeued —
- * the row is clean again.
- */
-export async function dequeueOutboxOp(
-  kv: KV,
-  op: { op: string; escrowId?: string; inviteId?: string; linkId?: string },
-): Promise<void> {
-  return withOutboxChain(kv, async () => {
-    const ops = await readOutbox(kv);
-    const key = outboxOpKey(op);
-    const next = ops.filter((o) => outboxOpKey(o) !== key);
-    if (next.length !== ops.length) await writeOutbox(kv, next);
-  });
 }
 
 const K_CONFLICT_LOG = 'ctc:conflict-log';
@@ -1579,10 +1664,10 @@ export async function drainOutbox(
     manual?: boolean;
   },
 ): Promise<{ drained: number; pending: number }> {
-  // Serialized with every other outbox writer (see withOutboxChain): the
-  // drain's read-process-write cycle is atomic relative to concurrent
-  // enqueues and bgPush dequeues, so no op can vanish between the read
-  // and the final write.
+  // Serialized with every other outbox reader/writer (see withOutboxChain):
+  // the drain's read-process-write cycle is atomic relative to concurrent
+  // clearOutbox and readOutboxOps calls, so no op can vanish between the
+  // read and the final write.
   return withOutboxChain(kv, () => drainOutboxLocked(client, userId, kv, load));
 }
 
@@ -1621,8 +1706,7 @@ async function drainOutboxLocked(
           // profile push must also upload a changed photo/banner. The old
           // code pushed the row alone, so the server kept the old photo_url
           // forever while the realtor's device showed the new local image.
-          if (load.saveProfile) await pushProfileWithMedia(client, userId, kv, p, load.saveProfile);
-          else await pushProfileNow(client, userId, p);
+          await pushProfileWithMedia(client, userId, kv, p, []);
         }
       } else if (op.op === 'pushInvite' && op.inviteId && load.getInvite) {
         const inv = await load.getInvite(op.inviteId);

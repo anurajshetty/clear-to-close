@@ -2,19 +2,25 @@
 // Faithful to APPROVED mockup 01 · devices 2/3 (single-side) and 12 (both-side):
 // one single checklist in the realtor's order — no Completed/Remaining
 // grouping, no continuous full-height spine (only short connectors between
-// consecutive circles). Editable: tap check/uncheck in place, drag grips on
-// all rows, "+ Add a custom step", Custom tag on custom steps, UP NEXT on the
-// first remaining step, ring recounts against the current total.
-// Both-side escrows (dual agency): shared time-tracker card on top, then a
-// Buyer | Seller tab switcher — each tab fully independent (own checklist,
-// ring, add-step; rows carry a Buyer/Seller tag). No shared-step syncing.
+// consecutive circles). View mode: tap check/uncheck in place, Custom tag on
+// custom steps, UP NEXT on the first remaining step, ring recounts against
+// the current total. Edit mode (pencil, Sept 2026): the header swaps to a
+// muted discard X (left) and a teal tick (right); rows are inert, every row
+// shows a red remove button and an end-of-row drag grip; "+ Add a custom
+// step" is a sticky pinned footer; the tick saves the whole draft with one
+// server-confirmed write. Both-side escrows (dual agency): shared
+// time-tracker card on top, then a Buyer | Seller tab switcher — each tab
+// fully independent (own checklist, ring, edit draft; rows carry a
+// Buyer/Seller tag). No shared-step syncing.
 import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
-import type { ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
+import type { ChecklistDraftStep, ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
+import { uid } from '../../src/lib/store';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { EditableChecklist } from '../../src/components/Checklist';
@@ -24,6 +30,14 @@ import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight } from
 import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
+
+// Material "edit" (pencil) and "close" (X) paths, 24x24 viewBox — the same
+// glyphs as the deal cards, so the icons render identically on iOS and web
+// with no native module.
+const PENCIL_PATH =
+  'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z';
+const X_PATH =
+  'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
 function sortedSteps(raw: StepT[]): StepT[] {
   return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -37,16 +51,9 @@ export default function TransactionDetail() {
   const insets = useSafeAreaInsets();
   // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
   // above the keyboard). The shared pattern: lift the screen by the keyboard
-  // height, and scroll the focused custom-step field into view.
+  // height. The edit-mode add form lives in the sticky pinned footer, so it
+  // is always visible — no scroll-into-view needed.
   const kbHeight = useKeyboardHeight();
-  const listRefs = useRef<Record<string, any>>({});
-  const scrollAddFormIntoView = (key: string) => {
-    // Let the keyboard finish animating in before scrolling, so the footer
-    // lands above it instead of behind it.
-    setTimeout(() => {
-      listRefs.current[key]?.scrollToEnd?.({ animated: true });
-    }, 300);
-  };
   const params = useLocalSearchParams<{ id: string }>();
   const rawId = params.id;
   const escrowId = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -56,8 +63,35 @@ export default function TransactionDetail() {
   const [adding, setAdding] = useState<ClientRole | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [saving, setSaving] = useState(false);
+  // Synchronous writes (Anuraj, Sept 28, 2026): every checklist/lifecycle
+  // write waits for server confirmation and throws on failure instead of
+  // applying locally. The failure must be visible on screen — this single
+  // error line (the screen's existing error style) carries it. Cleared on
+  // the next write attempt.
+  const [writeError, setWriteError] = useState<string | null>(null);
+  const writeErrorCopy = (err: unknown): string =>
+    err instanceof Error && err.message
+      ? err.message
+      : "Couldn't save. Check your connection and try again.";
   // Both-side tab state (mockup 01 · device 12).
   const [tab, setTab] = useState<ClientRole>('buyer');
+  // Checklist edit mode (Sept 2026): which side is being edited and its
+  // in-progress draft. The draft is the ONLY thing an edit mutates —
+  // nothing is written until the tick saves it with one server-confirmed
+  // write. Dual-agency tabs hold independent drafts (editingRole picks the
+  // side); editing one tab never touches the other.
+  const [editingRole, setEditingRole] = useState<ClientRole | null>(null);
+  const [draft, setDraft] = useState<ChecklistDraftStep[] | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Toast (same pattern as the deal list): sits above the scroll view so it
+  // never scrolls away.
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
+  };
   // Invite-client flow (approved Sept 2026): per-side invites live at the end
   // of the checklist page/tab.
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -96,32 +130,95 @@ export default function TransactionDetail() {
 
   const toggle = async (r: ClientRole, stepId: string) => {
     if (!escrow) return;
+    setWriteError(null);
     try {
       setEscrow(await store.toggleStep(escrow.id, r, stepId));
     } catch (err) {
+      setWriteError(writeErrorCopy(err));
       console.warn('toggleStep failed', err);
     }
   };
 
-  const reorder = async (r: ClientRole, orderedIds: string[]) => {
-    if (!escrow) return;
-    try {
-      setEscrow(await store.reorderSteps(escrow.id, r, orderedIds));
-    } catch (err) {
-      console.warn('reorderSteps failed', err);
-    }
+  // ---- Checklist edit mode: draft operations (nothing is written) ----
+
+  const startEditing = (r: ClientRole) => {
+    if (!escrow || editingRole !== null) return;
+    const steps = r === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps;
+    setDraft(
+      sortedSteps(steps).map((s) => ({
+        id: s.id,
+        title: s.title,
+        subtitle: s.subtitle,
+        done: s.done,
+        custom: s.custom,
+        completedAt: s.completedAt,
+      })),
+    );
+    setSaveError(null);
+    setAdding(null);
+    setNewTitle('');
+    setEditingRole(r);
   };
 
-  const addCustom = async (r: ClientRole) => {
+  const discardEdit = () => {
+    setEditingRole(null);
+    setDraft(null);
+    setAdding(null);
+    setNewTitle('');
+    setSaveError(null);
+  };
+
+  const removeDraftStep = (stepId: string) => {
+    setDraft((d) => (d ? d.filter((s) => s.id !== stepId) : d));
+  };
+
+  const reorderDraft = (orderedIds: string[]) => {
+    setDraft((d) => {
+      if (!d) return d;
+      const byId = new Map(d.map((s) => [s.id, s]));
+      return orderedIds.map((id) => byId.get(id)).filter((s): s is ChecklistDraftStep => !!s);
+    });
+  };
+
+  const addToDraft = (r: ClientRole) => {
     const title = newTitle.trim();
-    if (!escrow || !title || saving) return;
+    if (!title || editingRole !== r) return;
+    // The client-generated id survives a save retry: unknown ids are
+    // treated as new steps and keep the given id, so the server upsert
+    // stays idempotent (no duplicate steps on retry).
+    setDraft((d) => [
+      ...(d ?? []),
+      { id: uid(), title, subtitle: '', done: false, custom: true, completedAt: null },
+    ]);
+    setNewTitle('');
+    setAdding(null);
+  };
+
+  // The tick: save the whole draft with one server-confirmed write. The
+  // local state updates only after the server confirms; a failure keeps
+  // the draft in place for retry and shows a plain-language error.
+  const saveEdit = async () => {
+    if (!escrow || editingRole === null || !draft || saving) return;
     setSaving(true);
+    setSaveError(null);
     try {
-      setEscrow(await store.addCustomStep(escrow.id, r, title));
-      setNewTitle('');
+      // Edit mode saves through the real synchronous confirmed write:
+      // preview -> server (pushEscrowNow + deleteStepRowsNow) -> commit.
+      // Local state changes only after the server confirms; a failure
+      // keeps the draft in place for retry with a plain-language error.
+      const saved = await store.applyChecklistEdits(escrow.id, editingRole, draft);
+      setEscrow(saved);
+      setEditingRole(null);
+      setDraft(null);
       setAdding(null);
+      setNewTitle('');
+      showToast('Checklist updated.');
     } catch (err) {
-      console.warn('addCustomStep failed', err);
+      setSaveError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not save the checklist. Check your connection and try again.',
+      );
     } finally {
       setSaving(false);
     }
@@ -130,6 +227,7 @@ export default function TransactionDetail() {
   const closeEscrowNow = async (r: ClientRole) => {
     if (!escrow || saving) return;
     setSaving(true);
+    setWriteError(null);
     try {
       // Per-side close (dual agency closes independently). Stay on the page
       // so the "Closed" indicator renders in place of the banner. Closing
@@ -138,6 +236,7 @@ export default function TransactionDetail() {
       // screen ("this code no longer works").
       setEscrow((await store.closeEscrow(escrow.id, r)).escrow);
     } catch (err) {
+      setWriteError(writeErrorCopy(err));
       console.warn('closeEscrow failed', err);
     } finally {
       setSaving(false);
@@ -257,8 +356,9 @@ export default function TransactionDetail() {
   };
 
   // "+ Add a custom step" dashed button + inline form (mockup 01 · .addstep).
-  // Rendered per list (single-side) or per tab (both-side).
-  const renderAddStep = (r: ClientRole) =>
+  // Edit mode only: it lives in the sticky pinned footer and appends to the
+  // draft — nothing is written until the tick saves.
+  const renderEditAddStep = (r: ClientRole) =>
     adding === r ? (
       <View style={styles.addForm}>
         <Field
@@ -266,15 +366,10 @@ export default function TransactionDetail() {
           value={newTitle}
           onChangeText={(t) => setNewTitle(t.slice(0, 60))}
           placeholder="Step name"
-          onFocus={() => scrollAddFormIntoView(r)}
         />
         <View style={styles.addBtns}>
           <View style={styles.addPrimary}>
-            <PrimaryButton
-              title={saving ? 'Adding…' : 'Add step'}
-              onPress={() => addCustom(r)}
-              disabled={saving || !newTitle.trim()}
-            />
+            <PrimaryButton title="Add step" onPress={() => addToDraft(r)} disabled={!newTitle.trim()} />
           </View>
           <Pressable
             onPress={() => {
@@ -292,6 +387,7 @@ export default function TransactionDetail() {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Add a custom step to the ${r} checklist`}
+        testID={`checklist-add-${r}`}
         onPress={() => {
           setAdding(r);
           setNewTitle('');
@@ -304,42 +400,154 @@ export default function TransactionDetail() {
       </Pressable>
     );
 
+  // Checklist header (checklist edit mode, Sept 2026). View mode: the
+  // CHECKLIST kicker and a muted 44pt pencil at the top-right. Edit mode:
+  // the header swaps to a muted discard X on the left and the teal tick in
+  // the pencil's exact spot on the right.
+  const renderChecklistHead = (r: ClientRole) => {
+    const isEditing = editingRole === r;
+    return (
+      <View style={styles.checkHead}>
+        {isEditing ? (
+          <>
+            <Pressable
+              onPress={discardEdit}
+              accessibilityRole="button"
+              accessibilityLabel="Discard checklist changes"
+              testID={`checklist-discard-${r}`}
+              hitSlop={8}
+              style={styles.headBtn}
+            >
+              <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
+                <Path d={X_PATH} fill={colors.muted} />
+              </Svg>
+            </Pressable>
+            <View style={styles.checkHeadCenter}>
+              <Kicker>Checklist · Editing</Kicker>
+            </View>
+            <Pressable
+              onPress={saveEdit}
+              disabled={saving}
+              accessibilityRole="button"
+              accessibilityLabel="Save checklist changes"
+              testID={`checklist-save-${r}`}
+              hitSlop={8}
+              style={[styles.headBtn, saving && { opacity: 0.5 }]}
+            >
+              <Text style={styles.checkTick}>✓</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Kicker>{both ? (r === 'buyer' ? 'Buyer checklist' : 'Seller checklist') : 'Checklist'}</Kicker>
+            <Pressable
+              onPress={() => startEditing(r)}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit the ${r} checklist`}
+              testID={`checklist-edit-${r}`}
+              hitSlop={8}
+              style={styles.headBtn}
+            >
+              <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
+                <Path d={PENCIL_PATH} fill={colors.muted} />
+              </Svg>
+            </Pressable>
+          </>
+        )}
+      </View>
+    );
+  };
+
+  // Sticky pinned footer (edit mode only): the add-step button/form stays
+  // visible while the list scrolls, plus the quiet reorder hint and the
+  // save-error line (the draft is kept for retry).
+  const renderStickyAdd = (r: ClientRole) => (
+    <View style={styles.stickyAdd}>
+      {saveError ? (
+        <Text style={styles.error} testID={`checklist-save-error-${r}`}>
+          {saveError}
+        </Text>
+      ) : null}
+      {renderEditAddStep(r)}
+      <Text style={styles.hintLine}>Long-press an item to reorder.</Text>
+    </View>
+  );
+
   const renderTabPanel = (r: ClientRole) => {
     const steps = stepsFor(r);
     const done = steps.filter((s) => s.done).length;
+    const isEditing = editingRole === r;
+    // In edit mode the list renders the draft (the only thing the edit
+    // mutates); the ring keeps showing the last saved counts until the tick.
+    const listSteps: StepT[] =
+      isEditing && draft
+        ? draft.map((d, index) => ({
+            id: d.id,
+            title: d.title,
+            subtitle: d.subtitle,
+            done: d.done,
+            custom: d.custom,
+            order: index,
+            completedAt: d.completedAt,
+          }))
+        : steps;
     return (
-      <>
-        <View style={styles.tabHead}>
-          <View style={styles.tabRing}>
-            <ProgressRing done={done} total={steps.length} size={72} />
-            <Text style={styles.ringCap}>{`${done} of ${steps.length} steps`}</Text>
-          </View>
-          <View>
-            <Kicker>{r === 'buyer' ? 'Buyer checklist' : 'Seller checklist'}</Kicker>
-            <Text style={styles.tabCap}>Checked off independently</Text>
-          </View>
-        </View>
-        {renderLifecycle(r)}
-        <EditableChecklist
-          listRef={(el: any) => {
-            listRefs.current[r] = el;
-          }}
-          steps={steps}
-          sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
-          onToggle={(id) => toggle(r, id)}
-          onReorder={(ids) => reorder(r, ids)}
-          ListFooterComponent={
-            <View>
-              {renderAddStep(r)}
-              <Text style={styles.footnote}>
-                {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
-              </Text>
-              {renderInviteButton(r)}
-              {renderTcButton()}
+      <View style={styles.tabPanelInner}>
+        {isEditing ? (
+          // Align with the list's 18px content padding (the tabHead uses a
+          // wider 24px pad in view mode).
+          <View style={styles.checkHeadPad}>{renderChecklistHead(r)}</View>
+        ) : (
+          <View style={styles.tabHead}>
+            <View style={styles.tabRing}>
+              <ProgressRing done={done} total={steps.length} size={72} />
+              <Text style={styles.ringCap}>{`${done} of ${steps.length} steps`}</Text>
             </View>
-          }
-        />
-      </>
+            <View style={styles.tabHeadText}>
+              <Kicker>{r === 'buyer' ? 'Buyer checklist' : 'Seller checklist'}</Kicker>
+              <Text style={styles.tabCap}>Checked off independently</Text>
+            </View>
+            <Pressable
+              onPress={() => startEditing(r)}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit the ${r} checklist`}
+              testID={`checklist-edit-${r}`}
+              hitSlop={8}
+              style={styles.headBtn}
+            >
+              <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
+                <Path d={PENCIL_PATH} fill={colors.muted} />
+              </Svg>
+            </Pressable>
+          </View>
+        )}
+        {renderLifecycle(r)}
+        <View style={styles.listWrap}>
+          <EditableChecklist
+            steps={listSteps}
+            sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
+            editing={isEditing}
+            onToggle={(id) => toggle(r, id)}
+            onReorder={reorderDraft}
+            onRemoveStep={removeDraftStep}
+            ListFooterComponent={
+              isEditing ? (
+                // Spacer so the last row scrolls above the sticky footer.
+                <View style={styles.stickySpacer} />
+              ) : (
+                <View>
+                  <Text style={styles.footnote}>
+                    {'Tap the circle to check a step off. Tap it again to undo.'}
+                  </Text>
+                  {renderInviteButton(r)}
+                  {renderTcButton()}
+                </View>
+              )
+            }
+          />
+          {isEditing ? renderStickyAdd(r) : null}
+        </View>
+      </View>
     );
   };
 
@@ -374,6 +582,14 @@ export default function TransactionDetail() {
         </View>
       </View>
 
+      {/* Synchronous write failures (Sept 28, 2026): the write threw and
+          local state is unchanged — the message says what to do next. */}
+      {writeError && (
+        <Text style={[styles.error, styles.writeErrorLine]} testID="write-error">
+          {writeError}
+        </Text>
+      )}
+
       {both ? (
         // Dual agency (mockup 01 · device 12): the shared time-tracker card
         // sits above the tabs; each tab is its own independent checklist.
@@ -383,12 +599,6 @@ export default function TransactionDetail() {
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
             />
-            {/* Reorder hint in the removed "Share this escrow" spot (Sept
-                2026): quiet line, realtor view only — client checklists are
-                read-only and live on separate screens. */}
-            <Text style={styles.reorderHint} testID="reorder-hint">
-              Long-press any checklist item to reorder it.
-            </Text>
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -413,38 +623,52 @@ export default function TransactionDetail() {
           <View style={styles.tabPanel}>{renderTabPanel(tab)}</View>
         </View>
       ) : (
-        <EditableChecklist
-          listRef={(el: any) => {
-            listRefs.current[role] = el;
-          }}
-          steps={singleSteps}
-          onToggle={(id) => toggle(role, id)}
-          onReorder={(ids) => reorder(role, ids)}
-          ListHeaderComponent={
-            <View>
-              <TimeTrackerCard
-                openDate={escrow.openDate}
-                closeDate={escrow.closeDate}
-              />
-              {/* Reorder hint in the removed "Share this escrow" spot (Sept
-                  2026): quiet line, realtor view only. */}
-              <Text style={styles.reorderHint} testID="reorder-hint">
-                Long-press any checklist item to reorder it.
-              </Text>
-              {renderLifecycle(role)}
-            </View>
-          }
-          ListFooterComponent={
-            <View>
-              {renderAddStep(role)}
-              <Text style={styles.footnote}>
-                {'Tap the circle to check a step off. Tap it again to undo.\nPress and hold any step to reorder the list.'}
-              </Text>
-              {renderInviteButton(role)}
-              {renderTcButton()}
-            </View>
-          }
-        />
+        <View style={styles.listWrap}>
+          <EditableChecklist
+            steps={
+              editingRole === role && draft
+                ? draft.map((d, index) => ({
+                    id: d.id,
+                    title: d.title,
+                    subtitle: d.subtitle,
+                    done: d.done,
+                    custom: d.custom,
+                    order: index,
+                    completedAt: d.completedAt,
+                  }))
+                : singleSteps
+            }
+            editing={editingRole === role}
+            onToggle={(id) => toggle(role, id)}
+            onReorder={reorderDraft}
+            onRemoveStep={removeDraftStep}
+            ListHeaderComponent={
+              <View>
+                <TimeTrackerCard
+                  openDate={escrow.openDate}
+                  closeDate={escrow.closeDate}
+                />
+                {renderChecklistHead(role)}
+                {renderLifecycle(role)}
+              </View>
+            }
+            ListFooterComponent={
+              editingRole === role ? (
+                // Spacer so the last row scrolls above the sticky footer.
+                <View style={styles.stickySpacer} />
+              ) : (
+                <View>
+                  <Text style={styles.footnote}>
+                    {'Tap the circle to check a step off. Tap it again to undo.'}
+                  </Text>
+                  {renderInviteButton(role)}
+                  {renderTcButton()}
+                </View>
+              )
+            }
+          />
+          {editingRole === role ? renderStickyAdd(role) : null}
+        </View>
       )}
       {sheetSide && (
         <InviteSheet
@@ -467,6 +691,12 @@ export default function TransactionDetail() {
             refreshInvites();
           }}
         />
+      )}
+      {/* Toast sits above the scroll view so it never scrolls away. */}
+      {toastMsg && (
+        <View style={styles.toast} testID="toast">
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </View>
       )}
     </GestureHandlerRootView>
   );
@@ -632,15 +862,78 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 18,
   },
-  // Quiet reorder hint in the removed "Share this escrow" spot: same
-  // type/color tokens as the footnote, tighter spacing to sit between the
-  // time-tracker card and the checklist.
-  reorderHint: {
+  // Checklist header (checklist edit mode, Sept 2026): kicker + muted 44pt
+  // pencil at the top-right in view mode; muted discard X on the left and
+  // the teal tick in the pencil's exact spot on the right in edit mode.
+  checkHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    minHeight: 44,
+  },
+  checkHeadCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  headBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkTick: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.accent,
+  },
+  // Sticky pinned footer (edit mode): the add-step button/form stays
+  // visible while the list scrolls. Solid paper background + hairline top
+  // border so scrolled rows slide under it.
+  listWrap: {
+    flex: 1,
+  },
+  stickyAdd: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: colors.paper,
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 14,
+  },
+  // Spacer at the end of the edit-mode list so the last row scrolls fully
+  // above the sticky footer.
+  stickySpacer: {
+    height: 170,
+  },
+  // Quiet edit-mode hint under the sticky add button.
+  hintLine: {
     fontSize: 12.5,
     lineHeight: 19,
     color: colors.muted,
     textAlign: 'center',
-    marginTop: 14,
+    marginTop: 10,
+  },
+  toast: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 40,
+    backgroundColor: colors.ink,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   inviteBtnWrap: {
     marginTop: 14,
@@ -649,6 +942,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.red,
     marginTop: 6,
+  },
+  // Synchronous write-failure line (Sept 28, 2026): aligns with the
+  // screen's horizontal rhythm under the header.
+  writeErrorLine: {
+    paddingHorizontal: 18,
+    marginBottom: 2,
   },
   // Both-side (dual agency) layout.
   bothWrap: {
@@ -693,6 +992,10 @@ const styles = StyleSheet.create({
   tabPanel: {
     flex: 1,
   },
+  // Each tab's panel is a positioning context for the edit-mode sticky footer.
+  tabPanelInner: {
+    flex: 1,
+  },
   tabHead: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -700,6 +1003,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 14,
     paddingBottom: 2,
+  },
+  tabHeadText: {
+    flex: 1,
+  },
+  // Both-side edit header: match the list's 18px content padding.
+  checkHeadPad: {
+    paddingHorizontal: 18,
   },
   tabRing: {
     alignItems: 'center',

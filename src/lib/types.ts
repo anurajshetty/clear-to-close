@@ -16,6 +16,29 @@ export interface StepT {
 }
 
 /**
+ * A checklist side as drafted by edit mode (Sept 28, 2026): the full new
+ * step list for one role. Steps keep their ids when unchanged; new steps
+ * arrive without an id and the store mints one. Order is the array order.
+ */
+export interface ChecklistDraftStep {
+  id?: string;
+  title: string;
+  subtitle?: string;
+  done: boolean;
+  custom: boolean;
+  completedAt?: string | null;
+}
+
+/**
+ * Result of a bulk checklist apply: the escrow plus the ids of steps the
+ * edit removed, so the server effect can delete exactly those rows.
+ */
+export interface ApplyChecklistResult {
+  escrow: Escrow;
+  removedStepIds: string[];
+}
+
+/**
  * The single most recent realtor action on an escrow's checklist, stamped
  * on every check/uncheck. The client home's "LATEST FROM" card reflects
  * reality — forward AND backward moves (neutral wording, no blame). An

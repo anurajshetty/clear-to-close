@@ -227,7 +227,14 @@ export function EscrowFormSheet({
       onDone(done);
     } catch (err) {
       console.warn('escrow form submit failed', err);
-      setErrors((prev) => ({ ...prev, submit: 'Could not save. Try again.' }));
+      setErrors((prev) => ({
+        ...prev,
+        // Synchronous writes (Sept 28, 2026): the store throws a
+        // plain-language reason when the escrow is not confirmed on the
+        // server — show it, so the realtor knows the save did not land.
+        submit:
+          err instanceof Error && err.message ? err.message : 'Could not save. Try again.',
+      }));
     } finally {
       setSaving(false);
     }

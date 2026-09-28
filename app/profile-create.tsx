@@ -26,6 +26,10 @@ export default function ProfileCreate() {
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
   const [nameError, setNameError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Synchronous writes (Sept 28, 2026): saveProfile throws when the
+  // profile is not confirmed on the server — the failure must be visible
+  // on screen instead of silently landing the realtor on the deal list.
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
@@ -57,6 +61,7 @@ export default function ProfileCreate() {
       return;
     }
     setBusy(true);
+    setSaveError(null);
     try {
       if (!skipped) {
         await store.saveProfile({
@@ -78,6 +83,15 @@ export default function ProfileCreate() {
       }
       await auth.setProfileSkipped(skipped);
       router.replace('/');
+    } catch (err) {
+      // The save threw: local state is unchanged — show the
+      // plain-language reason so the realtor knows the profile did not land.
+      setSaveError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't save your profile. Check your connection and try again.",
+      );
+      console.warn('saveProfile failed', err);
     } finally {
       setBusy(false);
     }
@@ -97,6 +111,7 @@ export default function ProfileCreate() {
 
         <ProfileForm value={draft} onChange={patch} nameError={nameError} />
 
+        {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>
           <PrimaryButton
             title={busy ? 'Continuing…' : 'Continue'}
@@ -122,4 +137,5 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
   cta: { marginTop: 24 },
+  error: { fontSize: 13, color: colors.red, marginTop: 10 },
 });

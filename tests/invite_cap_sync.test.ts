@@ -13,7 +13,6 @@
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
-import { readOutboxOps } from '../src/lib/cloudSync';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
 
@@ -66,6 +65,9 @@ function mockClient(state: MockState): unknown {
         },
       }),
       upsert: (_row: unknown, _opts?: unknown) => {
+        // One affected row per input row (PostgREST RETURNING semantics):
+        // the escrow push upserts 1 + 30 step rows in two calls.
+        const rows = (Array.isArray(_row) ? _row : [_row]) as Record<string, unknown>[];
         let result: { data?: unknown; error?: unknown };
         if (table === 'invites' && state.capErrorOnPush) {
           // The invites_cap trigger's cap rejection (migration 0012).
@@ -75,7 +77,7 @@ function mockClient(state: MockState): unknown {
             },
           };
         } else {
-          result = { data: [{ id: 'x' }], error: null };
+          result = { data: rows.map((r, i) => ({ id: r.id ?? `x-${i}` })), error: null };
         }
         return { select: () => Promise.resolve(result) };
       },
@@ -117,49 +119,51 @@ async function test_staleCacheBlocksThirdBuyer() {
     serverInvite(escrow.id, 'buyer', 'Ada', 1),
     serverInvite(escrow.id, 'buyer', 'Bo', 2),
   ];
-  let err: unknown = null;
+  let msg = '';
   try {
     await store.createInvite(escrow.id, 'buyer', 'Cy');
   } catch (e) {
-    err = e;
+    msg = (e as Error).message;
   }
-  assert(!!err, 'third buyer with two server-side invites should be rejected at creation');
+  assert(/2 active invite codes/.test(msg), `stale cache: third buyer rejected with the cap copy (got: ${msg})`);
+  // The rejected write leaves local state byte-identical: the server rows
+  // were merged into the preview draft only, never into live state. They
+  // arrive through the normal pull hydration (boot / foreground / refresh).
   const active = (await store.listInvites(escrow.id)).filter((i) => i.role === 'buyer' && !i.revokedAt);
-  assert(active.length === 2, `active buyer invites should be 2 (got ${active.length})`);
+  assert(active.length === 0, `rejected create leaves local invites unchanged (got ${active.length})`);
 }
 
 async function test_staleCacheBlocksSecondTC() {
   const state: MockState = { rows: [], capErrorOnPush: false };
   const { store, escrow } = await makeSynced(state);
   state.rows = [serverInvite(escrow.id, 'tc', 'Tess', 1)];
-  let err: unknown = null;
+  let msg = '';
   try {
     await store.createInvite(escrow.id, 'tc', 'Tom');
   } catch (e) {
-    err = e;
+    msg = (e as Error).message;
   }
-  assert(!!err, 'second TC with one server-side TC invite should be rejected at creation');
+  assert(/2 active invite codes/.test(msg), `stale cache: second TC rejected with the cap copy (got: ${msg})`);
   const active = (await store.listInvites(escrow.id)).filter((i) => i.role === 'tc' && !i.revokedAt);
-  assert(active.length === 1, `active TC invites should be 1 (got ${active.length})`);
+  assert(active.length === 0, `rejected create leaves local invites unchanged (got ${active.length})`);
 }
 
-async function test_serverCapRejectionRollsBackOptimisticInvite() {
+async function test_serverCapRejectionThrowsAndLeavesNoLocalRow() {
   // Server is empty (pre-pull merges nothing), but the push is rejected by
-  // the authoritative cap trigger — the optimistic local row must not
-  // survive as a phantom, and the push must not be retried forever.
+  // the authoritative cap trigger — the confirmed write throws the cap
+  // copy and no local row ever exists (there is no optimistic row to roll
+  // back, and nothing is queued for retry).
   const state: MockState = { rows: [], capErrorOnPush: true };
-  const { store, escrow, kv } = await makeSynced(state);
-  const invite = await store.createInvite(escrow.id, 'buyer', 'Cy');
-  await tick();
-  const after = await store.getInvite(invite.id);
-  assert(!!after?.revokedAt, 'optimistic invite rejected by the server cap should be revoked locally');
+  const { store, escrow } = await makeSynced(state);
+  let msg = '';
+  try {
+    await store.createInvite(escrow.id, 'buyer', 'Cy');
+  } catch (e) {
+    msg = (e as Error).message;
+  }
+  assert(/2 active invite codes/.test(msg), `server cap rejection throws the cap copy (got: ${msg})`);
   const active = (await store.listInvites(escrow.id)).filter((i) => i.role === 'buyer' && !i.revokedAt);
-  assert(active.length === 0, `no active buyer invite should survive the rollback (got ${active.length})`);
-  const ops = await readOutboxOps(kv);
-  assert(
-    !ops.some((o) => o.op === 'pushInvite' && o.inviteId === invite.id),
-    'cap-rejected push must not be queued for retry',
-  );
+  assert(active.length === 0, `no local invite row survives the rejected push (got ${active.length})`);
 }
 
 async function test_normalInviteStillCreatesAndPushes() {
@@ -178,7 +182,7 @@ async function test_normalInviteStillCreatesAndPushes() {
 async function main() {
   await test_staleCacheBlocksThirdBuyer();
   await test_staleCacheBlocksSecondTC();
-  await test_serverCapRejectionRollsBackOptimisticInvite();
+  await test_serverCapRejectionThrowsAndLeavesNoLocalRow();
   await test_normalInviteStillCreatesAndPushes();
   summary('invite_cap_sync');
 }

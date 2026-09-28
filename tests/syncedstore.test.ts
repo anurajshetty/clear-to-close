@@ -1,17 +1,22 @@
 // syncedstore.test.ts — execute-time coverage for the synced store wrapper
 // (src/lib/syncedStore.ts). The delegate functions are tested elsewhere;
-// these pin the wrapper's own timeout/gating/mirror logic, which previously
-// had zero coverage:
+// these pin the wrapper's own timeout/gating/mirror logic:
 //  - redeemInvite: the 8s-timeout race -> 'network' (the exact path screens
 //    call), unique-violation -> 'device_has_link', bad codes -> 'invalid'
 //  - validateClientLink: revoked/invalid -> fail-closed invalid; transport
 //    failure -> fail-open valid (never strand a client on a flaky network)
 //  - getClientProfile: linked-first for client devices, local fallback
+//  - Synchronous writes (Sept 28, 2026): with no cloud client / no session,
+//    every user write throws the plain not-saved copy and leaves local
+//    state byte-identical — there are no local-only writes and no outbox.
+//  - invite flow through the wrapper against a fake cloud: the two-per-side
+//    cap, revoke (invite + server link), and atomic regenerate.
 // The Supabase client is injected (no network); the public gate is enabled
 // with fake env vars (this file runs in its own node process).
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
+import { createMockServer, mockCloudFromServer } from './mock_server';
 import type { RealtorProfile } from '../src/lib/types';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
@@ -166,8 +171,12 @@ async function main(): Promise<void> {
   }
   {
     // Realtor's own device: no linked profile -> falls back to local.
+    // (saveProfile is a confirmed write now, so the fixture client needs a
+    // session + a profiles table — the rpc-only mockClient is not enough.)
     const kv = memoryKV();
-    const { store } = createSyncedStore(kv, { cloudClient: () => mockClient(async () => ({})) });
+    const { store } = createSyncedStore(kv, {
+      cloudClient: mockCloudFromServer(createMockServer()),
+    });
     await store.saveProfile(profileFixture());
     const p = await store.getClientProfile('esc-9');
     assert(p !== null && p.name === 'Rita Realtor', 'getClientProfile falls back to the local profile');
@@ -179,10 +188,9 @@ async function main(): Promise<void> {
     assert((await store.getClientProfile(null)) === null, 'getClientProfile null escrow, no local -> null');
   }
 
-  // --------------------------------- invite flow: cap / revoke / regenerate --
-  // (approved invite-client flow, Sept 2026). The cloud client is null so the
-  // wrapper exercises the local path; the outbox assertions pin the queued
-  // convergence ops.
+  // ---------------- synchronous writes: no cloud, no local-only writes -----
+  // (Sept 28, 2026). Missing cloud/session must FAIL, never appear saved
+  // locally. There is no outbox for user actions.
   async function inviteEscrow(store: { createEscrow: (i: never) => Promise<{ id: string }> }) {
     return store.createEscrow({
       address: '123 Main St',
@@ -195,69 +203,133 @@ async function main(): Promise<void> {
     } as never);
   }
   {
-    // Cap enforced through the synced wrapper: the 3rd create throws and
-    // queues no pushInvite op.
+    // No cloud client at all: createEscrow throws the plain copy.
+    const map = new Map<string, string>();
+    const kv = {
+      getItem: async (k: string) => (map.has(k) ? map.get(k)! : null),
+      setItem: async (k: string, v: string) => {
+        map.set(k, v);
+      },
+      removeItem: async (k: string) => {
+        map.delete(k);
+      },
+      dump: () =>
+        JSON.stringify(
+          [...map.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+        ),
+    };
+    const before = kv.dump();
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    let msg = '';
+    try {
+      await inviteEscrow(store);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assert(/Couldn't save/i.test(msg), `null cloud: createEscrow throws the not-saved copy (got: ${msg})`);
+    assert((await store.listEscrows()).length === 0, 'null cloud: no escrow appears locally');
+    assert(kv.dump() === before, 'null cloud: persisted KV is byte-identical');
+    assert(
+      (await kv.getItem('ctc:outbox')) === null,
+      'null cloud: no outbox op is queued by the failed write',
+    );
+  }
+  {
+    // createInvite and saveProfile fail the same way with no cloud.
     const kv = memoryKV();
     const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    let inviteThrew = false;
+    try {
+      await store.createInvite('esc-x', 'buyer', 'Ghost');
+    } catch {
+      inviteThrew = true;
+    }
+    assert(inviteThrew, 'null cloud: createInvite throws (no local-only invite)');
+    let profileThrew = false;
+    try {
+      await store.saveProfile(profileFixture());
+    } catch {
+      profileThrew = true;
+    }
+    assert(profileThrew, 'null cloud: saveProfile throws (no local-only profile)');
+    assert((await store.listInvites('esc-x')).length === 0, 'null cloud: no invite appears locally');
+    assert((await store.getProfile()) === null, 'null cloud: no profile appears locally');
+  }
+
+  // ---------------- invite flow through the wrapper (fake cloud) -------------
+  // The cap, revoke, and regenerate run as synchronous confirmed writes.
+  async function liveStore() {
+    const server = createMockServer();
+    const kv = memoryKV();
+    const { store, initCloudSync } = createSyncedStore(kv, {
+      cloudClient: mockCloudFromServer(server),
+      writeTimeoutMs: 2000,
+      writeTimeoutLongMs: 4000,
+    });
+    const ping = await initCloudSync();
+    assert(ping.ok, 'initCloudSync healthy');
+    return { server, store };
+  }
+  {
+    // Cap enforced through the synced wrapper: the 3rd create throws the
+    // cap copy and leaves local + server invites untouched.
+    const { server, store } = await liveStore();
     const escrow = await inviteEscrow(store);
     await store.createInvite(escrow.id, 'buyer', 'Buyer One');
     await store.createInvite(escrow.id, 'buyer', 'Buyer Two');
-    let threw = false;
+    const before = (await store.listInvites(escrow.id)).map((i) => i.id).sort().join(',');
+    let msg = '';
     try {
       await store.createInvite(escrow.id, 'buyer', 'Buyer Three');
-    } catch {
-      threw = true;
+    } catch (e) {
+      msg = (e as Error).message;
     }
-    assert(threw, 'synced createInvite enforces the two-per-side cap');
-    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string }[];
-    const pushInvites = outbox.filter((o) => o.op === 'pushInvite');
-    assert(pushInvites.length === 2, `cap breach queues no pushInvite op (got ${pushInvites.length})`);
+    assert(/2 active invite codes/.test(msg), `cap breach throws the cap copy (got: ${msg})`);
+    const after = (await store.listInvites(escrow.id)).map((i) => i.id).sort().join(',');
+    assert(after === before, 'cap breach leaves the local invites byte-identical');
+    assert(server.invites.size === 2, 'cap breach pushes nothing to the server');
   }
   {
-    // Revoke through the wrapper: the local client link dies AND a
-    // pushRevoke op is queued for cloud convergence.
-    const kv = memoryKV();
-    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    // Revoke through the wrapper: the invite is revoked server-side, the
+    // server device link is killed, and the local mirror follows.
+    const { server, store } = await liveStore();
     const escrow = await inviteEscrow(store);
     const inv = await store.createInvite(escrow.id, 'buyer', 'Buyer One');
     const r = await store.redeemInvite(inv.code, 'Buyer One', 'dev-1');
     if (!r.ok) throw new Error('fixture redeem failed');
-    await store.revokeInvite(inv.id);
-    const v = await store.validateClientLink(r.linkId);
-    assert(v.valid === false, 'synced revokeInvite kills the local client link');
-    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string; inviteId?: string }[];
+    const linkId = r.linkId;
+    const res = await store.revokeInvite(inv.id);
+    assert(Array.isArray(res.revokedLinks), 'revokeInvite resolves with its revoked-links report');
+    assert(server.invites.get(inv.id)?.revokedAt != null, 'the server invite row is revoked');
+    assert(server.links.get(linkId)?.revokedAt !== null, 'the server device link is killed');
     assert(
-      outbox.some((o) => o.op === 'pushRevoke' && o.inviteId === inv.id),
-      'synced revokeInvite queues a pushRevoke op',
+      (await store.getInvite(inv.id))?.revokedAt !== null,
+      'the local invite mirror is revoked',
     );
+    const v = await store.validateClientLink(linkId);
+    assert(v.valid === false, 'revokeInvite kills the client link');
   }
   {
-    // Regenerate through the wrapper (cloud dormant -> local path): fresh
-    // code for the same party, old code dead, old device link dead, and the
-    // convergence ops (pushRevoke old / pushInvite new / convergeLinkRevokes)
-    // are queued. No revokeClientLink op: local link ids are minted by the
-    // offline redeem fallback and never exist as server rows, so the killed
-    // server links are converged by the retryable converge op's invite_id
-    // query at drain time (Sept 28, 2026).
-    const kv = memoryKV();
-    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    // Regenerate through the wrapper (atomic RPC): the old code is dead
+    // server-side, the new code is live locally and server-side, and the
+    // old device link is killed.
+    const { server, store } = await liveStore();
     const escrow = await inviteEscrow(store);
     const inv = await store.createInvite(escrow.id, 'buyer', 'Buyer One');
     const r = await store.redeemInvite(inv.code, 'Buyer One', 'dev-1');
     if (!r.ok) throw new Error('fixture redeem failed');
+    const oldCode = inv.code;
     const regen = await store.regenerateInvite(inv.id);
-    assert(regen.invite.code !== inv.code, 'synced regenerateInvite issues a fresh code');
+    assert(regen.invite.code !== oldCode, 'synced regenerateInvite issues a fresh code');
     assert(regen.invite.partyName === 'Buyer One', 'synced regenerateInvite keeps the party');
-    const oldRedeem = await store.redeemInvite(inv.code, 'Buyer One');
+    assert(
+      server.invites.get(regen.invite.id)?.code === regen.invite.code,
+      'the server row carries the fresh code',
+    );
+    const oldRedeem = await store.redeemInvite(oldCode, 'Buyer One', 'dev-9');
     assert(!oldRedeem.ok && oldRedeem.error === 'revoked', 'old code dead after synced regenerate');
     const v = await store.validateClientLink(r.linkId);
     assert(v.valid === false, 'old device link dead after synced regenerate');
-    const outbox = JSON.parse((await kv.getItem('ctc:outbox')) ?? '[]') as { op: string }[];
-    const ops = outbox.map((o) => o.op);
-    assert(
-      ops.includes('pushRevoke') && ops.includes('pushInvite') && ops.includes('convergeLinkRevokes'),
-      `regen queues pushRevoke + pushInvite + convergeLinkRevokes (got ${ops.join(',')})`,
-    );
   }
 
   summary('syncedstore');

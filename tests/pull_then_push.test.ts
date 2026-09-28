@@ -11,12 +11,13 @@
 //   1. Stale local + fresh server -> server wins, ALWAYS, with no push.
 //   2. Boot issues ZERO write calls (no upserts, no deletes) while pulling
 //      fresh state.
-//   3. User-action pushes still work (Save -> server write -> op dequeued).
-//   4. Conflict care: a user Save that lands while a pull is in flight still
-//      pushes (user intent wins); the pull must not clobber the in-flight
-//      save's result.
-//   5. A failed save stays queued; a pull must not clobber the unconfirmed
-//      local edit; the retry pushes the USER's values, not stale ones.
+//   3. User-action pushes still work (Save -> server write -> local apply
+//      only on confirmation).
+//   4. Conflict care: a user Save whose push is in flight still pushes
+//      (user intent wins); nothing is applied locally until the server
+//      confirms, so a concurrent pull has nothing to clobber.
+//   5. A failed save throws at once and applies nothing; the retry is the
+//      Save action again, pushing the USER's values, not stale ones.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
@@ -257,8 +258,9 @@ async function main(): Promise<void> {
   }
 
   // 4. Conflict care: the user taps Save while a pull is in flight. The
-  // explicit push still goes through (user intent wins) and the pull must
-  // not clobber the in-flight save's result.
+  // explicit push still goes through (user intent wins). Nothing is
+  // applied locally until the server confirms — no optimistic apply —
+  // so a concurrent pull has nothing to clobber.
   {
     const be = makeBackend();
     be.profileRow = profileServerRow('Server Old');
@@ -271,25 +273,28 @@ async function main(): Promise<void> {
     seedLocalProfile(kv, 'Local Before');
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => mockCloud(be) });
     await initCloudSync();
-    // Fire the save; its push hangs at the upsert.
-    void store.saveProfile({ name: 'User Edit', email: 'u@example.com' } as never);
+    // Fire the save; its push hangs at the upsert. Local state is
+    // untouched until the server confirms.
+    const saveP = store.saveProfile({ name: 'User Edit', email: 'u@example.com' } as never);
     await waitFor(() => upsertBegun, 'push in flight');
     // While the push is in flight, a pull runs (e.g. foreground return).
+    // The in-flight check makes it return early — it must not touch the
+    // row the confirmed write owns.
     await store.refreshProfile();
     const during = await store.getProfile();
     assert(
-      during !== null && during.name === 'User Edit',
-      `in-flight save is not clobbered by a concurrent pull (got ${during?.name})`,
+      during !== null && during.name === 'Local Before',
+      `unconfirmed save applies nothing locally (got ${during?.name})`,
     );
     // Let the push land: the server gets the user's values...
     be.releaseUpsert();
-    await waitFor(async () => (await readOutboxOps(kv)).length === 0, 'op dequeued');
+    await saveP;
     const payload = be.upsertPayloads.find((p) => p.table === 'realtor_profiles');
     assert(
       payload !== undefined && payload.rows[0]['name'] === 'User Edit',
       'in-flight save still pushes (user intent wins)',
     );
-    // ...and the local snapshot keeps the confirmed values.
+    // ...and the local snapshot applies only on confirmation.
     const after = await store.getProfile();
     assert(
       after !== null && after.name === 'User Edit',
@@ -297,8 +302,10 @@ async function main(): Promise<void> {
     );
   }
 
-  // 5. A failed save stays queued; a pull must not clobber the unconfirmed
-  // local edit; the retry pushes the USER's values, not stale ones.
+  // 5. A failed save throws at once and applies nothing: there is no
+  // unconfirmed local edit to protect and nothing queued. The retry is
+  // the Save action called again — it pushes the user's values, not
+  // stale server data.
   {
     const be = makeBackend();
     be.profileRow = profileServerRow('Server Old');
@@ -307,33 +314,45 @@ async function main(): Promise<void> {
     seedLocalProfile(kv, 'Local Before');
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => mockCloud(be) });
     await initCloudSync();
-    await store.saveProfile({ name: 'User Edit', email: 'u@example.com' } as never);
-    await waitFor(async () => (await readOutboxOps(kv)).length > 0, 'failed push queued');
-    // A pull while the edit is unconfirmed must not wipe it.
+    let msg = '';
+    try {
+      await store.saveProfile({ name: 'User Edit', email: 'u@example.com' } as never);
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assert(msg.length > 0, 'failed save throws instead of resolving locally');
+    assert((await readOutboxOps(kv)).length === 0, 'failed save queues no outbox op');
+    // A pull after the failure converges to the server row: the failed
+    // edit applied nothing, so there is no dirty local state to protect —
+    // the snapshot is just a cache again.
     await store.refreshProfile();
     const kept = await store.getProfile();
     assert(
-      kept !== null && kept.name === 'User Edit',
-      `pull does not clobber the unconfirmed local edit (got ${kept?.name})`,
+      kept !== null && kept.name === 'Server Old',
+      `pull converges to the server row after a failed save (got ${kept?.name})`,
     );
-    // Retry (the boot drain path) pushes the user's values.
+    // Retry is the Save again: it pushes the user's values, not stale ones.
     be.failUpsert = false;
     const writesBefore = be.upsertPayloads.length;
-    await store.retrySync();
-    await waitFor(
-      async () => (await readOutboxOps(kv)).length === 0,
-      'retry drains the queued op',
-    );
+    await store.saveProfile({ name: 'User Edit', email: 'u@example.com' } as never);
     const retryPayload = be.upsertPayloads
       .slice(writesBefore)
       .find((p) => p.table === 'realtor_profiles');
     assert(
       retryPayload !== undefined && retryPayload.rows[0]['name'] === 'User Edit',
-      'retry pushes the user-confirmed values, not stale server data',
+      'retry pushes the user-entered values, not stale server data',
+    );
+    assert(
+      (await store.getProfile())?.name === 'User Edit',
+      'retry applies the confirmed values locally',
     );
   }
 
   summary('pull_then_push');
 }
 
-void main();
+main().catch((e) => {
+  // eslint-disable-next-line no-console
+  console.error('FATAL', e);
+  process.exitCode = 1;
+});

@@ -80,8 +80,19 @@ export type EditableChecklistProps = {
   steps: StepT[];
   /** Both-mode row tag (mockup 01 · device 12). Undefined on single-side lists. */
   sideTag?: 'Buyer' | 'Seller';
+  /** View mode: tap the check circle to check/uncheck. Edit mode: rows are
+   * inert, so this is never called. */
   onToggle: (stepId: string) => void;
-  onReorder: (orderedIds: string[]) => void;
+  /** Drag end (edit mode only — view mode has no drag surface). */
+  onReorder?: (orderedIds: string[]) => void;
+  /** Edit mode only: the red remove button on a row. */
+  onRemoveStep?: (stepId: string) => void;
+  /**
+   * Edit mode (checklist edit mode, Sept 2026): rows are inert, every row
+   * shows a red remove button and an end-of-row drag grip, and drag
+   * reorder is armed by long-press. View mode is check/uncheck only.
+   */
+  editing?: boolean;
   ListHeaderComponent?: ReactElement | null;
   ListFooterComponent?: ReactElement | null;
   /** Ref to the underlying list (Sept 28, 2026: the transaction detail
@@ -90,8 +101,11 @@ export type EditableChecklistProps = {
 };
 
 /**
- * Realtor editable checklist: tap check/uncheck in place, drag grips on all
- * rows, UP NEXT on the first remaining step, Custom tag on custom steps.
+ * Realtor checklist, two modes (Sept 2026):
+ *  - View mode: tap check/uncheck in place, UP NEXT on the first remaining
+ *    step, Custom tag on custom steps. No drag grips, no reorder.
+ *  - Edit mode: rows are inert; every row shows a red remove button and an
+ *    end-of-row drag grip, and drag reorder is armed by long-press.
  * The list itself is the bounded scroll container (see the scroll-safety
  * note above) — it must fill the remaining viewport space.
  */
@@ -100,6 +114,8 @@ export function EditableChecklist({
   sideTag,
   onToggle,
   onReorder,
+  onRemoveStep,
+  editing,
   ListHeaderComponent,
   ListFooterComponent,
   listRef,
@@ -229,8 +245,10 @@ export function EditableChecklist({
             upNext={item.id === upNextId}
             active={isActive}
             onToggle={() => onToggle(item.id)}
+            editMode={editing}
+            onRemove={editing ? () => onRemoveStep?.(item.id) : undefined}
             onDragStart={drag}
-            dragHandle={renderGrip(item.title, drag)}
+            dragHandle={editing ? renderGrip(item.title, drag) : undefined}
           />
         </ChecklistRow>
       )}
@@ -244,7 +262,10 @@ export function EditableChecklist({
           const scroller = findScroller(containerElRef.current);
           if (scroller) pendingScrollRef.current = scroller.scrollTop;
         }
-        onReorder(data.map((s) => s.id));
+        // Edit mode only: the drag reorder applies to the caller's draft
+        // (the transaction screen reorders its edit draft; nothing is
+        // written yet). View mode has no drag surface, so this never fires.
+        onReorder?.(data.map((s) => s.id));
       }}
       ListFooterComponent={ListFooterComponent}
     />

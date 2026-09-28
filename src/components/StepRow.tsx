@@ -6,8 +6,12 @@
 // Custom tag on the realtor view only, UP NEXT on the first remaining step on
 // BOTH variants. No recency markers (removed per Anuraj's review, Sept 26).
 //
-// Interactive variant (realtor transaction view): tappable, drag grip on every
-// row, Custom tag on custom steps.
+// Interactive variant (realtor transaction view), two modes (Sept 2026):
+//  - View mode: check/uncheck only — tappable check circle, inert row
+//    body, no drag grip, no long-press reorder.
+//  - Edit mode: the whole row is inert (taps do nothing); every row shows
+//    a red remove button and an end-of-row drag grip, and the row
+//    long-press arms the drag. Custom tag on custom steps.
 // Read-only variant (buyer/seller client views, interactive={false}): identical
 // visuals — same node, connectors, titles, subtitles, UP NEXT tag — but the
 // root is a plain View (NO onPress at all), there is no drag grip, and custom
@@ -34,6 +38,13 @@ type StepRowProps = StepRowBase &
     | {
         interactive?: true;
         onToggle: () => void;
+        /**
+         * Edit mode (checklist edit mode, Sept 2026): the row is inert —
+         * taps do nothing — and every row shows a red remove button plus
+         * a drag grip at the row's end (node + body + remove + grip).
+         */
+        editMode?: boolean;
+        onRemove?: () => void;
         dragHandle?: ReactNode;
         /** Library drag-arm callback (renderItem `drag`) — row long-press. */
         onDragStart: () => void;
@@ -46,6 +57,10 @@ type StepRowProps = StepRowBase &
         dragHandle?: undefined;
       }
   );
+
+// Material "close" (X) path, 24x24 viewBox — same glyph as the deal cards.
+const X_PATH =
+  'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
 export function StepRow(props: StepRowProps) {
   const { title, subtitle, done } = props;
@@ -82,7 +97,7 @@ export function StepRow(props: StepRowProps) {
   );
 
   const body = (
-    <View style={[styles.body, !interactive && styles.bodyNoGrip]}>
+    <View style={[styles.body, styles.bodyNoGrip]}>
       {titleText}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       {props.upNext && !done ? (
@@ -104,36 +119,62 @@ export function StepRow(props: StepRowProps) {
     );
   }
 
-  // Realtor rows, Sept 2026: the check circle is its own pressable — tap
-  // toggles, long-press does nothing and never arms a drag. The rest of the
-  // row (text included) long-presses to arm the drag; a quick tap on the row
-  // text is inert. The grip keeps its long-press-to-drag.
+  // View-mode checkbox press plumbing (hooks stay above every early return).
   const suppressCheckboxToggle = useRef(false);
   const [checkboxPressed, setCheckboxPressed] = useState(false);
 
+  if (interactive && props.editMode) {
+    // Edit mode: the whole row is inert — taps do nothing — and the row
+    // long-press arms the drag. Order: node + body + remove + grip.
+    return (
+      <Pressable
+        testID="step-row-edit"
+        // Not a button: the row is a drag surface, not a tap target. The
+        // remove button and the grip carry their own semantics.
+        onPress={() => {}}
+        onLongPress={() => {
+          props.onDragStart();
+        }}
+        style={({ pressed }) => [
+          styles.row,
+          pressed && { opacity: 0.7 },
+          props.active && styles.rowActive,
+        ]}
+      >
+        {node}
+        {body}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Remove ${title}`}
+          testID={`step-remove-${title}`}
+          hitSlop={10}
+          onPress={() => props.onRemove?.()}
+          style={({ pressed }) => [styles.removeBtn, pressed && { opacity: 0.55 }]}
+        >
+          <Svg width={18} height={18} viewBox="0 0 24 24" aria-hidden={true}>
+            <Path d={X_PATH} fill={colors.red} />
+          </Svg>
+        </Pressable>
+        <View style={styles.gripZone}>{props.dragHandle ?? <Grip />}</View>
+      </Pressable>
+    );
+  }
+
+  // Realtor view mode (Sept 2026): check/uncheck only. The check circle is
+  // its own pressable — tap toggles, long-press does nothing and never arms
+  // a drag. The row body is inert, with no drag grip and no long-press
+  // reorder (reordering lives in edit mode).
   return (
     <Pressable
       testID="step-row"
-      // Not a button: the row body is a drag surface, not a tap target. The
-      // checkbox (toggle) and the grip (reorder) carry their own semantics.
+      // Not a button: the row body is inert. The checkbox carries the
+      // toggle semantics.
       onPress={() => {
         // Quick tap on row text stays inert by design (Sept 2026): only the
-        // check circle toggles, and only a long-press arms the drag. A
-        // release right after a drag-arming long-press lands here too and
-        // must not toggle the step.
+        // check circle toggles.
       }}
-      onLongPress={() => {
-        props.onDragStart();
-      }}
-      // Active drag row: lifted card — solid background so it occludes the
-      // rows it passes over (mid-drag text collision, Sept 2026), slight
-      // scale + shadow + zIndex so it reads as floating above the list.
       // Resting rows are untouched (no card background per the mockup).
-      style={({ pressed }) => [
-        styles.row,
-        (pressed || checkboxPressed) && { opacity: 0.7 },
-        props.active && styles.rowActive,
-      ]}
+      style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }, checkboxPressed && { opacity: 0.7 }]}
     >
       <Pressable
         accessibilityRole="checkbox"
@@ -160,7 +201,6 @@ export function StepRow(props: StepRowProps) {
       >
         {node}
       </Pressable>
-      <View style={styles.gripZone}>{props.dragHandle ?? <Grip />}</View>
       {body}
     </Pressable>
   );
@@ -188,8 +228,8 @@ const styles = StyleSheet.create({
     marginLeft: 14,
   },
   nodeDone: { backgroundColor: colors.accent, borderColor: colors.accent },
-  // Drag grip sits BETWEEN the node and the body (mockup 01 row order:
-  // node + grip + sbody), with 14px gaps on both sides.
+  // Drag grip: in edit mode it sits at the row's END (node + body + remove
+  // + grip). 14px gaps, 44pt touch target.
   gripZone: {
     flexShrink: 0,
     alignItems: 'center',
@@ -199,6 +239,15 @@ const styles = StyleSheet.create({
     marginHorizontal: 10,
     minWidth: 44,
     minHeight: 44,
+  },
+  // Edit-mode remove button: red X, 44pt target, vertically top-aligned
+  // with the title line.
+  removeBtn: {
+    flexShrink: 0,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   body: { flex: 1, paddingTop: 1 },
   // Active drag row (see the Pressable above): a lifted card. The solid
@@ -216,7 +265,9 @@ const styles = StyleSheet.create({
     elevation: 6,
     zIndex: 10,
   },
-  // Read-only rows have no grip: keep the same 14px icon-to-text gap.
+  // Rows have no grip between the node and the body (edit mode puts the
+  // grip at the row's end; view mode has none): keep the same 14px
+  // icon-to-text gap.
   bodyNoGrip: { marginLeft: 14 },
   title: { fontSize: 15.5, fontWeight: '600', color: colors.ink },
   titleDone: { color: colors.body },

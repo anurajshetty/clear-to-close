@@ -28,7 +28,8 @@ import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createAuthService, type AuthClientLike } from '../src/lib/auth';
 import { createSyncedStore } from '../src/lib/syncedStore';
-import { enqueueOutbox } from '../src/lib/cloudSync';
+import { createStore } from '../src/lib/store';
+import { seedOutboxOps } from './outbox_seed';
 import type { KV } from '../src/lib/store';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
@@ -55,7 +56,12 @@ const ACCOUNT_KEYS = [
 const DEVICE_KEYS = ['ctc:role', 'ctc:deviceid', 'ctc:pushasked'];
 
 async function seedAccountA(kv: KV): Promise<string> {
-  const { store } = createSyncedStore(kv, { cloudClient: () => null });
+  // Seed through the LOCAL store: this fixtures account A's on-device
+  // cache directly. The synced store's confirmed writes refuse to run
+  // without a configured cloud + session (Sept 28, 2026: missing
+  // configuration/session must fail rather than appear saved), so the
+  // local store is the right seeder for a logout-wipe fixture.
+  const store = createStore(kv);
   // A's profile (with photo + banner, as in Anuraj's report).
   await store.saveProfile({
     name: 'Account A Realtor',
@@ -89,7 +95,7 @@ async function seedAccountA(kv: KV): Promise<string> {
   // A client link + an invite, an unsynced outbox op (A's identity), a
   // cached cloud view, and the web managed-media files.
   await store.createInvite(escrow.id, 'buyer', 'Client One');
-  await enqueueOutbox(kv, { op: 'pushProfile', attempts: 0 });
+  await seedOutboxOps(kv, [{ op: 'pushProfile', attempts: 0 }]);
   await kv.setItem('ctc:cloudlinks', JSON.stringify([{ linkId: 'link-a', role: 'buyer', escrowId: escrow.id }, { linkId: 'link-orphan', role: 'seller', escrowId: 'esc-orphan' }]));
   await kv.setItem('ctc:cloudview:' + escrow.id, JSON.stringify({ view: { escrowId: escrow.id }, profile: { name: 'Account A Realtor' } }));
   // An orphaned cached cloud view: its escrow is absent from the local
@@ -182,7 +188,7 @@ async function main(): Promise<void> {
       kv: kv2,
       platform: 'native',
     });
-    await enqueueOutbox(kv2, { op: 'pushEscrow', escrowId: 'esc-a', attempts: 0 });
+    await seedOutboxOps(kv2, [{ op: 'pushEscrow', escrowId: 'esc-a', attempts: 0 }]);
     await kv2.setItem('ctc:clientlink', JSON.stringify({ linkId: 'device-link' }));
     await kv2.setItem('ctc:profileskipped', '1');
     await kv2.setItem('ctc:pendingname', 'A Realtor');
@@ -198,7 +204,7 @@ async function main(): Promise<void> {
     assert((await kv2.getItem('ctc:deviceid')) === 'device-1', 'signOut keeps the device id');
     // A server-side signOut failure must not trap the local wipe.
     const kv3 = memoryKV();
-    await enqueueOutbox(kv3, { op: 'pushProfile', attempts: 0 });
+    await seedOutboxOps(kv3, [{ op: 'pushProfile', attempts: 0 }]);
     const svc2 = createAuthService({
       getClient: () =>
         ({

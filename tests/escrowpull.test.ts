@@ -23,7 +23,7 @@
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
-import { enqueueOutbox } from '../src/lib/cloudSync';
+import { seedOutboxOps } from './outbox_seed';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
 
@@ -92,7 +92,11 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
           fx.failEscrows
             ? Promise.resolve({ data: null, error: { message: 'boom' } })
             : Promise.resolve({ data: visibleEscrows, error: null }),
-        upsert: (_rows: unknown, _opts: unknown) => ({ select: (_c: string) => Promise.resolve({ data: [{}], error: null }) }),
+        upsert: (_rows: unknown, _opts: unknown) => {
+          // One affected row per input row (PostgREST RETURNING semantics).
+          const n = Array.isArray(_rows) ? _rows.length : 1;
+          return { select: (_c: string) => Promise.resolve({ data: Array.from({ length: n }, () => ({})), error: null }) };
+        },
       };
     }
     if (name === 'steps') {
@@ -106,7 +110,11 @@ function mockEscrowClient(fx: Fixture, sessionUid: string | null = UID_A) {
                   error: null,
                 }),
         }),
-        upsert: (_rows: unknown, _opts: unknown) => ({ select: (_c: string) => Promise.resolve({ data: [{}], error: null }) }),
+        upsert: (_rows: unknown, _opts: unknown) => {
+          // One affected row per input row (PostgREST RETURNING semantics).
+          const n = Array.isArray(_rows) ? _rows.length : 1;
+          return { select: (_c: string) => Promise.resolve({ data: Array.from({ length: n }, () => ({})), error: null }) };
+        },
       };
     }
     if (name === 'realtor_profiles') {
@@ -201,7 +209,7 @@ async function main(): Promise<void> {
     // Local edit: rename the address, then queue its push (unsynced).
     const edited = { ...(await store.getEscrow('esc-buy'))!, address: '26207 Benito Ct (edited offline)' };
     await store.replaceEscrow(edited);
-    await enqueueOutbox(kv, { op: 'pushEscrow', escrowId: 'esc-buy', attempts: 0 });
+    await seedOutboxOps(kv, [{ op: 'pushEscrow', escrowId: 'esc-buy', attempts: 0 }]);
     const merged = await store.pullEscrowsFromCloud();
     const kept = merged.find((e) => e.id === 'esc-buy')!;
     assert(

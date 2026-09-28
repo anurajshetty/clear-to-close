@@ -93,14 +93,22 @@ central user; the buyers and sellers they represent are the other parties.
   - **Time tracker** — escrow open date, end date (display-only), and where
     today falls between them (day X of Y). Turns red once the end date passes.
   - **Checklist stepper** — default steps per side (13 buyer steps, 12 seller
-    steps, mirroring the approved design), plus realtor-added **custom steps**
-    placeable anywhere via drag reorder. Only the realtor checks steps off,
-    in any order. One single list everywhere — no completed/remaining
-    grouping; checked steps stay in place and the UP NEXT tag marks the first
-    remaining step. Progress ring recalculates against the new total.
+    steps, mirroring the approved design), plus realtor-added **custom steps**.
+    One single list everywhere — no completed/remaining grouping; checked
+    steps stay in place and the UP NEXT tag marks the first remaining step.
+    Progress ring recalculates against the new total.
+  - **Checklist edit mode** — the pencil at the top-right of the checklist
+    opens edit mode: the header swaps to a discard X (left) and a teal tick
+    (right), rows become inert, every row shows a drag grip and a red remove
+    control, and **+ Add a custom step** becomes a sticky pinned footer that
+    stays visible while scrolling. The tick saves the whole draft with one
+    server-confirmed write ("Checklist updated."); the X discards all draft
+    changes. Removing a checked step from a closed side keeps it closed while
+    the remaining steps are all complete; adding an unchecked step reopens
+    the side. Structural edits never notify clients.
   - Dual-agency escrows get independent **Buyer | Seller** tabs — the two
-    checklists are fully separate, each with its own ring, reorder, and
-    custom steps; rows carry Buyer/Seller tags.
+    checklists are fully separate, each with its own ring and edit draft;
+    rows carry Buyer/Seller tags.
 - **Realtor profile** — fields in this order: profile pic, banner image,
   full name, email (optional), phone (optional), **broker** (optional, e.g.
   "Compass Realty", shown on the branded client
@@ -126,12 +134,11 @@ central user; the buyers and sellers they represent are the other parties.
   upload quietly keeps the profile local-only. Each upload stamps a fresh
   `?v=<timestamp>` on the stored Storage URL so client devices drop the
   stale cached image and show the new photo/banner right after the realtor
-  saves. The upload runs on every profile-push path (the live save, the
-  offline outbox retry, and the boot-time reconcile) but only when the
-  image actually changed (a name-only edit never re-uploads or churns the
-  `?v=`), so a photo updated while offline still converges to the new
-  image on the client after the next sync instead of stranding the old
-  photo. An optional **banner image**
+  saves. The upload runs only on the synchronous live save (server first,
+  local second — an offline or failed save throws and uploads nothing) and
+  only when the image actually changed (a name-only edit never re-uploads
+  or churns the `?v=`), so a photo can never strand a half-uploaded state
+  on the server. An optional **banner image**
   follows the identical single-file pattern under its own fixed
   filename/key, synced like the photo. The banner upload shows a recommended
   size computed from the celebration card banner strip's actual dimensions
@@ -358,42 +365,38 @@ the `buyer_closed_at` / `seller_closed_at` columns on `escrows` (migration
 `supabase/migrations/0007_per_side_close_dates.sql` — **apply it on the
 Supabase dashboard SQL editor**; until it is applied, escrow pushes fall back
 to the pre-migration column set instead of failing, and close dates stay
-local-only). Every push verifies its write landed: a push that the database
-silently rejects (zero rows written, no error — e.g. the rows belong to a
-different account than the current session) stays queued for retry instead of
-being dropped as synced, and converges the next time the owning account
-syncs. Failed pushes are never silently discarded, so a realtor edit can no
-longer vanish without the client ever seeing it. The local snapshot is never
-the eternal source of truth: on boot (and when the app returns to the
-foreground) the realtor profile is refetched from the server and replaces the
-stale local snapshot, and the client side refetches its linked escrow view the
-same way. Boot and foreground return are pure PULL: the app never pushes
-saved local data on boot — PUSH happens only as the direct result of an
-explicit user action (tap Save, check a step, generate an invite, close a
-deal). Conflict care: a locally-dirty row with edits still awaiting push is
-never clobbered by the server copy, and a missing server row never wipes the
-local snapshot; offline, the cached snapshot keeps rendering. Two-writer
-conflicts follow explicit documented rules (see docs/CONFLICT_RULES.md):
+local-only). **Every user-initiated write is synchronous and server-first**:
+the app sends the change to the server and waits for confirmation (15s
+timeout; 30s for profile-with-media, cancel, and close), and only then
+applies it to the local cache. A failure throws a plain-language error and
+leaves local state exactly as it was — nothing may look saved when it
+wasn't, and no user action is ever queued for background retry. Boot,
+foreground return, and pull-to-refresh are pure PULL: the app never pushes
+saved local data on boot or foreground return — PUSH happens only as the
+direct result of an explicit user action (tap Save, check a step, generate
+an invite, close a deal). The old background outbox is retired: one final
+drain of legacy queued operations runs on upgrade, then it is gone. The
+local snapshot is never the eternal source of truth: on boot (and when the
+app returns to the foreground) the realtor profile is refetched from the
+server and replaces the stale local snapshot, and the client side refetches
+its linked escrow view the same way. Two-writer conflicts follow explicit
+documented rules (see docs/CONFLICT_RULES.md and ARCHITECTURE.md):
 last committed push wins for profile and escrow units (server commit order
 arbitrates), and invite terminal states (redeemed/revoked) are write-once —
-a stale server read never clears them. Every pull that resolves a genuine
-two-writer divergence logs the resolution to a local audit buffer.
+a stale server read never clears them. The full per-write side-effect
+matrix lives in `tests/synchronous_write_side_effect_matrix.md`.
 
-**Sync failure reporting** — whenever a write fails to reach the server
-(profile edits, escrow edits and dates, checklist check/uncheck, reorders
-and custom steps, invite creation and regeneration, invite revocation,
-client-link revocation), a persistent red bar appears at the top of the
-realtor app — not a toast that disappears. It says what failed (for
-example, "Your profile could not reach the server"), why in plain words
-("Your change is saved on this device. It is not on the server yet." for
-connection problems; a sign-in-account mismatch explanation when the
-server silently rejects the write), and the next step ("Check your
-connection, then tap Retry."). **Retry** re-sends the pending writes
-immediately; the bar clears the moment they land. Pending failures survive
-app restarts until they are resolved. The invite cap (2 active invite
-codes per escrow side) is a final rejection: it shows a **Dismiss** button
-instead of Retry, with the hint to revoke an unused code first. Client
-devices never see this bar.
+**Sync failure reporting** — every write fails loudly, right where it
+happened: a failed save throws a plain-words error shown on the form
+(for example, "Couldn't reach the server. Your change was not saved. Check
+your connection and try again." for connection problems, and the specific
+next step for each client redeem failure). Local state is unchanged, so
+there is nothing to retry in the background. The persistent red bar at the
+top of the realtor app now surfaces only **legacy** failures left over from
+the retired background-push model: it says what failed and the next step
+("Check your connection, then tap Retry."). **Retry** re-runs the legacy
+drain; the bar clears the moment the writes land. Once the legacy queue is
+empty, the bar goes quiet permanently. Client devices never see this bar.
 
 **Sheets on small screens** — every modal sheet wraps its content in a
 height-bounded scroll region (the grabber stays outside it), so lower fields

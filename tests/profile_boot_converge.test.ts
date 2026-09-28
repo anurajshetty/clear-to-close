@@ -15,7 +15,7 @@
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createSyncedStore } from '../src/lib/syncedStore';
-import { enqueueOutbox } from '../src/lib/cloudSync';
+import { seedOutboxOps } from './outbox_seed';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
 
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
   {
     const kv = memoryKV();
     seedLocalProfile(kv, 'Local Edit', 'local@example.com');
-    await enqueueOutbox(kv, { op: 'pushProfile', attempts: 0 });
+    await seedOutboxOps(kv, [{ op: 'pushProfile', attempts: 0 }]);
     const { store } = createSyncedStore(kv, {
       cloudClient: () => mockCloud(makeBackend(serverRow('Server Old', 'old@example.com'))),
     });
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   {
     const kv = memoryKV();
     seedLocalProfile(kv, 'Local Edit', 'local@example.com');
-    await enqueueOutbox(kv, { op: 'pushProfile', attempts: 0 });
+    await seedOutboxOps(kv, [{ op: 'pushProfile', attempts: 0 }]);
     const { store } = createSyncedStore(kv, {
       cloudClient: () => mockCloud(makeBackend(serverRow('Server Old', 'old@example.com'))),
     });

@@ -103,7 +103,11 @@ export function ClientList({
       await refresh();
     } catch (err) {
       console.warn('regenerateInvite failed', err);
-      showToast('Could not create a new code. Try again.');
+      showToast(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not create a new code. Try again.',
+      );
     } finally {
       setBusy(false);
     }
@@ -119,7 +123,9 @@ export function ClientList({
       await refresh();
     } catch (err) {
       console.warn('revokeInvite failed', err);
-      showToast('Could not remove the invite. Try again.');
+      showToast(
+        err instanceof Error && err.message ? err.message : 'Could not remove the invite. Try again.',
+      );
     } finally {
       setBusy(false);
     }
@@ -143,7 +149,9 @@ export function ClientList({
       await refresh();
     } catch (err) {
       console.warn('createInvite failed', err);
-      showToast('Could not create the invite. Try again.');
+      showToast(
+        err instanceof Error && err.message ? err.message : 'Could not create the invite. Try again.',
+      );
     } finally {
       setInviteBusy(false);
     }

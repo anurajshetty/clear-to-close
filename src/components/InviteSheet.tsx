@@ -25,6 +25,10 @@ export function InviteSheet({
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [creating, setCreating] = useState(false);
+  // Synchronous writes (Sept 28, 2026): createInvite throws when the code
+  // is not confirmed on the server — the failure must be visible on
+  // screen, not just a console warning.
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const label =
     side === 'buyer' ? 'Buyer' : side === 'seller' ? 'Seller' : 'Transaction coordinator';
@@ -53,12 +57,18 @@ export function InviteSheet({
     const partyName = name.trim();
     if (!partyName || creating) return;
     setCreating(true);
+    setCreateError(null);
     try {
       const invite = await store.createInvite(escrowId, side, partyName);
       setCode(invite.code);
       setPhase('code');
       onCreated();
     } catch (err) {
+      setCreateError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't create the invite. Check your connection and try again.",
+      );
       console.warn('createInvite failed', err);
     } finally {
       setCreating(false);
@@ -110,6 +120,7 @@ export function InviteSheet({
           <Text style={styles.hint}>
             They’ll enter this exact name with the code. It has to match.
           </Text>
+          {createError ? <Text style={styles.error}>{createError}</Text> : null}
           <View style={styles.btnWrap}>
             <PrimaryButton
               title={creating ? 'Creating…' : 'Create code'}
@@ -144,6 +155,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.ink,
     marginTop: 8,
+  },
+  error: {
+    fontSize: 13,
+    color: colors.red,
+    marginTop: 6,
   },
   hint: {
     fontSize: 13.5,

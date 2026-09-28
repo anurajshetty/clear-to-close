@@ -4,20 +4,26 @@
 //
 // Regression coverage (each fails without the change, passes with it):
 //   1. storagePathFor: <userId>/photo.jpg and <userId>/banner.jpg — the
-//      single-overwrite path convention (contractual with migration 0014).
+//      legacy fixed paths (kept as the delete fallback for pre-change files).
 //   2. uploadProfileMedia success: uploads bytes with contentType image/jpeg
-//      + upsert, then returns the bucket's public URL with a ?v=<timestamp>
-//      cache-bust param (client stale-photo fix, Sept 2026).
-//   7. versionedPublicUrl appends the numeric ?v= param; a second upload
-//      yields a different URL, busting the client's cache. Device-local
-//      fallbacks (displayPhotoUri/displayBannerUri with no remote URL)
-//      never carry the param.
+//      to a UNIQUE per-upload path (<uid>/photo-<id>.jpg, never over the
+//      live file), then returns that path's public URL (unique URLs replace
+//      the old ?v= cache-buster; client stale-photo fix, Sept 2026).
+//   7. versionedPublicUrl appends the numeric ?v= param (legacy helper,
+//      kept for the pre-change rows that still carry versioned URLs); a
+//      second upload yields a different unique path/URL, busting the
+//      client's cache. Device-local fallbacks (displayPhotoUri/
+//      displayBannerUri with no remote URL) never carry the param.
+//   8. storagePathFromUrl parses the bucket object path back out of a
+//      stored public URL (unique-path and legacy fixed-path forms).
 import { assert, summary } from './assert';
 import {
   base64ToBytes,
   publicUrlFor,
   readImageBytes,
+  stagedUploadPath,
   storagePathFor,
+  storagePathFromUrl,
   uploadProfileMedia,
   versionedPublicUrl,
 } from '../src/lib/mediaUpload';
@@ -70,28 +76,41 @@ async function main(): Promise<void> {
   assert(storagePathFor('uid-1', 'photo') === 'uid-1/photo.jpg', 'photo path is <uid>/photo.jpg');
   assert(storagePathFor('uid-1', 'banner') === 'uid-1/banner.jpg', 'banner path is <uid>/banner.jpg');
 
-  // 2. happy path (web data: URI)
+  // 2. happy path (web data: URI): unique per-upload path, never the live file
   const okClient = mockClient();
   const url = await uploadProfileMedia(okClient, 'uid-1', 'photo', DATA_URI);
+  const photoPathRe = /^uid-1\/photo-[0-9a-z]+\.jpg$/;
   assert(
     url !== null &&
-      url.startsWith('https://cdn.test/realtor-media/uid-1/photo.jpg?v=') &&
-      /^\?v=\d+$/.test(url.slice(url.indexOf('?'))),
-    'successful upload returns the bucket public URL with a numeric ?v= cache-bust param',
+      url.startsWith('https://cdn.test/realtor-media/') &&
+      photoPathRe.test(url.slice('https://cdn.test/realtor-media/'.length)),
+    'successful upload returns the unique-path public URL (no ?v= needed)',
   );
   assert(okClient.calls.length === 1, 'exactly one storage upload attempted');
   assert(okClient.calls[0].bucket === 'realtor-media', 'uploads go to the realtor-media bucket');
-  assert(okClient.calls[0].path === 'uid-1/photo.jpg', 'upload uses the single-overwrite path');
+  assert(
+    photoPathRe.test(okClient.calls[0].path) && okClient.calls[0].path !== 'uid-1/photo.jpg',
+    'upload uses a unique per-upload path, never overwriting the live file',
+  );
   assert(okClient.calls[0].options.contentType === 'image/jpeg', 'upload sets image/jpeg content type');
-  assert(okClient.calls[0].options.upsert === true, 'upload upserts (single overwrite file)');
+  assert(okClient.calls[0].options.upsert === false, 'upload does not upsert (unique path)');
   assert((okClient.calls[0].byteLength ?? 0) > 0, 'upload sends the image bytes');
+  // The returned URL is the uploaded path's public URL.
+  assert(
+    url === `https://cdn.test/realtor-media/${okClient.calls[0].path}`,
+    'returned URL is the uploaded path public URL',
+  );
 
   const bannerClient = mockClient();
   const bannerUrl = await uploadProfileMedia(bannerClient, 'uid-1', 'banner', DATA_URI);
   assert(
     bannerUrl !== null &&
-      bannerUrl.startsWith('https://cdn.test/realtor-media/uid-1/banner.jpg?v='),
-    'banner uploads to <uid>/banner.jpg with the ?v= cache-bust param',
+      /^https:\/\/cdn\.test\/realtor-media\/uid-1\/banner-[0-9a-z]+\.jpg$/.test(bannerUrl),
+    'banner uploads to a unique <uid>/banner-<id>.jpg path',
+  );
+  assert(
+    okClient.calls[0].path !== bannerClient.calls[0].path,
+    'two uploads mint different paths (stale-cache fix via uniqueness)',
   );
 
   // native path with an injected reader (expo-file-system is app-only)
@@ -105,9 +124,41 @@ async function main(): Promise<void> {
   );
   assert(
     nativeUrl !== null &&
-      nativeUrl.startsWith('https://cdn.test/realtor-media/uid-1/photo.jpg?v='),
-    'native upload reads via the injected base64 reader and returns the versioned URL',
+      /^https:\/\/cdn\.test\/realtor-media\/uid-1\/photo-[0-9a-z]+\.jpg$/.test(nativeUrl),
+    'native upload reads via the injected base64 reader and returns the unique-path URL',
   );
+
+  // stagedUploadPath shape (unit): unique per call, kind-prefixed.
+  const sp1 = stagedUploadPath('uid-1', 'photo');
+  const sp2 = stagedUploadPath('uid-1', 'photo');
+  assert(
+    photoPathRe.test(sp1) && photoPathRe.test(sp2) && sp1 !== sp2,
+    'stagedUploadPath mints a distinct unique path per call',
+  );
+  assert(
+    /^uid-1\/banner-[0-9a-z]+\.jpg$/.test(stagedUploadPath('uid-1', 'banner')),
+    'stagedUploadPath kind prefix follows the kind',
+  );
+
+  // 8. storagePathFromUrl: parse the object path back out of stored URLs.
+  assert(
+    storagePathFromUrl('https://cdn.test/realtor-media/uid-1/photo-abc123.jpg') ===
+      'uid-1/photo-abc123.jpg',
+    'storagePathFromUrl parses a unique-path URL',
+  );
+  assert(
+    storagePathFromUrl('https://proj.supabase.co/storage/v1/object/public/realtor-media/uid-1/banner-xyz.jpg') ===
+      'uid-1/banner-xyz.jpg',
+    'storagePathFromUrl parses a production-shaped URL',
+  );
+  assert(
+    storagePathFromUrl('https://cdn.test/realtor-media/uid-1/photo.jpg?v=111') ===
+      'uid-1/photo.jpg',
+    'storagePathFromUrl parses a legacy fixed-path URL and strips the ?v= param',
+  );
+  assert(storagePathFromUrl(null) === null, 'storagePathFromUrl null-safe');
+  assert(storagePathFromUrl('https://cdn.test/other-bucket/uid-1/photo.jpg') === null, 'storagePathFromUrl rejects non-bucket URLs');
+  assert(storagePathFromUrl('not a url') === null, 'storagePathFromUrl rejects garbage');
 
   // 3. quiet failure modes — all return null, never throw
   const nullClient = mockClient();
@@ -167,7 +218,9 @@ async function main(): Promise<void> {
   );
   assert(publicUrlFor(mockClient({ publicUrl: null }), 'uid-1', 'photo') === null, 'publicUrlFor null-safe');
 
-  // 7. cache-bust versioning
+  // 7. cache-bust versioning (legacy helper: new uploads mint unique paths
+  //    instead of ?v=, but pre-change rows still carry versioned URLs and
+  //    every surface must render the stored URL verbatim).
   const vClient = mockClient();
   const v1 = versionedPublicUrl(vClient, 'uid-1', 'photo', () => 1000);
   assert(

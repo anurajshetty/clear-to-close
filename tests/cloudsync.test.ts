@@ -9,9 +9,9 @@
 //  - outbox: failed pushes queue and later drain
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
+import { seedOutboxOps } from './outbox_seed';
 import {
   drainOutbox,
-  enqueueOutbox,
   ensureCloudUser,
   fromEscrowRow,
   isMissingColumnError,
@@ -365,12 +365,16 @@ async function main(): Promise<void> {
   assert(u2 === null, 'ensureCloudUser returns null without a session — no anonymous fallback');
   assert(!cNone.calls.includes('auth.signInAnonymously'), 'ensureCloudUser never signs in anonymously');
 
-  // --- outbox ----------------------------------------------------------------
+  // --- retired outbox (legacy drain only) ----------------------------------
   const kv = memoryKV();
-  await enqueueOutbox(kv, { op: 'pushEscrow', escrowId: e.id, attempts: 0 });
-  await enqueueOutbox(kv, { op: 'pushEscrow', escrowId: e.id, attempts: 0 });
+  // Legacy seeds land verbatim now — the coalescing enqueue is gone with
+  // the retirement; the drain handles whatever the old model left behind.
+  await seedOutboxOps(kv, [
+    { op: 'pushEscrow', escrowId: e.id, attempts: 0 },
+    { op: 'pushEscrow', escrowId: e.id, attempts: 0 },
+  ]);
   const raw = await kv.getItem('ctc:outbox');
-  assert(JSON.parse(raw ?? '[]').length === 1, 'outbox coalesces duplicate ops');
+  assert(JSON.parse(raw ?? '[]').length === 2, 'legacy seeds land verbatim (no coalescing)');
 
   const failing = makeClient({
     'from:escrows': [{ error: { code: '500', message: 'boom' } }],
@@ -380,20 +384,20 @@ async function main(): Promise<void> {
     getProfile: async () => null,
   };
   const d1 = await drainOutbox(failing, UID, kv, load);
-  assert(d1.drained === 0 && d1.pending === 1, 'failed push stays queued');
+  assert(d1.drained === 0 && d1.pending === 2, 'failed pushes stay queued');
 
   const succeeding = makeClient({
-    'from:escrows': [{ data: [{ id: e.id }] }],
-    'from:steps': [{ data: [{ id: 's1' }, { id: 's2' }] }],
+    'from:escrows': [{ data: [{ id: e.id }] }, { data: [{ id: e.id }] }],
+    'from:steps': [{ data: [{ id: 's1' }, { id: 's2' }] }, { data: [{ id: 's1' }, { id: 's2' }] }],
   });
   const d2 = await drainOutbox(succeeding, UID, kv, load);
-  assert(d2.drained === 1 && d2.pending === 0, 'retry drains the outbox');
+  assert(d2.drained === 2 && d2.pending === 0, 'retry drains the outbox');
 
   // Silent RLS no-op (Sept 2026): a push that "succeeds" with zero affected
   // rows throws SyncNotAppliedError instead of reading as converged, and the
   // drain keeps the op queued WITHOUT burning attempts — it converges on
   // the next drain under the owning identity.
-  await enqueueOutbox(kv, { op: 'pushEscrow', escrowId: e.id, attempts: 0 });
+  await seedOutboxOps(kv, [{ op: 'pushEscrow', escrowId: e.id, attempts: 0 }]);
   const silentNoop = makeClient({
     'from:escrows': [{ data: [], error: null }, { data: [], error: null }],
   });

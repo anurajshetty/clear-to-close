@@ -8,10 +8,10 @@
 //  2. Store: local createInvite throws on closed/cancelled escrows (any
 //     role). Per-side-closed escrows (status still 'open') are unaffected.
 //  3. Server: migration 0018 adds a BEFORE INSERT trigger on invites that
-//     rejects closed/cancelled escrows; the closed-escrow push rejection
-//     rolls back the optimistic local invite and records a final
-//     non-retryable sync error (never retried forever), exactly like the
-//     cap-rejection path.
+//     rejects closed/cancelled escrows; a closed-escrow push rejection
+//     (the race where the escrow dies between the gate and the push) fails
+//     the confirmed write atomically — nothing local is created, the
+//     realtor sees the plain-words reason, and nothing is queued for retry.
 // Run: see tests/run.sh.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
@@ -19,7 +19,6 @@ import { createStore } from '../src/lib/store';
 import { isClosedEscrowRejection } from '../src/lib/cloudSync';
 import { createSyncedStore } from '../src/lib/syncedStore';
 import { readOutboxOps } from '../src/lib/cloudSync';
-import { readSyncErrors } from '../src/lib/syncErrors';
 
 declare const require: any;
 declare const process: {
@@ -173,10 +172,14 @@ function mockClient(state: MockState): unknown {
       }),
       upsert: (_row: unknown, _opts?: unknown) => {
         state.upserts++;
+        // One affected row per input row (PostgREST RETURNING semantics):
+        // the escrow push upserts the escrow + all step rows in bulk calls,
+        // and the zero-row underflow guard counts affected rows.
+        const rows = (Array.isArray(_row) ? _row : [_row]) as Record<string, unknown>[];
         const result =
           table === 'invites' && state.pushError
             ? { error: { message: state.pushError } }
-            : { data: [{ id: 'x' }], error: null };
+            : { data: rows.map((r, i) => ({ id: r.id ?? `x-${i}` })), error: null };
         return { select: () => Promise.resolve(result) };
       },
     }),
@@ -198,39 +201,39 @@ async function makeSynced(state: MockState) {
   return { store, escrow, kv };
 }
 
-async function test_serverClosedRejectionRollsBack() {
-  // Race: invite created while the escrow was open; the escrow is
-  // closed/cancelled before the push lands. The server trigger rejects the
-  // push: the optimistic local row must be rolled back (not left as a
-  // phantom), a final non-retryable sync error must be recorded, and the
-  // push must not be retried forever.
+async function test_serverClosedRejectionFailsAtomically() {
+  // Race: the invite passed the app-level gate while the escrow was open,
+  // but the escrow was closed/cancelled before the push landed and the
+  // 0018 server trigger rejected the insert. Synchronous-write semantics
+  // (Anuraj, Sept 28, 2026): nothing local was ever created, so there is
+  // nothing to roll back — the confirmed write throws the plain-words
+  // reason, the local invite list stays empty, and the rejection is final
+  // (no outbox op may be queued for retry).
   const state: MockState = {
     rows: [],
     pushError: 'cannot create invites for a closed escrow',
     upserts: 0,
   };
   const { store, escrow, kv } = await makeSynced(state);
-  const invite = await store.createInvite(escrow.id, 'buyer', 'Ada');
-  await tick();
-  const after = await store.getInvite(invite.id);
-  assert(!!after?.revokedAt, 'closed-rejected push: optimistic invite must be revoked locally');
+  let err: unknown = null;
+  try {
+    await store.createInvite(escrow.id, 'buyer', 'Ada');
+  } catch (e) {
+    err = e;
+  }
+  assert(!!err, 'a closed-rejected push must throw');
+  assert(
+    /closed or cancelled/.test(String((err as Error).message)),
+    `thrown message must name closed/cancelled (got: ${String((err as Error).message)})`,
+  );
   const active = (await store.listInvites(escrow.id)).filter(
     (i) => i.role === 'buyer' && !i.revokedAt,
   );
-  assert(active.length === 0, 'no active buyer invite may survive the rollback');
+  assert(active.length === 0, 'no local invite row may exist after the failed write');
   const ops = await readOutboxOps(kv);
   assert(
-    !ops.some((o) => o.op === 'pushInvite' && o.inviteId === invite.id),
-    'closed-rejected push must not be queued for retry',
-  );
-  const errors = await readSyncErrors(kv);
-  const rec = errors.find((e) => e.inviteId === invite.id);
-  assert(!!rec, 'a sync error record must exist for the rejected invite');
-  assert(rec!.op === 'inviteClosed', `record op should be inviteClosed (got ${rec!.op})`);
-  assert(rec!.retryable === false, 'the closed-escrow record must be final, not retryable');
-  assert(
-    /closed or cancelled/.test(rec!.why),
-    `plain-words why must mention closed/cancelled (got: ${rec!.why})`,
+    !ops.some((o) => o.op === 'pushInvite'),
+    'a closed-rejected push must not be queued for retry',
   );
 }
 
@@ -335,7 +338,7 @@ async function main(): Promise<void> {
   await test_openEscrowUnaffected();
   await test_perSideCloseUnaffected();
   test_isClosedEscrowRejection();
-  await test_serverClosedRejectionRollsBack();
+  await test_serverClosedRejectionFailsAtomically();
   await test_syncedGateBlocksClosedEscrow();
   test_detailButtonsGated();
   test_clientListInlineFormGated();

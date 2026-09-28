@@ -28,7 +28,6 @@ import {
   subscribeSyncErrors,
   syncErrorCopy,
   syncErrorHeadline,
-  opErrorKey,
 } from '../src/lib/syncErrors';
 import { SyncNotAppliedError } from '../src/lib/cloudSync';
 
@@ -38,7 +37,6 @@ process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
 
 const UID = 'user-sync-fail-1';
-const tick = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 
 type UpsertBehavior = 'ok' | 'network-fail' | 'zero-rows' | 'cap-violation';
 
@@ -149,58 +147,68 @@ async function main(): Promise<void> {
     assert(/2 active invite codes/.test(cap.why), 'invite-cap copy names the cap');
   }
 
-  // --------------------------------- immediate push failure records + queues --
+  // ----------------- a failed push throws at once: no record, no queue -----
+  // (Sept 28, 2026: synchronous confirmed writes. The failure IS the UI
+  // signal — the screen shows the plain copy immediately. Nothing is
+  // recorded in the background and nothing is queued; retry is the action
+  // called again.)
   {
     const kv = memoryKV();
     const behavior = { sessionUid: UID, upsert: 'network-fail' as UpsertBehavior };
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => makeCloud(behavior) as never });
     await initCloudSync();
+    let msg = '';
+    try {
+      await store.createEscrow({
+        address: '1 Fail Ct', city: 'Valencia, CA 91355', side: 'buy',
+        buyerName: 'Fail Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
+      });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assert(/Couldn't reach the server/.test(msg),
+      'failed push throws the plain network copy immediately');
+    assert((await store.listEscrows()).length === 0,
+      'failed push leaves no local escrow (nothing was confirmed)');
+    assert((await store.getSyncErrors()).length === 0,
+      'a failed user write records no background error');
+    const { readOutboxOps } = await import('../src/lib/cloudSync');
+    assert((await readOutboxOps(kv)).length === 0,
+      'a failed user write queues no outbox op');
+
+    // Retry is just the action again: the network recovers and the write lands.
+    behavior.upsert = 'ok';
     const e = await store.createEscrow({
       address: '1 Fail Ct', city: 'Valencia, CA 91355', side: 'buy',
       buyerName: 'Fail Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
     });
-    await tick(150); // bgPush is fire-and-forget
-    const errors = await store.getSyncErrors();
-    assert(errors.length === 1, 'failed push records exactly one error');
-    assert(errors[0].op === 'pushEscrow' && errors[0].kind === 'network',
-      'failed escrow push records a network error');
-    assert(errors[0].retryable, 'network error is retryable');
-    assert(errors[0].key === opErrorKey({ op: 'pushEscrow', escrowId: e.id }),
-      'error key matches the outbox op key');
-    assert(/could not reach the server/.test(syncErrorHeadline(errors[0])),
-      'headline says what failed in plain words');
-
-    // The op is still queued (existing self-heal behavior preserved).
-    const { readOutboxOps } = await import('../src/lib/cloudSync');
-    const ops = await readOutboxOps(kv);
-    assert(ops.some((o) => o.op === 'pushEscrow' && o.escrowId === e.id),
-      'failed push still queues the op for retry');
-
-    // ---- retry clears the record -------------------------------------
-    behavior.upsert = 'ok';
-    await store.retrySync();
-    await tick(50);
+    assert((await store.getEscrow(e.id)) !== null,
+      'retrying the action after recovery applies it locally');
     assert((await store.getSyncErrors()).length === 0,
-      'a successful retry clears the error record');
+      'a landed retry records nothing');
   }
 
-  // --------------------------------------- RLS silent no-op is 'rejected' --
+  // --------------------------------------- RLS silent no-op is 'refused' ----
   {
     const kv = memoryKV();
     const behavior = { sessionUid: UID, upsert: 'zero-rows' as UpsertBehavior };
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => makeCloud(behavior) as never });
     await initCloudSync();
-    await store.createEscrow({
-      address: '2 Reject Ct', city: 'Valencia, CA 91355', side: 'buy',
-      buyerName: 'Reject Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
-    });
-    await tick(150);
-    const errors = await store.getSyncErrors();
-    assert(errors.length === 1 && errors[0].kind === 'rejected',
-      'RLS silent no-op records a rejected error');
-    assert(/different account/.test(errors[0].why),
-      'rejected error explains the likely account mismatch');
-    assert(/did not save/.test(syncErrorHeadline(errors[0])), 'rejected headline is plain');
+    let msg = '';
+    try {
+      await store.createEscrow({
+        address: '2 Reject Ct', city: 'Valencia, CA 91355', side: 'buy',
+        buyerName: 'Reject Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
+      });
+    } catch (e) {
+      msg = (e as Error).message;
+    }
+    assert(/server refused/.test(msg),
+      'RLS silent no-op throws the refused copy (the write touched nothing)');
+    assert((await store.listEscrows()).length === 0,
+      'a refused write leaves no local escrow');
+    assert((await store.getSyncErrors()).length === 0,
+      'a refused user write records no background error');
   }
 
   // ---------------------------------------------- records survive a boot --
@@ -227,25 +235,39 @@ async function main(): Promise<void> {
     assert((await readSyncErrors(kv)).length === 0, 'clearAllSyncErrors drops every record');
   }
 
-  // -------------------------------- invite cap: final, visible, dismissable --
+  // -------------------------------- invite cap: final, plain, unrecorded -----
+  // The cap rejection throws the plain cap copy at once. Nothing is
+  // recorded and nothing is queued: a cap rejection is final, and the
+  // realtor reads the reason in the thrown error, not on an error bar.
   {
     const kv = memoryKV();
-    const behavior = { sessionUid: UID, upsert: 'cap-violation' as UpsertBehavior };
+    const behavior = { sessionUid: UID, upsert: 'ok' as UpsertBehavior };
     const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => makeCloud(behavior) as never });
     await initCloudSync();
     const e = await store.createEscrow({
       address: '3 Cap Ct', city: 'Valencia, CA 91355', side: 'buy',
       buyerName: 'Cap Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
     });
-    await store.createInvite(e.id, 'buyer', 'Cap Client');
-    await tick(150);
-    const errors = await store.getSyncErrors();
-    const cap = errors.find((x) => x.op === 'inviteCap');
-    assert(!!cap, 'cap rejection records a visible error (not just a console warning)');
-    assert(cap!.retryable === false, 'cap error is final, not retryable');
-    assert(/2 active invite codes/.test(cap!.why), 'cap error says why in plain words');
-    await store.dismissSyncError(cap!.key);
-    assert(!(await store.getSyncErrors()).some((x) => x.op === 'inviteCap'),
+    behavior.upsert = 'cap-violation';
+    let msg = '';
+    try {
+      await store.createInvite(e.id, 'buyer', 'Cap Client');
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    assert(/2 active invite codes/.test(msg), 'cap rejection throws the plain cap copy');
+    assert((await store.listInvites(e.id)).length === 0,
+      'cap rejection leaves no local invite row');
+    assert((await store.getSyncErrors()).length === 0,
+      'cap rejection records no background error');
+    // A manually recorded final error can still be dismissed.
+    await recordSyncError(kv, {
+      key: 'inviteCap:manual:', op: 'inviteCap', kind: 'rejected',
+      ...syncErrorCopy('inviteCap', 'rejected'), at: Date.now(),
+    });
+    assert((await store.getSyncErrors()).length === 1, 'manual record present');
+    await store.dismissSyncError('inviteCap:manual:');
+    assert((await store.getSyncErrors()).length === 0,
       'a final error can be dismissed');
   }
 
@@ -270,23 +292,25 @@ async function main(): Promise<void> {
   }
 
   // ------------------------------------------------- logout wipe clears --
+  // (The record layer now only carries legacy-drain failures, but the
+  // identity-bound wipe rule still holds: whatever is recorded is dropped
+  // on logout.)
   {
     const kv = memoryKV();
-    const behavior = { sessionUid: UID, upsert: 'network-fail' as UpsertBehavior };
-    const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => makeCloud(behavior) as never });
-    await initCloudSync();
-    await store.createEscrow({
-      address: '4 Wipe Ct', city: 'Valencia, CA 91355', side: 'buy',
-      buyerName: 'Wipe Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
+    await recordSyncError(kv, {
+      key: 'pushEscrow:e1::', op: 'pushEscrow', escrowId: 'e1', kind: 'network',
+      ...syncErrorCopy('pushEscrow', 'network'), at: Date.now(),
     });
-    await tick(150);
-    assert((await store.getSyncErrors()).length === 1, 'error recorded before wipe');
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    assert((await store.getSyncErrors()).length === 1, 'record present before wipe');
     await store.clearLocalAccountData();
     assert((await store.getSyncErrors()).length === 0,
       'logout wipe drops the failure records (identity-bound)');
   }
 
-  // ------------------------------------------- invite revocation surfaces --
+  // ------------------------------------------- invite revocation throws ----
+  // A failed revocation throws at once and leaves the invite live locally;
+  // the retry is the revoke action called again.
   {
     const kv = memoryKV();
     const behavior = { sessionUid: UID, upsert: 'ok' as UpsertBehavior };
@@ -297,31 +321,32 @@ async function main(): Promise<void> {
       buyerName: 'Revoke Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
     });
     const inv = await store.createInvite(e.id, 'buyer', 'Revoke Client');
-    await tick(150);
     assert((await store.getSyncErrors()).length === 0, 'healthy invite flow records nothing');
     // The revocation write now fails at the server.
     behavior.upsert = 'network-fail';
-    await store.revokeInvite(inv.id);
-    await tick(150);
-    const errors = await store.getSyncErrors();
-    const rev = errors.find((x) => x.op === 'pushRevoke');
-    assert(!!rev, 'failed invite revocation records a visible error');
-    assert(rev!.kind === 'network' && rev!.retryable, 'revocation error is retryable');
-    assert(/invite revocation/.test(rev!.what), 'revocation copy names what failed');
-    // The failed revocation stayed queued: retry lands it and clears it.
+    let msg = '';
+    try {
+      await store.revokeInvite(inv.id);
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    assert(/Couldn't reach the server/.test(msg),
+      'failed invite revocation throws the plain copy');
+    assert((await store.getInvite(inv.id))?.revokedAt == null,
+      'failed revocation leaves the local invite live (code still works)');
+    assert((await store.getSyncErrors()).length === 0,
+      'failed revocation records no background error');
+    // Retry is the action again: it lands and the invite is revoked locally.
     behavior.upsert = 'ok';
-    await store.retrySync();
-    await tick(50);
-    assert(!(await store.getSyncErrors()).some((x) => x.op === 'pushRevoke'),
-      'a successful revocation retry clears the error');
+    await store.revokeInvite(inv.id);
+    assert((await store.getInvite(inv.id))?.revokedAt != null,
+      'a revocation retry lands and revokes the local invite');
   }
 
-  // ------- link-revocation convergence (close) surfaces failures as well --
-  // Close/revoke no longer enqueue per-link ops for local link ids (they
-  // are locally minted and never match server rows). Instead each revoked
-  // invite gets a convergeLinkRevokes op that lists the invite's live
-  // server links and revokes them. A failed lookup must surface visibly
-  // and stay retryable — never strand a silent zombie link.
+  // ------- link-revocation convergence (close) throws on lookup failure ----
+  // Close/revoke converge each revoked invite's live server links inside
+  // the same confirmed write. A failed link lookup throws at once and
+  // leaves the side open locally; calling close again retries safely.
   {
     const kv = memoryKV();
     const behavior = { sessionUid: UID, upsert: 'ok' as UpsertBehavior, failLinkSelect: false };
@@ -332,68 +357,38 @@ async function main(): Promise<void> {
       buyerName: 'Link Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
     });
     const inv = await store.createInvite(e.id, 'buyer', 'Link Client');
-    await tick(150);
     // Per-side close requires every step on the side to be complete.
     const le = await store.getEscrow(e.id);
     for (const s of le!.buyerSteps) {
       if (!s.done) await store.toggleStep(e.id, 'buyer', s.id);
     }
-    await tick(300);
-    // The server-side link lookup fails: the convergence op stays queued
-    // and the realtor sees the failure (retryable), not a silent zombie.
+    // The server-side link lookup fails: the confirmed write throws and
+    // the side stays open locally — no silent zombie link, no partial apply.
     behavior.failLinkSelect = true;
-    await store.closeEscrow(e.id, 'buyer');
-    await tick(300); // closeEscrow kicks a non-blocking immediate drain
-    const errors = await store.getSyncErrors();
-    const linkRev = errors.find((x) => x.op === 'convergeLinkRevokes');
-    assert(!!linkRev, 'failed link-revocation convergence records a visible error');
-    assert(linkRev!.kind === 'network' && linkRev!.retryable, 'convergence failure is retryable');
-    assert(/client access/i.test(linkRev!.what), 'convergence copy names the client access');
-    // Recovery: the lookup succeeds, Retry converges and clears the record.
+    let msg = '';
+    try {
+      await store.closeEscrow(e.id, 'buyer');
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    assert(/Couldn't reach the server/.test(msg),
+      'close with a failed link lookup throws the plain copy');
+    assert((await store.getEscrow(e.id))?.buyerClosedAt == null,
+      'failed close leaves the side open locally');
+    assert((await store.getInvite(inv.id))?.revokedAt == null,
+      'failed close leaves the invite live locally');
+    // Recovery: the lookup succeeds and the close lands on retry.
     behavior.failLinkSelect = false;
-    await store.retrySync();
-    await tick(300);
-    assert(!(await store.getSyncErrors()).some((x) => x.op === 'convergeLinkRevokes'),
-      'a successful convergence retry clears the error');
-  }
-
-  // -------- exhausted automatic attempts stay manually retryable ---------
-  {
-    const kv = memoryKV();
-    const behavior = { sessionUid: UID, upsert: 'network-fail' as UpsertBehavior };
-    const cloud = makeCloud(behavior);
-    const { store, initCloudSync } = createSyncedStore(kv, { cloudClient: () => cloud as never });
-    await initCloudSync();
-    const e = await store.createEscrow({
-      address: '7 Manual Ct', city: 'Valencia, CA 91355', side: 'buy',
-      buyerName: 'Manual Buyer', openDate: '2026-09-25', closeDate: '2026-11-25',
-    });
-    await tick(150);
-    const { readOutboxOps } = await import('../src/lib/cloudSync');
-    // Burn through the automatic attempts via explicit retries.
-    for (let i = 0; i < 10; i++) await store.retrySync();
-    const ops = await readOutboxOps(kv);
-    const op = ops.find((o) => o.op === 'pushEscrow' && o.escrowId === e.id);
-    assert(!!op, 'the op is NOT dropped after the automatic attempt cap');
-    assert(op!.manualOnly === true, 'the op becomes manual-only after the cap');
-    assert((await store.getSyncErrors()).length === 1,
-      'the failure record survives the attempt cap');
-    // An automatic drain (boot) must not hammer it again...
-    cloud.stats.writes = 0;
-    await initCloudSync();
-    assert(cloud.stats.writes === 0, 'automatic drains skip manual-only ops');
-    assert((await store.getSyncErrors()).length === 1,
-      'the record stays visible while the op waits for manual retry');
-    // ...but an explicit Retry attempts it, and success clears everything.
-    behavior.upsert = 'ok';
-    await store.retrySync();
-    assert(cloud.stats.writes > 0, 'manual Retry attempts the manual-only op');
-    assert((await readOutboxOps(kv)).length === 0, 'a landed retry removes the op');
-    assert((await store.getSyncErrors()).length === 0,
-      'a successful manual retry clears the error');
+    await store.closeEscrow(e.id, 'buyer');
+    assert((await store.getEscrow(e.id))?.buyerClosedAt != null,
+      'a close retry lands and closes the side');
   }
 
   summary('sync_failure_ui');
 }
 
-void main();
+main().catch((e) => {
+  // eslint-disable-next-line no-console
+  console.error('FATAL', e);
+  process.exitCode = 1;
+});

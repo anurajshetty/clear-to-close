@@ -81,7 +81,7 @@ async function main(): Promise<void> {
     );
     assert(
       server.pushedLinkRevocations.some((p) => p.linkId === serverLinkId),
-      'convergeLinkRevokes op reached the server for the cancelled escrow',
+      'the confirmed cancel write killed the server link',
     );
     assert((await readOutboxOps(kv)).length === 0, 'outbox drained after cancel');
 
@@ -156,12 +156,13 @@ async function main(): Promise<void> {
     assert((await readOutboxOps(kv)).length === 0, 'outbox drained after cancel');
   }
 
-  // --- 5. A failed converge query retries instead of stranding a zombie --
-  // Side-effect pass (Sept 28, 2026): the one-shot query-then-enqueue
-  // design recorded a sync error on query failure but left NO op to retry
-  // — the zombie link would stay live on the server forever. The converge
-  // op runs the query at drain time, so a failure stays queued and a
-  // manual Retry converges it.
+  // --- 5. A failed link lookup fails the whole revoke loudly ---------------
+  // Fail-safe order (Sept 28, 2026): the invite row revokes FIRST — so
+  // get_client_view already locks the client out via the invite check even
+  // if the link kill never runs — then the live server links are killed.
+  // If the link lookup fails, the confirmed write throws and nothing
+  // applies locally. The retry is idempotent: the invite revoke re-lands
+  // and the link kill converges.
   {
     const server = createMockServer();
     server.failLinkSelect = true; // transient query failure
@@ -179,34 +180,42 @@ async function main(): Promise<void> {
     if (!r.ok || !r.linkId) throw new Error('redeem failed');
     const linkId = r.linkId;
 
-    await store.revokeInvite(inv.id);
-    await tick(250); // the immediate drain runs; the converge query fails
+    // The link lookup fails: the write throws, local state is untouched.
+    let msg = '';
+    try {
+      await store.revokeInvite(inv.id);
+    } catch (err) {
+      msg = (err as Error).message;
+    }
+    assert(msg.length > 0, 'revoke with a failed link lookup throws instead of resolving');
+    assert(
+      (await store.getInvite(inv.id))?.revokedAt == null,
+      'failed revoke leaves the local invite live',
+    );
+    // Fail-safe partial state: the invite row revoked server-side FIRST,
+    // so the client is already locked out (get_client_view checks the
+    // invite) even though the link row is not yet killed.
+    assert(
+      server.invites.get(inv.id)?.revokedAt != null,
+      'the invite row revoked server-side before the link lookup failed',
+    );
     assert(
       server.links.get(linkId)?.revokedAt === null,
-      'zombie link still live after the failed query (not silently dropped)',
+      'the server link row is not yet killed',
     );
-    const ops = await readOutboxOps(kv);
-    assert(
-      ops.some((o) => o.op === 'convergeLinkRevokes' && o.inviteId === inv.id),
-      `converge op stays queued for retry (got ${ops.map((o) => o.op).join(',')})`,
-    );
-    const errs = await store.getSyncErrors();
-    assert(
-      errs.some((x) => x.inviteId === inv.id),
-      'the failed convergence surfaces in the sync-error list',
-    );
+    assert((await readOutboxOps(kv)).length === 0, 'a failed revoke queues no outbox op');
 
+    // Recovery: the lookup succeeds and the retry converges everything.
     server.failLinkSelect = false; // connectivity recovers
-    await store.retrySync();
+    await store.revokeInvite(inv.id);
     const link = server.links.get(linkId);
     assert(
       !!link && typeof link.revokedAt === 'string' && link.revokedAt.length > 0,
-      `retry converges the zombie link's revoked_at (got ${link?.revokedAt})`,
+      `retry kills the server link's revoked_at (got ${link?.revokedAt})`,
     );
-    assert((await readOutboxOps(kv)).length === 0, 'outbox drained after retry');
     assert(
-      (await store.getSyncErrors()).length === 0,
-      'the failure record clears once the write lands',
+      (await store.getInvite(inv.id))?.revokedAt != null,
+      'retry revokes the local invite',
     );
   }
 

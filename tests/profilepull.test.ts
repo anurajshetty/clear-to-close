@@ -91,6 +91,16 @@ function mockProfileClient(rows: Record<string, unknown>[] | null) {
             rows === null ? { data: null, error: { message: 'boom' } } : { data: rows, error: null },
         }),
       }),
+      // saveProfile is a synchronous confirmed write now: the mock must
+      // accept the profile upsert (one affected row per input row).
+      upsert: (input: unknown, _opts?: unknown) => ({
+        select: async (_cols?: string) => ({
+          data: (Array.isArray(input) ? input : [input]).map((r) => ({
+            user_id: (r as Record<string, unknown>).user_id,
+          })),
+          error: null,
+        }),
+      }),
     }),
   };
 }
