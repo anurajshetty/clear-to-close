@@ -104,6 +104,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/realtor_home_banner.test.ts" \
   "$ROOT/tests/recovery.test.ts" \
   "$ROOT/tests/password_eye_toggle.test.ts" \
+  "$ROOT/tests/activate_escrow.test.ts" \
   "$ROOT/tests/invite_inline_form.test.ts" \
   "$ROOT/tests/invite_expiry.test.ts" \
   --outDir "$OUT" \
@@ -183,6 +184,7 @@ node "$OUT/tests/header_top_gap.test.js"
 node "$OUT/tests/realtor_home_banner.test.js"
 node "$OUT/tests/recovery.test.js"
 node "$OUT/tests/password_eye_toggle.test.js"
+node "$OUT/tests/activate_escrow.test.js"
 node "$OUT/tests/invite_inline_form.test.js"
 node "$OUT/tests/invite_expiry.test.js"
 

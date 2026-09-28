@@ -118,6 +118,16 @@ export interface Store {
    */
   updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow>;
   /**
+   * Reactivate a closed or cancelled escrow (Activate escrow, Sept 2026).
+   * Saves the field edits exactly like updateEscrow AND reopens it: status
+   * back to 'open' and the per-side close dates cleared (the deal list
+   * reads closed from those dates, so flipping status alone would not move
+   * the card back to Active). Steps, invites, and client links carry over
+   * unchanged — reactivation resumes where it left off. Throws on an
+   * already-open escrow (use updateEscrow for that).
+   */
+  activateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow>;
+  /**
    * Move an escrow to the Cancelled section. Closed escrows cannot be
    * cancelled (their cards show the pencil only).
    */
@@ -726,6 +736,45 @@ export function createStore(kv: KV): Store {
       e.closeDate = input.closeDate;
       // Status and steps are never touched by an update: editing a closed
       // or cancelled escrow keeps it closed/cancelled with its steps intact.
+      const next = replaceEscrow(e);
+      await persist();
+      return next;
+    },
+
+    async activateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
+      await ensureLoaded();
+      const e = cloneEscrow(findEscrowOrThrow(escrowId));
+      if (e.status === 'open') {
+        throw new Error('activateEscrow: escrow is already open');
+      }
+      const address = input.address.trim();
+      if (!address) throw new Error('activateEscrow: address is required');
+      assertDate(input.openDate, 'openDate');
+      assertDate(input.closeDate, 'closeDate');
+      if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
+        throw new Error('activateEscrow: closeDate cannot be before openDate');
+      }
+      const trimName = (n?: string) => {
+        const t = (n ?? '').trim();
+        return t ? t : null;
+      };
+      e.address = address;
+      // City is no longer edited (Sept 28, 2026): a supplied value still
+      // applies, otherwise the stored city is preserved.
+      if (input.city !== undefined) e.city = input.city.trim();
+      e.side = input.side;
+      e.buyerName = trimName(input.buyerName);
+      e.sellerName = trimName(input.sellerName);
+      e.openDate = input.openDate;
+      e.closeDate = input.closeDate;
+      // Reopen: status back to 'open' and the per-side close dates cleared.
+      // The deal list reads closed from those dates (isClosedRow), so
+      // flipping status alone would leave the card in Closed. Steps,
+      // invites, and client links are untouched — reactivation resumes
+      // where it left off.
+      e.status = 'open';
+      e.buyerClosedAt = null;
+      e.sellerClosedAt = null;
       const next = replaceEscrow(e);
       await persist();
       return next;

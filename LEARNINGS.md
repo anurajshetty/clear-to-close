@@ -278,6 +278,26 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   outcome (strip 118px, full-bleed, photo 88px at right 18, tap routes to
   /profile-update) from bounding boxes, not just source pins.
 
+## Activate escrow (Sept 28, 2026)
+
+- **Reactivation is more than a status flip.** The deal list reads "closed"
+  from the per-side close dates (`isClosedRow`), not just `status` — flipping
+  `status` back to 'open' while `buyerClosedAt`/`sellerClosedAt` stayed set
+  would have left the card sitting in Closed. Practice: `activateEscrow`
+  clears the per-side close dates too; test the list predicate
+  (`!isClosedRow`), not just the status field.
+- **A reactivation needs its own store op, not an optional flag on update.**
+  `updateEscrow` explicitly never touches status (editing a closed escrow
+  keeps it closed) — bolting a status flip onto it would have muddied the
+  contract. Practice: separate mutating ops with separate names
+  (`updateEscrow` vs `activateEscrow`), keeping the field-write inline in both ops
+  so the field rules can never drift.
+- **The "already open" guard belongs in the store, not the UI.** The sheet
+  routes open escrows to `updateEscrow` and closed/cancelled ones to
+  `activateEscrow`, but a stale `editing` snapshot could still race.
+  Practice: `activateEscrow` throws on an already-open escrow — the server
+  of truth enforces the invariant even if the UI routes wrong.
+
 ## 2026-09-28 — "Invite another" opens an inline form inside the View clients sheet (not a nested InviteSheet)
 
 - **Second Modal never presents on iOS.** "Invite another buyer" in the

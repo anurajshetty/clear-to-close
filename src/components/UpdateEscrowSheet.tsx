@@ -5,6 +5,11 @@
 // toast and stays on the list. The sheet also carries the "Cancel this
 // escrow" danger action (open escrows only — closed cards show the pencil
 // only, and cancelled escrows have no X).
+// Activate escrow (Sept 2026): the same sheet edits closed/cancelled
+// escrows. On those, the submit button reads "Activate escrow" and saving
+// flips the status back to open (the escrow moves to the Active list with
+// its steps, invites, and client links carried over). There is no plain
+// "save without reactivating" — the label makes the action explicit.
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { store } from '../lib/store-instance';
@@ -21,6 +26,7 @@ interface UpdateEscrowSheetProps {
 
 export default function UpdateEscrowSheet({ escrow, onClose, onSaved }: UpdateEscrowSheetProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const activating = !!escrow && escrow.status !== 'open';
 
   // The confirmation renders INSIDE this sheet's already-open Modal (via
   // confirmBody), never as a second stacked Sheet: iOS silently drops a
@@ -34,10 +40,14 @@ export default function UpdateEscrowSheet({ escrow, onClose, onSaved }: UpdateEs
       onClose={confirmingCancel ? () => setConfirmingCancel(false) : onClose}
       kicker="Edit escrow"
       title="Update escrow"
-      submitLabel="Update escrow"
-      savingLabel="Saving…"
+      submitLabel={activating ? "Activate escrow" : "Update escrow"}
+      savingLabel={activating ? "Activating…" : "Saving…"}
       initial={escrow ? escrowToInitial(escrow) : null}
-      onSubmit={(input) => store.updateEscrow(escrow!.id, input)}
+      onSubmit={(input) =>
+        activating
+          ? store.activateEscrow(escrow!.id, input)
+          : store.updateEscrow(escrow!.id, input)
+      }
       onDone={onSaved}
       confirmBody={
         confirmingCancel && escrow ? (

@@ -773,6 +773,12 @@ export function createSyncedStore(
       return e;
     },
 
+    activateEscrow: async (escrowId, input): Promise<Escrow> => {
+      const e = await local.activateEscrow(escrowId, input);
+      bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });
+      return e;
+    },
+
     cancelEscrow: async (escrowId): Promise<CancelEscrowResult> => {
       const { escrow: e, revokedInvites } = await local.cancelEscrow(escrowId);
       bgPush((c, uid) => pushEscrowNow(c, uid, e), { op: 'pushEscrow', escrowId });

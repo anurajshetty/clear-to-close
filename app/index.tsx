@@ -322,12 +322,16 @@ export default function DealList() {
         escrow={editing}
         onClose={() => setEditing(null)}
         onSaved={(updated) => {
+          // Activate escrow (Sept 2026): a closed/cancelled escrow edited
+          // through the sheet comes back open — name the move in the toast.
+          const reactivated =
+            !!editing && editing.status !== 'open' && updated.status === 'open';
           setEditing(null);
           if (updated.status === 'cancelled') {
             // Cancelled via the sheet's danger action: reveal the move.
             setCancelledOpen(true);
           } else {
-            showToast('Escrow updated.');
+            showToast(reactivated ? 'Escrow activated.' : 'Escrow updated.');
           }
           load();
         }}

@@ -66,6 +66,11 @@ central user; the buyers and sellers they represent are the other parties.
   the new-escrow form with every value pre-populated and editable, including
   buyer↔seller↔both side switching. Saving updates the card in place with an
   "Escrow updated." toast.
+- **Activate escrow** — the same pencil on a closed or cancelled escrow opens
+  the sheet with an "Activate escrow" submit button: saving the edits flips
+  the escrow back to open and moves the card to the Active list ("Escrow
+  activated." toast). Checklist state, invites, and client links carry over
+  unchanged. The "Cancel this escrow" danger action stays open-escrows only.
 - **Cancel escrow** — the X (or the "Cancel this escrow" action inside the
   update sheet) asks for confirmation, then moves the card to a collapsible
   "Cancelled escrows" section, greyed with a Cancelled tag; the header
