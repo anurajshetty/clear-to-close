@@ -87,3 +87,13 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
 - No em dashes in user-facing copy — commas, periods, colons, or reword.
 - README updated in the same commit as every feature change.
 - Use the realtor's actual name instead of "your realtor" when known.
+
+## iOS parity (Sept 27, 2026)
+
+- **Root-level overlays ignore the notch.** The sync-failure error bar was
+  mounted above the router stack with no screen chrome of its own, so on iOS
+  it rendered under the notch/status bar. Practice: any view mounted outside
+  a screen (global bars, banners, overlays) must pad with `useSafeAreaInsets`
+  itself — it cannot inherit a screen's SafeAreaView. Web is a no-op (insets
+  are 0), so the same code is safe on both platforms. Pin it with a
+  structural test on the source.

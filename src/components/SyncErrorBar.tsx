@@ -11,6 +11,7 @@
 // devices never see it.
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth } from '../lib/auth';
 import { store } from '../lib/store-instance';
 import { syncErrorHeadline, type SyncError } from '../lib/syncErrors';
@@ -19,6 +20,10 @@ import { colors } from '../theme';
 export function SyncErrorBar(): React.ReactElement | null {
   const [errors, setErrors] = useState<SyncError[]>([]);
   const [isRealtor, setIsRealtor] = useState(false);
+  // iOS: the bar sits above the router stack with no screen chrome of its
+  // own, so without the top inset it renders under the notch/status bar.
+  // On web the inset is 0 — no-op there.
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     let active = true;
@@ -55,7 +60,7 @@ export function SyncErrorBar(): React.ReactElement | null {
   if (!isRealtor || errors.length === 0) return null;
 
   return (
-    <View style={styles.bar} testID="sync-error-bar">
+    <View style={[styles.bar, { paddingTop: 10 + insets.top }]} testID="sync-error-bar">
       {errors.map((e) => (
         <View key={e.key} style={styles.row}>
           <View style={styles.texts}>
