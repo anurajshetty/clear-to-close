@@ -38,6 +38,14 @@ export default function ProfileUpdate() {
   // drops them (same pattern as reviews/rating).
   const [keptPhotoRemoteUrl, setKeptPhotoRemoteUrl] = useState<string | null>(null);
   const [keptBannerRemoteUrl, setKeptBannerRemoteUrl] = useState<string | null>(null);
+  // Image-removal detection (Sept 28, 2026, Anuraj): whether the loaded
+  // profile had a photo/banner. The form's X only clears the draft URI;
+  // the kept remote URL must be nulled on save too, or the save would
+  // re-push the old URL and the removal would never converge.
+  const initialMediaRef = useRef<{ photo: boolean; banner: boolean }>({
+    photo: false,
+    banner: false,
+  });
   const [nameError, setNameError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -88,6 +96,10 @@ export default function ProfileUpdate() {
         setKeptRating(p.rating ?? null);
         setKeptPhotoRemoteUrl(p.photoRemoteUrl ?? null);
         setKeptBannerRemoteUrl(p.bannerRemoteUrl ?? null);
+        initialMediaRef.current = {
+          photo: (p.photoUri ?? p.photoRemoteUrl) != null,
+          banner: (p.banner_image ?? p.bannerRemoteUrl) != null,
+        };
         setNameError(null);
         editedRef.current = false;
       })
@@ -122,11 +134,16 @@ export default function ProfileUpdate() {
     }
     setSaving(true);
     try {
+      // Clearing then picking a new image before saving = the new image
+      // wins (normal replace): photoCleared/bannerCleared are false when
+      // the draft holds an image, so the kept URLs and upload flow apply.
+      const photoCleared = initialMediaRef.current.photo && draft.photoUri == null;
+      const bannerCleared = initialMediaRef.current.banner && draft.banner_image == null;
       await store.saveProfile({
         name: draft.name.trim(),
         photoUri: draft.photoUri,
-        photoRemoteUrl: keptPhotoRemoteUrl,
-        bannerRemoteUrl: keptBannerRemoteUrl,
+        photoRemoteUrl: photoCleared ? null : keptPhotoRemoteUrl,
+        bannerRemoteUrl: bannerCleared ? null : keptBannerRemoteUrl,
         banner_image: draft.banner_image,
         about: draft.about,
         yearsExperience: draft.yearsExperience,

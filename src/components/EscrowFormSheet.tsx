@@ -2,7 +2,11 @@
 // The new-escrow form (approved mockup 01 · device ⑥, Sept 25 revision),
 // shared by creation and editing (Sept 2026 edit round): the "Update escrow"
 // sheet is field-identical to the new-escrow form, with every value
-// pre-populated and editable, including buyer↔seller↔both side switching.
+// pre-populated and editable. Side locking (Sept 28, 2026, Anuraj): the
+// side picker is non-interactive in the edit flow (lockSide) — no more
+// buyer↔seller switches after creation. The new-escrow flow is two-phase
+// (confirmCreate): submit validates, then shows a confirmation summary
+// ("Create escrow" / "Back to edit") instead of creating immediately.
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import {
@@ -14,7 +18,8 @@ import {
   type SideSelection,
 } from '../lib/sidePicker';
 import type { CreateEscrowInput, Escrow, Side } from '../lib/types';
-import { Field, Kicker, PrimaryButton, Sheet } from '../components/ui';
+import { confirmSummaryRows } from '../lib/escrowConfirm';
+import { Field, Kicker, PrimaryButton, SecondaryButton, Sheet } from '../components/ui';
 import DateField from './DateField';
 import { colors } from '../theme';
 
@@ -92,6 +97,23 @@ interface EscrowFormSheetProps {
    * never be a stacked Sheet of its own.
    */
   confirmBody?: React.ReactNode;
+  /**
+   * Side lock (Sept 28, 2026, Anuraj): when true, the side picker is
+   * non-interactive and just displays the current side (including 'both'
+   * for older dual-agency escrows). The side value submits unchanged —
+   * no more buyer↔seller switches after creation. The edit and activate
+   * flows pass this; the new-escrow flow does not.
+   */
+  lockSide?: boolean;
+  /**
+   * Two-phase create (Sept 28, 2026, Anuraj): when true, the form
+   * validates on submit but then shows a confirmation screen summarizing
+   * the entered data instead of creating immediately. "Create escrow"
+   * performs the create; "Back to edit" returns to the form with all
+   * values preserved. New-escrow flow only — update/activate keep their
+   * direct save.
+   */
+  confirmCreate?: boolean;
 }
 
 export function EscrowFormSheet({
@@ -106,6 +128,8 @@ export function EscrowFormSheet({
   onDone,
   footer,
   confirmBody,
+  lockSide,
+  confirmCreate,
 }: EscrowFormSheetProps) {
   const [sel, setSel] = useState<SideSelection>(DEFAULT_SIDE_SELECTION);
   const [address, setAddress] = useState('');
@@ -115,6 +139,9 @@ export function EscrowFormSheet({
   const [closeDate, setCloseDate] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  // Two-phase create: the validated input waiting on the confirmation
+  // screen. null = form is showing (or the flow skips confirmation).
+  const [confirming, setConfirming] = useState<CreateEscrowInput | null>(null);
 
   // (Re)initialize when the sheet OPENS: create starts empty, edit starts
   // pre-populated from the escrow. Keyed on the open transition (not on
@@ -135,6 +162,7 @@ export function EscrowFormSheet({
     setCloseDate(initial?.closeDate ?? '');
     setErrors({});
     setSaving(false);
+    setConfirming(null);
   });
 
   const side = selectionToSide(sel);
@@ -183,18 +211,19 @@ export function EscrowFormSheet({
     return Object.keys(e).length === 0;
   };
 
-  const submit = async () => {
-    if (saving || !validate()) return;
+  const buildInput = (): CreateEscrowInput => ({
+    address: address.trim(),
+    side,
+    buyerName: sel.buy ? buyerName.trim() : undefined,
+    sellerName: sel.sell ? sellerName.trim() : undefined,
+    openDate,
+    closeDate,
+  });
+
+  const performSave = async (input: CreateEscrowInput) => {
     setSaving(true);
     try {
-      const done = await onSubmit({
-        address: address.trim(),
-        side,
-        buyerName: sel.buy ? buyerName.trim() : undefined,
-        sellerName: sel.sell ? sellerName.trim() : undefined,
-        openDate,
-        closeDate,
-      });
+      const done = await onSubmit(input);
       onDone(done);
     } catch (err) {
       console.warn('escrow form submit failed', err);
@@ -202,6 +231,26 @@ export function EscrowFormSheet({
     } finally {
       setSaving(false);
     }
+  };
+
+  const submit = async () => {
+    if (saving || !validate()) return;
+    const input = buildInput();
+    // Two-phase create: validate now, but hold the input on the
+    // confirmation screen — the real create happens on "Create escrow".
+    if (confirmCreate && !confirming) {
+      setConfirming(input);
+      return;
+    }
+    await performSave(input);
+  };
+
+  // The confirmation screen's "Create escrow" button: performs the held
+  // create. A failure surfaces the submit error on the confirmation
+  // screen, with "Back to edit" available.
+  const confirmSave = async () => {
+    if (saving || !confirming) return;
+    await performSave(confirming);
   };
 
   const toggleCard = (
@@ -227,18 +276,64 @@ export function EscrowFormSheet({
     </Pressable>
   );
 
+  // Locked side display (Sept 28, 2026, Anuraj): the edit/activate flows
+  // show the current side with the same card styling but no interaction —
+  // a View, not a Pressable, so there is no way to switch sides after
+  // creation. Legacy 'both' escrows show both cards in the selected state.
+  const lockedCard = (
+    which: 'buy' | 'sell',
+    label: string,
+    selected: boolean,
+  ) => (
+    <View
+      key={which}
+      style={[styles.pick, selected && styles.pickSelected]}
+      accessibilityRole="text"
+      accessibilityState={{ selected }}
+      accessibilityLabel={label}
+      testID={`side-${which}-locked`}
+    >
+      <Text style={[styles.pickLabel, selected && styles.pickLabelSelected]}>
+        {label}
+      </Text>
+    </View>
+  );
+
+  const renderSideRow = () => (
+    <View style={styles.sideRow}>
+      {lockSide ? (
+        <>
+          {lockedCard('buy', 'Buy side', sel.buy)}
+          {lockedCard('sell', 'Sell side', sel.sell)}
+        </>
+      ) : (
+        <>
+          {toggleCard('buy', 'Buy side', sel.buy)}
+          {toggleCard('sell', 'Sell side', sel.sell)}
+        </>
+      )}
+    </View>
+  );
+
   return (
     <Sheet visible={visible} onClose={handleClose}>
-      {confirmBody ?? (
+      {confirmBody ?? (confirming ? (
+        <EscrowConfirmView
+          kicker={kicker}
+          input={confirming}
+          saving={saving}
+          savingLabel={savingLabel}
+          submitError={errors.submit}
+          onConfirm={confirmSave}
+          onBackToEdit={() => setConfirming(null)}
+        />
+      ) : (
         <>
           <Kicker>{kicker}</Kicker>
           <Text style={styles.h2}>{title}</Text>
 
       <Text style={styles.label}>Which side are you representing?</Text>
-      <View style={styles.sideRow}>
-        {toggleCard('buy', 'Buy side', sel.buy)}
-        {toggleCard('sell', 'Sell side', sel.sell)}
-      </View>
+      {renderSideRow()}
 
       <FieldWrap error={errors.address}>
         <Field
@@ -336,8 +431,63 @@ export function EscrowFormSheet({
 
       {footer}
         </>
-      )}
+      ))}
     </Sheet>
+  );
+}
+// Confirmation screen (Sept 28, 2026, Anuraj): the two-phase new-escrow
+// flow holds the validated input here so the realtor reviews it before
+// "Create escrow" performs the create. "Back to edit" returns to the form
+// with every value preserved (form state is untouched).
+function EscrowConfirmView({
+  kicker,
+  input,
+  saving,
+  savingLabel,
+  submitError,
+  onConfirm,
+  onBackToEdit,
+}: {
+  kicker: string;
+  input: CreateEscrowInput;
+  saving: boolean;
+  savingLabel: string;
+  submitError?: string;
+  onConfirm: () => void;
+  onBackToEdit: () => void;
+}) {
+  return (
+    <>
+      <Kicker>{kicker}</Kicker>
+      <Text style={styles.h2}>Confirm escrow</Text>
+      <Text style={styles.confirmNote}>
+        Please review the details before creating this escrow.
+      </Text>
+
+      {confirmSummaryRows(input).map((row) => (
+        <View key={row.testID} style={styles.sumRow} testID={row.testID}>
+          <Text style={styles.sumLabel}>{row.label}</Text>
+          <Text style={styles.sumValue}>{row.value}</Text>
+        </View>
+      ))}
+
+      {submitError ? <Text style={styles.submitError}>{submitError}</Text> : null}
+
+      <View style={styles.submit} testID="confirm-create-escrow">
+        <PrimaryButton
+          title={saving ? savingLabel : 'Create escrow'}
+          onPress={onConfirm}
+          disabled={saving}
+        />
+      </View>
+      <View style={styles.backToEdit} testID="confirm-back-to-edit">
+        <SecondaryButton
+          title="Back to edit"
+          onPress={onBackToEdit}
+          disabled={saving}
+        />
+      </View>
+    </>
   );
 }
 
@@ -402,5 +552,29 @@ const styles = StyleSheet.create({
   },
   submit: {
     marginTop: 18,
+  },
+  backToEdit: {
+    marginTop: 10,
+  },
+  // Confirmation summary rows (two-phase create): label/value pairs in the
+  // form's existing type scale and colors — no new visual language.
+  confirmNote: {
+    fontSize: 14.5,
+    color: colors.body,
+    marginTop: 4,
+    marginBottom: 6,
+  },
+  sumRow: {
+    marginTop: 14,
+  },
+  sumLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.body,
+    marginBottom: 4,
+  },
+  sumValue: {
+    fontSize: 16,
+    color: colors.ink,
   },
 });

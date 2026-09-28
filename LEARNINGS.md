@@ -356,3 +356,87 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   kills buyer/seller/TC (and the redeemed device link), per-side close
   leaves the other side + TC redeemable, whole close kills all, and a
   revoked code redeems as `revoked`. 27 assertions, all green.
+
+## 2026-09-28 — Side locked after creation + two-phase new-escrow confirmation (Anuraj)
+
+- **The edit flow let the side change, and the picker was the only thing
+  standing between a tap and a data contradiction.** `EscrowFormSheet` shared
+  one interactive side picker between create and edit, so a buyer→seller
+  switch after creation silently contradicted the invites and client links
+  already issued on the old side (the ghost-invite class). Fix: a `lockSide`
+  prop on `EscrowFormSheet` — the edit/activate flows (both via
+  `UpdateEscrowSheet`) render the side cards as non-interactive `View`s
+  with the same card styling, and the side value submits unchanged.
+  Practice: creation-time choices that downstream data depends on get
+  locked at the form level — the picker stays interactive only where the
+  choice is still being made.
+- **The confirmation step lives inside the same sheet, not in a new one.**
+  The two-phase create holds the validated input in state and renders the
+  summary (`EscrowConfirmView`) in place of the form body inside the one
+  open Modal — the same reason the cancel confirmation moved inside
+  (`confirmBody`, Sept 28): iOS silently drops a second stacked Modal.
+  "Back to edit" only clears the held input; form state is untouched, so
+  every value is preserved by construction. Practice: a confirm-then-commit
+  flow belongs in the sheet's own state, never in a second Modal — and the
+  cheapest value-preservation is not copying values back and forth but
+  never leaving the form.
+- **Summary content is pure logic.** The confirmation rows (Side / Property
+  address / Client name / Escrow open date / Target close date) are built
+  by `src/lib/escrowConfirm.ts` (`confirmSummaryRows`, `sideDisplayLabel`),
+  unit-tested like the rest of `src/lib` — the sheet just renders them.
+  Practice: keep what the user sees on a confirmation screen in a pure,
+  testable function; the component renders, it doesn't decide.
+- **Tests pin each scope.** `tests/side_lock_confirm_create.test.ts`
+  covers: summary labels/values/order (buy/sell/dual-agency), Update sheet
+  passes `lockSide` and not `confirmCreate`, New sheet passes
+  `confirmCreate` and not `lockSide`, locked cards are non-interactive
+  Views reusing the picker styles, submit holds the input on the
+  confirmation, "Back to edit" preserves values, "Create escrow" performs
+  the held create through the existing save path. All green.
+
+## 2026-09-28 — Profile/banner image removal (Anuraj)
+
+- **A removal is a detection + convergence, not a flag.** The form's X only
+  nulls the draft field; the save pipeline detects the removal by comparing
+  the stored profile against the new one (`mediaKindsRemoved`, pure and
+  unit-tested) — had-an-image before, nothing now. Clear-then-pick before
+  Save reads as "had, still has" and is a normal replace by construction,
+  so no special case is needed anywhere. Practice: derive destructive
+  intent from state transitions, not from UI events — the UI just edits
+  drafts, and the pipeline sees exactly what changed.
+- **Durable intent, not a one-shot call.** The removal writes a
+  `ctc:media-removed` KV flag before the push, and `pushProfileWithMedia`
+  re-reads pending flags on every path (live save, outbox drain, boot
+  reconcile): a failed push retries the Storage delete + URL null instead
+  of silently keeping the old `photo_url` on the server. The delete is
+  idempotent (missing file = already deleted), which makes retries safe.
+  Practice: any destructive write needs a durable intent that outlives the
+  first attempt — the same pattern the media uploads got for the
+  stale-photo fix.
+- **Explicit nulls on removal only.** `toProfileRow` still omits the media
+  keys when nothing was ever uploaded (an offline name edit can never wipe
+  the server's photo), and writes an explicit `photo_url`/`banner_image`
+  null only for removed kinds — so clients fall back to the initials and
+  the teal gradient instead of the stale Storage URL.
+- **Loud, not best-effort.** `deleteProfileMedia` throws on Storage
+  failure (the same loudness as the delete-file helper's opposite: local
+  cleanup stays best-effort because the server removal is what matters).
+  The failure flows into the existing sync-error surface — confirmed or
+  loud, never a silent success. A missing Storage file is NOT a failure
+  (idempotent), which also keeps the outbox retry safe.
+- **The X badge is a sibling, not part of the image button.** `ClearBadge`
+  renders after the image `Pressable` in a relative wrapper: absolute
+  corner position, its own 44pt target with `hitSlop={8}`, `zIndex` above
+  the image — the image tap (change → picker → cropper, untouched) and the
+  clear tap can never mis-fire into each other.
+- **Tests pin each scope.** `tests/profile_media_removal.test.ts` covers:
+  the badge exists / is visible only when an image is set / clears the
+  draft field / is a 44pt labelled target; removal detection (photo,
+  banner, both, unchanged, no-previous, remote-URL-as-URI, clear-then-pick
+  is a replace); the Storage delete hits the right bucket+path, throws on
+  failure, tolerates a missing file; `toProfileRow` nulls removed keys and
+  omits the rest; `removeProfileMediaNow` deletes the local file, the
+  Storage file, the upload fingerprint, and nulls the URL; an end-to-end
+  `pushProfileWithMedia` converges a removal; pending flags re-run on
+  retry; re-pick after clear re-uploads with a fresh versioned URL; a
+  failed Storage delete rejects (loud). 42 assertions, all green.

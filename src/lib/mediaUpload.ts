@@ -147,3 +147,30 @@ export async function uploadProfileMedia(
     return null;
   }
 }
+
+function isNotFoundStorageError(error: unknown): boolean {
+  const message = String((error as { message?: unknown } | null)?.message ?? '');
+  return /not found|does not exist|no such file/i.test(message);
+}
+
+/**
+ * Delete the realtor's photo/banner from Supabase Storage (Sept 28, 2026,
+ * Anuraj: profile/banner image removal). This is the first delete path for
+ * the `realtor-media` bucket — uploads were the only write before.
+ *
+ * Loud, not best-effort: a failure throws so the caller surfaces it
+ * (confirmed-or-loud) instead of reporting the removal silently
+ * unconfirmed. A missing file counts as already deleted, never as a
+ * failure — removal is idempotent, which also keeps outbox retries safe.
+ */
+export async function deleteProfileMedia(
+  client: Cloud,
+  userId: string,
+  kind: MediaKind,
+): Promise<void> {
+  if (!client || !userId) throw new Error('deleteProfileMedia: no client or user');
+  const { error } = await client.storage
+    .from(REALTOR_MEDIA_BUCKET)
+    .remove([storagePathFor(userId, kind)]);
+  if (error && !isNotFoundStorageError(error)) throw error;
+}

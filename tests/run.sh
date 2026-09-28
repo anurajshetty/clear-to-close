@@ -26,6 +26,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/auth.ts" \
   "$ROOT/src/lib/bootRoute.ts" \
   "$ROOT/src/lib/sidePicker.ts" \
+  "$ROOT/src/lib/escrowConfirm.ts" \
   "$ROOT/src/lib/dates.ts" \
   "$ROOT/src/lib/pace.ts" \
   "$ROOT/src/lib/topCard.ts" \
@@ -107,6 +108,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/activate_escrow.test.ts" \
   "$ROOT/tests/invite_inline_form.test.ts" \
   "$ROOT/tests/invite_expiry.test.ts" \
+  "$ROOT/tests/side_lock_confirm_create.test.ts" \
+  "$ROOT/tests/profile_media_removal.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -187,6 +190,8 @@ node "$OUT/tests/password_eye_toggle.test.js"
 node "$OUT/tests/activate_escrow.test.js"
 node "$OUT/tests/invite_inline_form.test.js"
 node "$OUT/tests/invite_expiry.test.js"
+node "$OUT/tests/side_lock_confirm_create.test.js"
+node "$OUT/tests/profile_media_removal.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

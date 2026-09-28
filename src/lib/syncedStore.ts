@@ -39,6 +39,7 @@ import {
   fetchCloudView,
   isCapViolation,
   logConflict,
+  mediaKindsRemoved,
   outboxOpKey,
   pingCloud,
   pullEscrowsNow,
@@ -56,7 +57,9 @@ import {
   type Cloud,
   type OutboxOp,
   type PingResult,
+  writePendingMediaRemovals,
 } from './cloudSync';
+import type { MediaKind } from './mediaUpload';
 import {
   classifySyncError,
   clearAllSyncErrors,
@@ -97,6 +100,24 @@ async function deleteManagedMedia(): Promise<void> {
     const dd: string = fs.documentDirectory ?? '';
     await fs.deleteAsync(`${dd}profile-photo.jpg`, { idempotent: true });
     await fs.deleteAsync(`${dd}profile-banner.jpg`, { idempotent: true });
+  } catch {
+    // best-effort (node tests land here)
+  }
+}
+
+/**
+ * Delete one device-local managed media file (Sept 28, 2026, Anuraj:
+ * profile/banner image removal). photoFile.ts statically imports
+ * react-native, so it is dynamically imported here — the same reason
+ * deleteManagedMedia above dynamically imports expo-file-system
+ * (plain-node tests cannot resolve either).
+ */
+async function deleteLocalMedia(kind: MediaKind): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pf = await import('./photoFile');
+    if (kind === 'photo') await pf.deleteManagedPhoto();
+    else await pf.deleteManagedBanner();
   } catch {
     // best-effort (node tests land here)
   }
@@ -715,6 +736,15 @@ export function createSyncedStore(
     },
 
     saveProfile: async (p: RealtorProfile): Promise<void> => {
+      // Media-removal detection (Sept 28, 2026, Anuraj: profile/banner
+      // image removal): compare against the STORED profile before
+      // overwriting — a kind the user cleared in the form (X button) must
+      // delete its Storage file and null the server URL. The pending flags
+      // are written BEFORE the push so a failed push retries the removal
+      // instead of silently keeping the old photo_url/banner_image.
+      const prev = await local.getProfile();
+      const removed = mediaKindsRemoved(prev, p);
+      if (removed.length > 0) await writePendingMediaRemovals(kv, removed);
       await local.saveProfile(p);
       bgPush(
         async (c, uid) => {
@@ -726,8 +756,9 @@ export function createSyncedStore(
           // pushProfileWithMedia — never pushProfileNow alone — so a save
           // that converges via the outbox or the boot reconcile still
           // uploads the new image instead of stranding the old photo_url
-          // on the server.
-          await pushProfileWithMedia(c, uid, kv, p, (next) => local.saveProfile(next));
+          // on the server. Removed kinds converge the same way: Storage
+          // delete + explicit URL nulls (see cloudSync.removeProfileMediaNow).
+          await pushProfileWithMedia(c, uid, kv, p, (next) => local.saveProfile(next), removed, deleteLocalMedia);
         },
         { op: 'pushProfile' },
       );

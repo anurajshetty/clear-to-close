@@ -61,10 +61,14 @@ central user; the buyers and sellers they represent are the other parties.
   date picker (native date input on web, minimal inline picker on native —
   no popup-overlap pattern). Client-name fields
   adapt: one field for a single side, buyer + seller fields when both are
-  picked.
+  picked. Two-phase create (Anuraj, Sept 28, 2026): submit validates, then
+  shows a confirmation screen summarizing the side, property address,
+  client name, and both dates — "Create escrow" creates it, "Back to edit"
+  returns to the form with every value preserved.
 - **Edit escrow** — the pencil opens an "Update escrow" sheet identical to
-  the new-escrow form with every value pre-populated and editable, including
-  buyer↔seller↔both side switching. Saving updates the card in place with an
+  the new-escrow form with every value pre-populated and editable, EXCEPT
+  the side: the side is locked after creation (Anuraj, Sept 28, 2026) and
+  submits unchanged. Saving updates the card in place with an
   "Escrow updated." toast.
 - **Activate escrow** — the same pencil on a closed or cancelled escrow opens
   the sheet with an "Activate escrow" submit button: saving the edits flips
@@ -126,7 +130,17 @@ central user; the buyers and sellers they represent are the other parties.
   filename/key, synced like the photo. The banner upload shows a recommended
   size computed from the celebration card banner strip's actual dimensions
   (`src/lib/bannerSize.ts`, about 2.7 : 1, e.g. 1024 x 386 px) so the
-  cover-cropped banner fills the strip with the least cropping. Editable
+  cover-cropped banner fills the strip with the least cropping. On the
+  profile-edit page the photo and banner each get a small X badge at their
+  corner, shown only when an image is set: tapping the image still opens
+  the picker (change flow), tapping the X clears the image from the draft
+  (no confirmation — Save is the commit point). Saving with a cleared
+  image deletes the local managed file and the `<user_id>/photo.jpg` or
+  `<user_id>/banner.jpg` object from the `realtor-media` bucket, and clears
+  `photo_url` / `banner_image` on the profile row so clients fall back to
+  the initials and the teal gradient; if the server removal cannot
+  complete, the save is not reported as done. Clearing then picking a new
+  image before saving uploads the new image (the new image wins). Editable
   anytime via the photo on the deal-list banner strip. A quiet **Change password**
   row below Save opens a bottom sheet (current / new / confirm, masked with
   show/hide toggles; 8+ characters, same rule as sign-up): the current

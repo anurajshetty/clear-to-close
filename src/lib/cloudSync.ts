@@ -41,7 +41,7 @@ import { isSupabaseConfigured } from './supabase';
 import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
 import { applyDerivedStatus } from './lifecycle';
-import { uploadProfileMedia } from './mediaUpload';
+import { deleteProfileMedia, uploadProfileMedia, type MediaKind } from './mediaUpload';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -126,7 +126,11 @@ export function toStepRows(escrowId: string, role: ClientRole, steps: StepT[]): 
   }));
 }
 
-export function toProfileRow(userId: string, p: RealtorProfile | null): Record<string, unknown> {
+export function toProfileRow(
+  userId: string,
+  p: RealtorProfile | null,
+  removed: MediaKind[] = [],
+): Record<string, unknown> {
   // Photo/banner sync (Sept 2026, Anuraj-approved): photo_url / banner_image
   // now carry the PUBLIC Supabase Storage URLs, uploaded on profile save
   // (see mediaUpload.ts), so client devices can see them. Previously these
@@ -137,6 +141,10 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
   // upsert then keeps whatever the server already has, so an offline name
   // edit can never wipe a previously uploaded photo. The local managed files
   // (photoUri / banner_image) stay the offline source and display fallback.
+  //
+  // Removal (Sept 28, 2026, Anuraj) is the exception: a kind in `removed`
+  // is written as an EXPLICIT null so clients fall back to initials (photo)
+  // and the teal gradient (banner) instead of the stale Storage URL.
   const row: Record<string, unknown> = {
     user_id: userId,
     name: p?.name ?? null,
@@ -155,7 +163,9 @@ export function toProfileRow(userId: string, p: RealtorProfile | null): Record<s
     return row;
   }
   if (p.photoRemoteUrl != null) row.photo_url = p.photoRemoteUrl;
+  else if (removed.includes('photo')) row.photo_url = null;
   if (p.bannerRemoteUrl != null) row.banner_image = p.bannerRemoteUrl;
+  else if (removed.includes('banner')) row.banner_image = null;
   // NOTE: reviews / rating are deliberately NOT in this payload. They are
   // written by clients through the upsert_review / delete_review RPCs; the
   // realtor's full-row upsert must never clobber them with a stale local
@@ -893,8 +903,13 @@ export function isMissingColumnError(error: unknown): boolean {
   );
 }
 
-export async function pushProfileNow(client: Cloud, userId: string, profile: RealtorProfile): Promise<void> {
-  const row = toProfileRow(userId, profile);
+export async function pushProfileNow(
+  client: Cloud,
+  userId: string,
+  profile: RealtorProfile,
+  removed: MediaKind[] = [],
+): Promise<void> {
+  const row = toProfileRow(userId, profile, removed);
   try {
     await upsertAll(client, 'realtor_profiles', [row], 'user_id');
   } catch (e) {
@@ -914,6 +929,121 @@ export async function pushProfileNow(client: Cloud, userId: string, profile: Rea
       await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
     }
   }
+}
+
+// -------------------------------------------- profile media removal --
+
+/**
+ * Media-removal detection (Sept 28, 2026, Anuraj: profile/banner image
+ * removal). A kind was removed when the previous profile had any image
+ * for it (local managed URI or remote Storage URL) and the new one has
+ * neither. Pure — unit-tested. The edit-profile form's X button is the
+ * only flow that nulls an image the profile previously had.
+ */
+export function mediaKindsRemoved(
+  prev: RealtorProfile | null,
+  next: RealtorProfile,
+): MediaKind[] {
+  const out: MediaKind[] = [];
+  const had = (uri: string | null, remote: string | null): boolean =>
+    (uri ?? remote) != null;
+  if (prev) {
+    if (had(prev.photoUri, prev.photoRemoteUrl) && !had(next.photoUri, next.photoRemoteUrl)) {
+      out.push('photo');
+    }
+    if (
+      had(prev.banner_image, prev.bannerRemoteUrl) &&
+      !had(next.banner_image, next.bannerRemoteUrl)
+    ) {
+      out.push('banner');
+    }
+  }
+  return out;
+}
+
+/**
+ * KV flags for media removals that have not converged to the server yet
+ * (`ctc:media-removed`). A failed removal keeps its flag, so the outbox
+ * drain and the boot reconcile retry the Storage delete + URL null —
+ * the server can never silently keep a photo the realtor removed.
+ */
+const K_MEDIA_REMOVED = 'ctc:media-removed';
+
+type MediaRemovedFlags = { photo?: boolean; banner?: boolean };
+
+export async function readPendingMediaRemovals(kv: KV): Promise<MediaKind[]> {
+  const raw = (await readJson<MediaRemovedFlags>(kv, K_MEDIA_REMOVED)) ?? {};
+  const out: MediaKind[] = [];
+  if (raw.photo) out.push('photo');
+  if (raw.banner) out.push('banner');
+  return out;
+}
+
+export async function writePendingMediaRemovals(kv: KV, kinds: MediaKind[]): Promise<void> {
+  const cur = (await readJson<MediaRemovedFlags>(kv, K_MEDIA_REMOVED)) ?? {};
+  for (const k of kinds) cur[k] = true;
+  await writeJson(kv, K_MEDIA_REMOVED, cur);
+}
+
+async function clearPendingMediaRemovals(kv: KV, kinds: MediaKind[]): Promise<void> {
+  const cur = (await readJson<MediaRemovedFlags>(kv, K_MEDIA_REMOVED)) ?? {};
+  let changed = false;
+  for (const k of kinds) {
+    if (cur[k]) {
+      delete cur[k];
+      changed = true;
+    }
+  }
+  if (changed) await writeJson(kv, K_MEDIA_REMOVED, cur);
+}
+
+/**
+ * Converge media removals to the cloud (Sept 28, 2026, Anuraj:
+ * profile/banner image removal): delete each removed kind's Storage file,
+ * clear its upload fingerprint (the file is gone, so a later re-pick of
+ * the same image must re-upload instead of matching the cache), null the
+ * profile's remote URLs, and persist via saveProfile.
+ *
+ * Loud, not best-effort: a Storage failure throws, so the caller's bgPush
+ * records a sync error and keeps the op queued — a removal is never
+ * reported silently unconfirmed (confirmed-or-loud). The delete itself is
+ * idempotent (missing file = already deleted), which keeps retries safe.
+ *
+ * `deleteLocal` removes the device-local managed file. It is injectable
+ * because photoFile.ts statically imports react-native and cannot load in
+ * plain node; the app passes the real deleters, tests inject fakes. Local
+ * cleanup stays best-effort: a failed local delete must never block the
+ * server-side removal.
+ */
+export async function removeProfileMediaNow(
+  client: Cloud,
+  userId: string,
+  kv: KV,
+  kinds: MediaKind[],
+  saveProfile: (next: RealtorProfile) => Promise<void>,
+  p: RealtorProfile,
+  deleteLocal?: (kind: MediaKind) => Promise<void>,
+): Promise<RealtorProfile> {
+  for (const kind of kinds) {
+    if (deleteLocal) {
+      try {
+        await deleteLocal(kind);
+      } catch {
+        // Local cleanup is best-effort; the server removal below is not.
+      }
+    }
+    await deleteProfileMedia(client, userId, kind);
+  }
+  const uploaded = (await readJson<{ photo?: string; banner?: string }>(kv, K_MEDIA_UPLOADED)) ?? {};
+  for (const k of kinds) delete uploaded[k];
+  await writeJson(kv, K_MEDIA_UPLOADED, uploaded);
+  const out: RealtorProfile = {
+    ...p,
+    photoRemoteUrl: kinds.includes('photo') ? null : p.photoRemoteUrl,
+    bannerRemoteUrl: kinds.includes('banner') ? null : p.bannerRemoteUrl,
+  };
+  await saveProfile(out);
+  return out;
 }
 
 // ------------------------------------------------- profile media convergence --
@@ -1035,9 +1165,22 @@ export async function pushProfileWithMedia(
   kv: KV,
   p: RealtorProfile,
   saveProfile: (next: RealtorProfile) => Promise<void>,
+  removed: MediaKind[] = [],
+  deleteLocal?: (kind: MediaKind) => Promise<void>,
 ): Promise<void> {
-  const withRemote = await ensureProfileMedia(client, userId, kv, p, saveProfile);
-  await pushProfileNow(client, userId, withRemote);
+  // Media removals converge here too, not just on the live save: the
+  // pending KV flags survive a failed push, so the outbox drain and the
+  // boot reconcile re-run the Storage delete + URL null instead of
+  // silently keeping the old photo_url/banner_image on the server.
+  const pending = await readPendingMediaRemovals(kv);
+  const kinds = Array.from(new Set<MediaKind>([...removed, ...pending]));
+  let out = p;
+  if (kinds.length > 0) {
+    out = await removeProfileMediaNow(client, userId, kv, kinds, saveProfile, p, deleteLocal);
+  }
+  const withRemote = await ensureProfileMedia(client, userId, kv, out, saveProfile);
+  await pushProfileNow(client, userId, withRemote, kinds);
+  await clearPendingMediaRemovals(kv, kinds);
 }
 
 /**

@@ -77,6 +77,28 @@ export function readManagedWebPhoto(): string | null {
   return localStorage.getItem(WEB_PHOTO_KEY);
 }
 
+/**
+ * Delete the single managed photo file (Sept 28, 2026, Anuraj:
+ * profile/banner image removal). Save is the commit point: the form's X
+ * only clears the draft; the actual file deletion happens on Save with a
+ * cleared image. Idempotent — a missing file is not an error.
+ */
+export async function deleteManagedPhoto(): Promise<void> {
+  if (Platform.OS === 'web') {
+    try {
+      localStorage.removeItem(WEB_PHOTO_KEY);
+    } catch {
+      // best-effort
+    }
+    return;
+  }
+  try {
+    await deleteAsync(managedDestUri(), { idempotent: true });
+  } catch {
+    // best-effort
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Banner image (Sept 2026): the same single-managed-file pattern as the
 // profile photo, but a separate fixed file — the banner never shares the
@@ -107,4 +129,27 @@ export async function saveManagedBanner(sourceUri: string): Promise<string> {
 export function readManagedWebBanner(): string | null {
   if (Platform.OS !== 'web') return null;
   return localStorage.getItem(WEB_BANNER_KEY);
+}
+
+/**
+ * Delete the single managed banner file (Sept 28, 2026, Anuraj:
+ * profile/banner image removal). Same commit-point contract as
+ * deleteManagedPhoto. Idempotent.
+ */
+export async function deleteManagedBanner(): Promise<void> {
+  if (Platform.OS === 'web') {
+    try {
+      localStorage.removeItem(WEB_BANNER_KEY);
+    } catch {
+      // best-effort
+    }
+    return;
+  }
+  try {
+    await deleteAsync(`${documentDirectory ?? ''}${MANAGED_BANNER_FILENAME}`, {
+      idempotent: true,
+    });
+  } catch {
+    // best-effort
+  }
 }

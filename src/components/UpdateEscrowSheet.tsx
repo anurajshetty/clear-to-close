@@ -1,6 +1,10 @@
 // Clear to Close — "Update escrow" sheet (deal-list edit round, Sept 2026).
 // Field-identical to the new-escrow form, with every value pre-populated from
-// the card and everything editable (including buyer↔seller↔both switching).
+// the card and everything editable EXCEPT the side (Sept 28, 2026, Anuraj):
+// the side picker is locked after creation (lockSide) — no buyer↔seller
+// switches in the edit flow, which kills the ghost-invite problem at the
+// root. The side value submits unchanged, including 'both' for older
+// dual-agency escrows.
 // Save → card updates in place; the deal list shows an "Escrow updated."
 // toast and stays on the list. The sheet also carries the "Cancel this
 // escrow" danger action (open escrows only — closed cards show the pencil
@@ -43,6 +47,7 @@ export default function UpdateEscrowSheet({ escrow, onClose, onSaved }: UpdateEs
       submitLabel={activating ? "Activate escrow" : "Update escrow"}
       savingLabel={activating ? "Activating…" : "Saving…"}
       initial={escrow ? escrowToInitial(escrow) : null}
+      lockSide
       onSubmit={(input) =>
         activating
           ? store.activateEscrow(escrow!.id, input)

@@ -68,6 +68,38 @@ function CameraIcon() {
   );
 }
 
+/**
+ * The image-removal X badge (Sept 28, 2026, Anuraj): a small visually
+ * distinct dot at the corner of the photo circle / banner, with its own
+ * 44pt tap target plus hitSlop. Rendered as a later sibling of the image
+ * button so it sits above it — tapping the badge clears, tapping the
+ * image opens the picker, and the two can never mis-fire into each other.
+ */
+function ClearBadge({
+  testID,
+  accessibilityLabel,
+  onPress,
+}: {
+  testID: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      onPress={onPress}
+      hitSlop={8}
+      style={({ pressed }) => [styles.clearBadge, pressed && { opacity: 0.6 }]}
+    >
+      <View style={styles.clearBadgeDot}>
+        <Text style={styles.clearX}>×</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 // Profile-photo size cap (Sept 2026, automatic — no user prompt): the crop
 // editor downscales the cropped result so its long edge is at most 1024px,
 // saved as JPEG at ~0.8 quality, targeting ≤ ~1MB. Both the signup profile
@@ -178,24 +210,39 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
     <View>
       {/* 1. Profile pic */}
       <View style={styles.photoRow}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={value.photoUri ? 'Change profile photo' : 'Add profile photo'}
-          onPress={pickPhoto}
-          style={[styles.photoBtn, value.photoUri && styles.photoBtnPicked]}
-        >
-          {value.photoUri && !photoBroken ? (
-            <Image
-              source={{ uri: value.photoUri }}
-              style={styles.photoImg}
-              onError={() => setPhotoBroken(true)}
+        <View style={styles.mediaWrap}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={value.photoUri ? 'Change profile photo' : 'Add profile photo'}
+            onPress={pickPhoto}
+            style={[styles.photoBtn, value.photoUri && styles.photoBtnPicked]}
+          >
+            {value.photoUri && !photoBroken ? (
+              <Image
+                source={{ uri: value.photoUri }}
+                style={styles.photoImg}
+                onError={() => setPhotoBroken(true)}
+              />
+            ) : value.photoUri ? (
+              <Text style={styles.photoInitials}>{initialsOf(value.name)}</Text>
+            ) : (
+              <CameraIcon />
+            )}
+          </Pressable>
+          {/* Image removal (Sept 28, 2026, Anuraj): a small X badge at the
+              photo's corner clears the image from the draft. Visible only
+              when an image is set. Tapping the photo itself still opens the
+              picker (change flow, untouched); the badge is its own 44pt
+              target rendered above the photo, with hitSlop, so the two can
+              never mis-fire. No confirmation — Save is the commit point. */}
+          {value.photoUri ? (
+            <ClearBadge
+              testID="remove-profile-photo"
+              accessibilityLabel="Remove profile photo"
+              onPress={() => onChange({ photoUri: null })}
             />
-          ) : value.photoUri ? (
-            <Text style={styles.photoInitials}>{initialsOf(value.name)}</Text>
-          ) : (
-            <CameraIcon />
-          )}
-        </Pressable>
+          ) : null}
+        </View>
         <View style={styles.photoText}>
           <Text style={styles.photoLabel}>
             {value.photoUri ? 'Change photo' : 'Add photo'}
@@ -209,22 +256,33 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
 
       {/* 2. Banner image */}
       <View style={styles.photoRow}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={value.banner_image ? 'Change banner image' : 'Add banner image'}
-          onPress={pickBanner}
-          style={[styles.bannerBtn, value.banner_image && styles.photoBtnPicked]}
-        >
-          {value.banner_image && !bannerBroken ? (
-            <Image
-              source={{ uri: value.banner_image }}
-              style={styles.bannerImg}
-              onError={() => setBannerBroken(true)}
+        <View style={styles.mediaWrap}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={value.banner_image ? 'Change banner image' : 'Add banner image'}
+            onPress={pickBanner}
+            style={[styles.bannerBtn, value.banner_image && styles.photoBtnPicked]}
+          >
+            {value.banner_image && !bannerBroken ? (
+              <Image
+                source={{ uri: value.banner_image }}
+                style={styles.bannerImg}
+                onError={() => setBannerBroken(true)}
+              />
+            ) : (
+              <CameraIcon />
+            )}
+          </Pressable>
+          {/* Same removal contract as the photo X above (Sept 28, 2026,
+              Anuraj): clears the banner from the draft; Save commits. */}
+          {value.banner_image ? (
+            <ClearBadge
+              testID="remove-banner-image"
+              accessibilityLabel="Remove banner image"
+              onPress={() => onChange({ banner_image: null })}
             />
-          ) : (
-            <CameraIcon />
-          )}
-        </Pressable>
+          ) : null}
+        </View>
         <View style={styles.photoText}>
           <Text style={styles.photoLabel}>
             {value.banner_image ? 'Change banner' : 'Add banner image'}
@@ -311,6 +369,37 @@ const styles = StyleSheet.create({
     gap: 14,
     alignItems: 'center',
     marginTop: 18,
+  },
+  // Anchor for the removal X badge (absolute, corner of the image).
+  mediaWrap: {
+    position: 'relative',
+  },
+  clearBadge: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  clearBadgeDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.ink,
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearX: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 20,
+    textAlign: 'center',
   },
   photoBtn: {
     width: 84,
