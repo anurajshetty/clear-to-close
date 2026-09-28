@@ -23,7 +23,7 @@ import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import type { ClientRole, InviteRealtor, RedeemResult } from '../src/lib/types';
 import { realtorSubline } from '../src/lib/profile';
-import { Field, Kicker, PrimaryButton, initialsOf } from '../src/components/ui';
+import { Field, Kicker, PrimaryButton, initialsOf, useKeyboardHeight } from '../src/components/ui';
 import { RedeemCelebration } from '../src/components/RedeemCelebration';
 import { colors } from '../src/theme';
 
@@ -80,6 +80,10 @@ function Branding({ realtor }: { realtor: InviteRealtor }) {
 
 export default function Redeem() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const params = useLocalSearchParams<{ name?: string; code?: string }>();
   const prefillName = Array.isArray(params.name) ? params.name[0] : params.name;
   const prefillCode = Array.isArray(params.code) ? params.code[0] : params.code;
@@ -167,7 +171,7 @@ export default function Redeem() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]} keyboardShouldPersistTaps="handled">
         <Kicker>Client access</Kicker>
         <Text style={styles.h1}>Join your escrow</Text>
 

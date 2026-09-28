@@ -10,13 +10,17 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { store } from '../src/lib/store-instance';
-import { Kicker, PrimaryButton } from '../src/components/ui';
+import { Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
 export default function ProfileSetup() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
   // Reviews live on the profile but are edited only via the review RPCs —
   // keep the loaded ones so saving the form never wipes them.
@@ -102,7 +106,7 @@ export default function ProfileSetup() {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
       keyboardShouldPersistTaps="handled"
     >
       <Kicker>Realtor profile</Kicker>

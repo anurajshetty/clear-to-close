@@ -16,7 +16,7 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth, setExpectSignOut } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
-import { BackChevron, Kicker, PrimaryButton } from '../src/components/ui';
+import { BackChevron, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import type { RealtorProfile } from '../src/lib/types';
@@ -24,6 +24,10 @@ import { colors } from '../src/theme';
 
 export default function ProfileUpdate() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
   // Reviews live on the profile but are edited only via the review RPCs —
   // keep the loaded ones so saving the form never wipes them.
@@ -162,7 +166,7 @@ export default function ProfileUpdate() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
         keyboardShouldPersistTaps="handled"
       >
         <BackChevron label="Deal list" onPress={() => router.back()} />

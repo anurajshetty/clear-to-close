@@ -13,12 +13,16 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
-import { Kicker, PrimaryButton, TextLink } from '../src/components/ui';
+import { Kicker, PrimaryButton, TextLink, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { colors } from '../src/theme';
 
 export default function ProfileCreate() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
   const [nameError, setNameError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,7 +86,7 @@ export default function ProfileCreate() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
         keyboardShouldPersistTaps="handled"
       >
         <Kicker>Step 2 of 2 · Realtor</Kicker>

@@ -84,6 +84,9 @@ export type EditableChecklistProps = {
   onReorder: (orderedIds: string[]) => void;
   ListHeaderComponent?: ReactElement | null;
   ListFooterComponent?: ReactElement | null;
+  /** Ref to the underlying list (Sept 28, 2026: the transaction detail
+   * screen scrolls the custom-step footer into view above the keyboard). */
+  listRef?: React.Ref<any>;
 };
 
 /**
@@ -99,6 +102,7 @@ export function EditableChecklist({
   onReorder,
   ListHeaderComponent,
   ListFooterComponent,
+  listRef,
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
 
@@ -198,6 +202,7 @@ export function EditableChecklist({
 
   return (
     <DraggableFlatList
+      ref={listRef}
       data={steps}
       keyExtractor={(s) => s.id}
       // Web-only remount on order change (see orderKey above). Native does

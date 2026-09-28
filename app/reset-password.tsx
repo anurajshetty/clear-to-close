@@ -26,7 +26,7 @@ import {
   type RecoverySetPasswordErrorCode,
 } from '../src/lib/auth';
 import { PasswordField } from '../src/components/ChangePasswordSheet';
-import { Field, Kicker, PrimaryButton } from '../src/components/ui';
+import { Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
 
 const RESET_CONFIRMATION =
@@ -49,6 +49,10 @@ function recoveryErrorCopy(code: RecoverySetPasswordErrorCode): string {
 
 export default function ResetPassword() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const params = useLocalSearchParams<{ expired?: string }>();
   const [linkDead, setLinkDead] = useState(params.expired === '1');
 
@@ -120,7 +124,7 @@ export default function ResetPassword() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
         keyboardShouldPersistTaps="handled"
       >
         {linkDead ? (

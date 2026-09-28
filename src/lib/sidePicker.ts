@@ -1,11 +1,15 @@
-// Clear to Close — new-escrow side picker logic (two multi-select toggles).
+// Clear to Close — new-escrow side picker logic (single-select radio,
+// Anuraj Sept 28, 2026: tapping Sell side deselects Buy side and vice versa,
+// only one can be selected at a time).
 //
 // Pure logic for the side picker, kept out of the sheet component so it can be
-// unit-tested. Selecting BOTH toggles = dual agency ("both").
+// unit-tested. Legacy stored escrows with side 'both' still round-trip
+// through selectionToSide/sideToSelection so the edit flow never rewrites
+// stored data; the picker itself is radio-only.
 
 import type { Side } from './types';
 
-/** Which side toggles are selected in the new-escrow sheet. */
+/** Which side is selected in the new-escrow sheet (exactly one). */
 export interface SideSelection {
   buy: boolean;
   sell: boolean;
@@ -15,13 +19,13 @@ export interface SideSelection {
 export const DEFAULT_SIDE_SELECTION: SideSelection = { buy: true, sell: false };
 
 /**
- * Toggle one side card. At least one side always stays selected — tapping the
- * last selected card is a no-op (the guard), never leaves both off.
+ * Select one side card. Radio behavior: tapping a card selects it and
+ * clears the other. At least one side always stays selected — tapping the
+ * already-selected card is a no-op (the guard), never leaves both off.
  */
 export function toggleSide(sel: SideSelection, which: 'buy' | 'sell'): SideSelection {
-  if (which === 'buy' && sel.buy && !sel.sell) return sel;
-  if (which === 'sell' && sel.sell && !sel.buy) return sel;
-  return { ...sel, [which]: !sel[which] };
+  if (sel[which]) return sel;
+  return { buy: which === 'buy', sell: which === 'sell' };
 }
 
 /** Maps a picker selection to the escrow side used by createEscrow. */
@@ -32,7 +36,8 @@ export function selectionToSide(sel: SideSelection): Side {
 
 /**
  * Inverse of selectionToSide (edit round, Sept 2026): pre-populate the
- * picker toggles from a stored escrow side.
+ * picker from a stored escrow side. Legacy 'both' escrows keep their
+ * stored value; any tap in the picker forces radio semantics from there.
  */
 export function sideToSelection(side: Side): SideSelection {
   return { buy: side === 'buy' || side === 'both', sell: side === 'sell' || side === 'both' };
@@ -40,7 +45,8 @@ export function sideToSelection(side: Side): SideSelection {
 
 /**
  * How the client-name field adapts: one "Client name" field for a single
- * side, "Buyer name" + "Seller name" fields when both are picked.
+ * side, "Buyer name" + "Seller name" fields when a legacy 'both' escrow
+ * is being edited.
  */
 export function nameFieldMode(sel: SideSelection): 'single' | 'dual' {
   return sel.buy && sel.sell ? 'dual' : 'single';

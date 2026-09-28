@@ -8,7 +8,7 @@
 // Both-side escrows (dual agency): shared time-tracker card on top, then a
 // Buyer | Seller tab switcher — each tab fully independent (own checklist,
 // ring, add-step; rows carry a Buyer/Seller tag). No shared-step syncing.
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -20,7 +20,7 @@ import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { EditableChecklist } from '../../src/components/Checklist';
 import { InviteSheet } from '../../src/components/InviteSheet';
 import { ClientList } from '../../src/components/ClientList';
-import { Field, Kicker, PrimaryButton, SecondaryButton } from '../../src/components/ui';
+import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight } from '../../src/components/ui';
 import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
@@ -35,6 +35,18 @@ export default function TransactionDetail() {
   // effectively untappable. Clear the safe-area inset plus a deliberate gap
   // (the existing 14) so the whole header sits below the notch.
   const insets = useSafeAreaInsets();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). The shared pattern: lift the screen by the keyboard
+  // height, and scroll the focused custom-step field into view.
+  const kbHeight = useKeyboardHeight();
+  const listRefs = useRef<Record<string, any>>({});
+  const scrollAddFormIntoView = (key: string) => {
+    // Let the keyboard finish animating in before scrolling, so the footer
+    // lands above it instead of behind it.
+    setTimeout(() => {
+      listRefs.current[key]?.scrollToEnd?.({ animated: true });
+    }, 300);
+  };
   const params = useLocalSearchParams<{ id: string }>();
   const rawId = params.id;
   const escrowId = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -247,6 +259,7 @@ export default function TransactionDetail() {
           value={newTitle}
           onChangeText={(t) => setNewTitle(t.slice(0, 60))}
           placeholder="Step name"
+          onFocus={() => scrollAddFormIntoView(r)}
         />
         <View style={styles.addBtns}>
           <View style={styles.addPrimary}>
@@ -301,6 +314,9 @@ export default function TransactionDetail() {
         </View>
         {renderLifecycle(r)}
         <EditableChecklist
+          listRef={(el: any) => {
+            listRefs.current[r] = el;
+          }}
           steps={steps}
           sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
           onToggle={(id) => toggle(r, id)}
@@ -324,7 +340,7 @@ export default function TransactionDetail() {
   const singleDone = singleSteps.filter((s) => s.done).length;
 
   return (
-    <GestureHandlerRootView style={styles.screen}>
+    <GestureHandlerRootView style={[styles.screen, { paddingBottom: kbHeight }]}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <Pressable
           onPress={() => router.back()}
@@ -391,6 +407,9 @@ export default function TransactionDetail() {
         </View>
       ) : (
         <EditableChecklist
+          listRef={(el: any) => {
+            listRefs.current[role] = el;
+          }}
           steps={singleSteps}
           onToggle={(id) => toggle(role, id)}
           onReorder={(ids) => reorder(role, ids)}

@@ -62,7 +62,12 @@ export interface Escrow {
 
 export interface CreateEscrowInput {
   address: string;
-  city: string;
+  /**
+   * Optional (Sept 28, 2026, Anuraj): the new/edit escrow form no longer
+   * asks for a city. New escrows store ''. The DB column stays NOT NULL and
+   * existing rows keep their city.
+   */
+  city?: string;
   side: Side;
   buyerName?: string;
   sellerName?: string;
@@ -78,7 +83,8 @@ export interface CreateEscrowInput {
  */
 export interface UpdateEscrowInput {
   address: string;
-  city: string;
+  /** Optional: when omitted the stored city is preserved (see CreateEscrowInput). */
+  city?: string;
   side: Side;
   buyerName?: string;
   sellerName?: string;

@@ -14,11 +14,15 @@ import {
 import { useRouter } from 'expo-router';
 import { auth, type SignUpErrorCode } from '../src/lib/auth';
 import { initCloudSync } from '../src/lib/store-instance';
-import { BackChevron, Field, Kicker, PrimaryButton } from '../src/components/ui';
+import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
 
 export default function SignUp() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -59,7 +63,7 @@ export default function SignUp() {
   return (
     <SafeAreaView style={styles.screen}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
         keyboardShouldPersistTaps="handled"
       >
         <BackChevron label="Role" onPress={() => router.push('/role')} />

@@ -95,6 +95,11 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/pull_then_push.test.ts" \
   "$ROOT/tests/conflict_rules.test.ts" \
   "$ROOT/tests/date_field_web_width.test.ts" \
+  "$ROOT/tests/date_field_collapsed.test.ts" \
+  "$ROOT/tests/sheet_detent_lock.test.ts" \
+  "$ROOT/tests/city_removed.test.ts" \
+  "$ROOT/tests/keyboard_avoidance.test.ts" \
+  "$ROOT/tests/cancel_escrow_confirm.test.ts" \
   "$ROOT/tests/header_top_gap.test.ts" \
   "$ROOT/tests/realtor_home_banner.test.ts" \
   "$ROOT/tests/recovery.test.ts" \
@@ -167,6 +172,11 @@ node "$OUT/tests/sync_error_bar_safe_area.test.js"
 node "$OUT/tests/pull_then_push.test.js"
 node "$OUT/tests/conflict_rules.test.js"
 node "$OUT/tests/date_field_web_width.test.js"
+node "$OUT/tests/date_field_collapsed.test.js"
+node "$OUT/tests/sheet_detent_lock.test.js"
+node "$OUT/tests/city_removed.test.js"
+node "$OUT/tests/keyboard_avoidance.test.js"
+node "$OUT/tests/cancel_escrow_confirm.test.js"
 node "$OUT/tests/header_top_gap.test.js"
 node "$OUT/tests/realtor_home_banner.test.js"
 node "$OUT/tests/recovery.test.js"

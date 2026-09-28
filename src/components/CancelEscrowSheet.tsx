@@ -14,7 +14,16 @@ interface CancelEscrowSheetProps {
   onCancelled: (escrow: Escrow) => void;
 }
 
-export default function CancelEscrowSheet({ escrow, onClose, onCancelled }: CancelEscrowSheetProps) {
+/**
+ * The confirmation content without the Sheet wrapper (Sept 28, 2026): the
+ * Update escrow sheet renders this INSIDE its own already-open Modal.
+ * iOS silently drops a second Modal presented while another is visible
+ * (verified in react-native 0.86.3: RCTModalHostViewComponentView presents
+ * from the root view controller, so the second present is ignored), which
+ * is why the stacked CancelEscrowSheet never appeared from the Update
+ * sheet's "Cancel this escrow" action. One Modal on screen at a time.
+ */
+export function CancelEscrowBody({ escrow, onClose, onCancelled }: CancelEscrowSheetProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,7 +43,7 @@ export default function CancelEscrowSheet({ escrow, onClose, onCancelled }: Canc
   };
 
   return (
-    <Sheet visible={!!escrow} onClose={onClose}>
+    <>
       <Kicker>Cancel escrow</Kicker>
       <Text style={styles.h2}>Cancel this escrow?</Text>
       <Text style={styles.body}>
@@ -66,6 +75,16 @@ export default function CancelEscrowSheet({ escrow, onClose, onCancelled }: Canc
           <Text style={styles.quietText}>Keep it</Text>
         </Pressable>
       </View>
+    </>
+  );
+}
+
+// Deal-list usage (app/index.tsx): the confirmation in its own Sheet. This
+// stays a standalone Modal because the deal list has no other Modal open.
+export default function CancelEscrowSheet({ escrow, onClose, onCancelled }: CancelEscrowSheetProps) {
+  return (
+    <Sheet visible={!!escrow} onClose={onClose}>
+      <CancelEscrowBody escrow={escrow} onClose={onClose} onCancelled={onCancelled} />
     </Sheet>
   );
 }

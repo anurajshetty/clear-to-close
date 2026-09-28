@@ -15,13 +15,17 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth, type SignInErrorCode } from '../src/lib/auth';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { resolvePostAuthHref } from '../src/lib/bootRoute';
-import { BackChevron, Field, Kicker, PrimaryButton } from '../src/components/ui';
+import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
 
 const RESET_CONFIRMATION = 'If an account exists for this email, a reset link is on its way.';
 
 export default function Login() {
   const router = useRouter();
+  // Keyboard avoidance (Sept 28, 2026, Anuraj: every input stays visible
+  // above the keyboard). Shared pattern: bottom padding equal to the
+  // keyboard height, so the focused field can scroll into view above it.
+  const kbHeight = useKeyboardHeight();
   const params = useLocalSearchParams<{ expired?: string }>();
   const expired = params.expired === '1';
 
@@ -104,7 +108,7 @@ export default function Login() {
 
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]} keyboardShouldPersistTaps="handled">
         <BackChevron label="Role" onPress={() => router.push('/role')} />
 
         {mode === 'resetDone' ? (

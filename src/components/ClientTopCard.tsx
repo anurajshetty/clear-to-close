@@ -254,9 +254,13 @@ export function ClientTopCard({
         >
           {address}
         </Text>
-        <Text style={[styles.addr, { fontSize: t.addr, lineHeight: t.addr * 1.45 }]} testID="client-city">
-          {city}
-        </Text>
+        {/* City line: hidden when empty (Sept 28, 2026: the form no longer
+            collects a city, so new escrows have none). */}
+        {city ? (
+          <Text style={[styles.addr, { fontSize: t.addr, lineHeight: t.addr * 1.45 }]} testID="client-city">
+            {city}
+          </Text>
+        ) : null}
 
         <View style={[styles.center, { marginTop: t.realtorDidTop }]} testID="topcard-center">
           {/* "{realtor name} completed" above the step count (approved

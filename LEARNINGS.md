@@ -167,6 +167,85 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   (`tests/date_field_web_width.test.ts`); the visible outcome (no overflow at
   360px/390px) was verified with a headless render of the shipped CSS.
 
+## Sheets, inputs, and forms (Sept 28, 2026)
+
+- **Date pickers must start collapsed, never pre-opened.** The New Escrow sheet
+  auto-rendered the iOS inline `DateTimePicker` calendar on open (Anuraj caught
+  it live on his iPhone). Root cause: `DateTimePicker` was mounted
+  unconditionally inside `DateField`. Practice: calendar inputs keep the picker
+  hidden behind the field — tap to open, select a date to close, Android only
+  commits `event.type === 'set'` (dismiss does not clear the date). The field
+  container is a `Pressable`; the picker mounts only while `open`. Pinned by
+  `tests/date_field_collapsed.test.ts`.
+- **Radio-style choices are single-select at the data layer, not just the
+  styling.** The realtor-side selector could show both Buy and Sell selected
+  (Anuraj caught it live on his iPhone). Root cause: the side-picker toggle
+  allowed both sides to be "on" at once while the card styling only dimmed
+  unselected sides. Practice: selection state is computed in one pure function
+  (`toggleSide` returns exactly one selected side; tapping the selected side is
+  a no-op) so the UI can never render two selected cards. Legacy stored
+  `side: 'both'` keeps round-tripping until the user taps — never rewrite stored
+  data as a side effect of a selection fix. Pinned by `tests/sidepicker.test.ts`.
+- **Lock the sheet detent when the keyboard opens.** Tapping a field made the
+  sheet jump from half-height to full-screen (Anuraj, Sept 28, 2026). Root
+  cause: the shared `Sheet` derived its scroll region from the keyboard-visible
+  height, which changed as the keyboard animated in. Practice: snapshot the
+  sheet's opening height from the first keyboard-closed layout and apply it as
+  `maxHeight`; the keyboard only lifts the sheet (marginBottom, capped so the
+  top never leaves the screen) — content below the fold is reached by scrolling
+  inside. Lives in the SHARED `Sheet` so every sheet benefits. Pinned by
+  `tests/sheet_detent_lock.test.ts`.
+- **Removing a form field is a full-stack audit, not a render change.** The City
+  field was removed from the New/Edit escrow forms (Anuraj, Sept 28, 2026).
+  Practice: audit the field end to end — DB column, validation, initial-form
+  mapping, submit payload, cloud sync consumers, every render site — and decide
+  the storage story explicitly: here the NOT NULL column stays, new escrows
+  store `''`, updates preserve the stored city, and `ClientTopCard` hides the
+  city line when empty (no blank row). The app input is optional; a nullable
+  migration is a separate decision. Pinned by `tests/city_removed.test.ts`.
+- **When an approved direction changes mid-fix, revert the first
+  implementation fully.** The inline "Custom step" field on the transaction
+  detail screen slid behind the keyboard when focused (Anuraj's iPhone
+  screenshot, Sept 28, 2026). The first fix used a centered ConfirmDialog,
+  then a bottom sheet — Anuraj's final decision SUPERSEDED both: keep the
+  inline form visually exactly as-is and add keyboard avoidance to the
+  screen instead. Practice: revert the superseded implementation's component
+  API additions completely (the dialog's `children`/`confirmDisabled`/lift
+  props and `Field`'s `autoFocus` were removed again) rather than leaving
+  dead API surface; the final fix is `useKeyboardHeight` + bottom padding
+  on the screen plus an on-focus scroll of the add-step footer into view.
+  Pinned by `tests/keyboard_avoidance.test.ts`.
+
+- **Keyboard avoidance is a whole-app audit, not a per-screen patch
+  (Sept 28, 2026, Anuraj: EVERY input stays visible above the keyboard, no
+  exceptions).** Audit found the shared avoidance lived only in the `Sheet`
+  component — all six bottom sheets were covered, but seven full-screen
+  forms (login, signup, redeem, reset password, profile setup/update/create)
+  and the transaction detail screen had nothing. Practice: export the one
+  shared `useKeyboardHeight()` hook from `ui.tsx`; every screen adds bottom
+  padding equal to the keyboard height to its ScrollView content (the same
+  lift-by-keyboard-height idea the Sheet uses internally), so the OS can
+  scroll the focused field into view above the keyboard. The detail screen
+  additionally scrolls its custom-step footer into view on focus via a
+  `listRef` on the checklist. Pinned per-surface by
+  `tests/keyboard_avoidance.test.ts`.
+- **iOS silently drops a second Modal presented while another is visible —
+  never stack two Sheets.** Tapping "Cancel this escrow" in the Update
+  sheet did nothing on Anuraj's iPhone (Sept 28, 2026): the tap handler fired
+  and the state flipped, but the confirmation never appeared. Root cause
+  CONFIRMED in the react-native 0.86.3 source in this repo
+  (`RCTModalHostViewComponentView.mm`): every Modal presents from
+  `[self reactViewController]` (the root VC), never the topmost presented
+  VC, so the second `presentViewController:` is ignored by UIKit with no
+  error. Practice: only one Modal on screen at a time — the confirmation now
+  renders INSIDE the Update sheet's already-open Modal (`EscrowFormSheet`'s
+  `confirmBody` prop, fed by the unwrapped `CancelEscrowBody`), so the form
+  state survives and "Keep it"/overlay-tap backs out of the confirmation
+  only. The deal-list card X keeps the standalone Sheet-wrapped
+  `CancelEscrowSheet` at the screen root (no other Modal open there). When
+  adding any confirm UI to a sheet, audit every other sheet for the same
+  stacking. Pinned by `tests/cancel_escrow_confirm.test.ts`.
+
 ## Realtor home banner (Sept 28, 2026)
 
 - **Shared banner strip, one component for two surfaces.** The realtor home
@@ -198,3 +277,4 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   the app correctly falls back to the local cache. Assert the visible
   outcome (strip 118px, full-bleed, photo 88px at right 18, tap routes to
   /profile-update) from bounding boxes, not just source pins.
+

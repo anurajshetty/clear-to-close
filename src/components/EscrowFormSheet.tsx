@@ -20,7 +20,6 @@ import { colors } from '../theme';
 
 export interface EscrowFormInitial {
   address: string;
-  city: string;
   side: Side;
   buyerName: string;
   sellerName: string;
@@ -31,7 +30,6 @@ export interface EscrowFormInitial {
 export function escrowToInitial(e: Escrow): EscrowFormInitial {
   return {
     address: e.address,
-    city: e.city,
     side: e.side,
     buyerName: e.buyerName ?? '',
     sellerName: e.sellerName ?? '',
@@ -57,7 +55,6 @@ function toMs(v: string): number {
 
 type ErrorKey =
   | 'address'
-  | 'city'
   | 'buyerName'
   | 'sellerName'
   | 'openDate'
@@ -87,6 +84,14 @@ interface EscrowFormSheetProps {
   onDone: (escrow: Escrow) => void;
   /** Rendered below the submit button (e.g. the "Cancel this escrow" danger action). */
   footer?: React.ReactNode;
+  /**
+   * Replaces the entire sheet body (Sept 28, 2026): the Update sheet's
+   * "Cancel this escrow" confirmation renders here, INSIDE the already-open
+   * Modal. iOS silently drops a second Modal presented while another is
+   * visible (verified in react-native 0.86.3), so the confirmation must
+   * never be a stacked Sheet of its own.
+   */
+  confirmBody?: React.ReactNode;
 }
 
 export function EscrowFormSheet({
@@ -100,10 +105,10 @@ export function EscrowFormSheet({
   onSubmit,
   onDone,
   footer,
+  confirmBody,
 }: EscrowFormSheetProps) {
   const [sel, setSel] = useState<SideSelection>(DEFAULT_SIDE_SELECTION);
   const [address, setAddress] = useState('');
-  const [city, setCity] = useState('');
   const [buyerName, setBuyerName] = useState('');
   const [sellerName, setSellerName] = useState('');
   const [openDate, setOpenDate] = useState('');
@@ -124,7 +129,6 @@ export function EscrowFormSheet({
     wasVisible.current = true;
     setSel(initial ? sideToSelection(initial.side) : DEFAULT_SIDE_SELECTION);
     setAddress(initial?.address ?? '');
-    setCity(initial?.city ?? '');
     setBuyerName(initial?.buyerName ?? '');
     setSellerName(initial?.sellerName ?? '');
     setOpenDate(initial?.openDate ?? '');
@@ -148,7 +152,6 @@ export function EscrowFormSheet({
     // Every required field gets its own inline message (Sept 2026): no
     // generic banner for validation failures. Sentence case, plain words.
     if (!address.trim()) e.address = 'Please enter the property address.';
-    if (!city.trim()) e.city = 'Please enter the city.';
     // The side picker always keeps one side selected (toggleSide guard), so
     // the side itself needs no error; the client-name wording follows the
     // field label ("Client name" single side vs "Buyer/Seller name" dual).
@@ -186,7 +189,6 @@ export function EscrowFormSheet({
     try {
       const done = await onSubmit({
         address: address.trim(),
-        city: city.trim(),
         side,
         buyerName: sel.buy ? buyerName.trim() : undefined,
         sellerName: sel.sell ? sellerName.trim() : undefined,
@@ -227,8 +229,10 @@ export function EscrowFormSheet({
 
   return (
     <Sheet visible={visible} onClose={handleClose}>
-      <Kicker>{kicker}</Kicker>
-      <Text style={styles.h2}>{title}</Text>
+      {confirmBody ?? (
+        <>
+          <Kicker>{kicker}</Kicker>
+          <Text style={styles.h2}>{title}</Text>
 
       <Text style={styles.label}>Which side are you representing?</Text>
       <View style={styles.sideRow}>
@@ -246,19 +250,6 @@ export function EscrowFormSheet({
           }}
           placeholder="e.g. 4187 Oakmont Dr"
           testID="escrow-address"
-        />
-      </FieldWrap>
-
-      <FieldWrap error={errors.city}>
-        <Field
-          label="City"
-          value={city}
-          onChangeText={(v) => {
-            setCity(v);
-            clear('city');
-          }}
-          placeholder="Valencia, CA 91355"
-          testID="escrow-city"
         />
       </FieldWrap>
 
@@ -344,6 +335,8 @@ export function EscrowFormSheet({
       </View>
 
       {footer}
+        </>
+      )}
     </Sheet>
   );
 }

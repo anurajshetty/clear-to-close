@@ -504,9 +504,9 @@ export function createStore(kv: KV): Store {
     async createEscrow(input: CreateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
       const address = input.address.trim();
-      const city = input.city.trim();
+      // City is no longer collected (Sept 28, 2026): new escrows store ''.
+      const city = (input.city ?? '').trim();
       if (!address) throw new Error('createEscrow: address is required');
-      if (!city) throw new Error('createEscrow: city is required');
       assertDate(input.openDate, 'openDate');
       assertDate(input.closeDate, 'closeDate');
       if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
@@ -656,9 +656,7 @@ export function createStore(kv: KV): Store {
     async updateEscrow(escrowId: string, input: UpdateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
       const address = input.address.trim();
-      const city = input.city.trim();
       if (!address) throw new Error('updateEscrow: address is required');
-      if (!city) throw new Error('updateEscrow: city is required');
       assertDate(input.openDate, 'openDate');
       assertDate(input.closeDate, 'closeDate');
       if (parseLocalMidnight(input.closeDate) < parseLocalMidnight(input.openDate)) {
@@ -670,7 +668,9 @@ export function createStore(kv: KV): Store {
       };
       const e = cloneEscrow(findEscrowOrThrow(escrowId));
       e.address = address;
-      e.city = city;
+      // City is no longer edited (Sept 28, 2026): a supplied value still
+      // applies, otherwise the stored city is preserved.
+      if (input.city !== undefined) e.city = input.city.trim();
       e.side = input.side;
       e.buyerName = trimName(input.buyerName);
       e.sellerName = trimName(input.sellerName);
