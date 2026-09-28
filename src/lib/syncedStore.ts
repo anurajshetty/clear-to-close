@@ -25,17 +25,21 @@ import type {
   RealtorProfile,
   RedeemResult,
   ResolveInviteError,
+  StepT,
   TcView,
 } from './types';
 import {
   cloudClient,
   cloudConfigured,
   clearOutbox,
+  dequeueOutboxOp,
   drainOutbox,
   enqueueOutbox,
   ensureCloudUser,
   fetchCloudView,
   isCapViolation,
+  logConflict,
+  outboxOpKey,
   pingCloud,
   pullEscrowsNow,
   pullFullInvitesNow,
@@ -176,11 +180,77 @@ export function createSyncedStore(
 
   /** Fire-and-forget cloud push; failures (or a not-yet-healthy cloud) go
    *  to the outbox for retry, so the system self-heals when connectivity or
-   *  the project configuration is fixed later. */
+   *  the project configuration is fixed later.
+   *
+   *  Server-is-truth (Anuraj, Sept 2026): bgPush is the ONLY push entry
+   *  point, and it fires only from explicit user actions (Save, check-off,
+   *  invite generate/regenerate, close, revoke). There are no background
+   *  pushes — boot and foreground return are pure pull. */
   // Throttle for background re-inits kicked off when ops are queued while
   // the cloud isn't healthy: at most one re-init per minute, so a burst of
   // offline mutations doesn't hammer the ping endpoint.
   let lastBgReinit = 0;
+  /**
+   * Rows with a user action's push currently in flight. Marked
+   * SYNCHRONOUSLY when the action fires (before any await), so a pull that
+   * is already in flight sees the row as dirty and never overwrites it —
+   * the explicit push is the row's only writer, and its confirmation is
+   * the last word. Cleared when the push settles; the persisted outbox op
+   * covers a crash mid-push (the boot drain retries it — boot itself never
+   * pushes).
+   */
+  const dirtyInflight = new Set<string>();
+  /**
+   * Dirty-row check: true while an explicit user action's push for this row
+   * is in flight (memory flag, set synchronously when the action fires) or
+   * queued for retry (persisted outbox). Pulls must never overwrite a dirty
+   * row.
+   */
+  async function isDirty(key: string): Promise<boolean> {
+    if (dirtyInflight.has(key)) return true;
+    const ops = await readOutboxOps(kv);
+    return ops.some((o) => outboxOpKey(o) === key);
+  }
+  /**
+   * Canonical snapshots for conflict detection (ARCHITECTURE.md principle
+   * 5): a pull that replaces a clean local snapshot with a DIFFERENT
+   * server row is resolving a genuine two-writer divergence, and the
+   * resolution is logged. Field subsets are the synced surface — local-only
+   * metadata (e.g. lastAction) must not count as a divergence.
+   */
+  function profileCanon(p: RealtorProfile): string {
+    return JSON.stringify([
+      p.name,
+      p.email,
+      p.phone,
+      p.about,
+      p.yearsExperience,
+      p.areasServed,
+      p.dreLicense,
+      p.realty_group,
+      p.photoRemoteUrl,
+      p.bannerRemoteUrl,
+    ]);
+  }
+  function escrowCanon(e: Escrow): string {
+    const steps = (ss: StepT[]): string =>
+      [...ss]
+        .sort((a, b) => a.order - b.order)
+        .map((s) => [s.id, s.title, s.subtitle, s.done, s.order, s.custom, s.completedAt].join('|'))
+        .join(';');
+    return JSON.stringify([
+      e.address,
+      e.city,
+      e.side,
+      e.buyerName,
+      e.sellerName,
+      e.openDate,
+      e.closeDate,
+      e.status,
+      steps(e.buyerSteps),
+      steps(e.sellerSteps),
+    ]);
+  }
   function bgPush(
     run: (c: NonNullable<ReturnType<typeof cloudClient>>, uid: string) => Promise<void>,
     op: { op: 'pushEscrow' | 'pushProfile' | 'pushInvite' | 'pushRevoke'; escrowId?: string; inviteId?: string } | null,
@@ -190,18 +260,31 @@ export function createSyncedStore(
       const c = client();
       const uid = userId;
       if (!c || !uid) return;
+      // The user's explicit action dirties the row synchronously — before
+      // any await — so a concurrent pull can never interleave a stale
+      // overwrite between the tap and the push.
+      const key = op ? outboxOpKey(op) : null;
+      if (key) dirtyInflight.add(key);
       void (async () => {
         try {
+          // Enqueue BEFORE the push is attempted: the row stays dirty for
+          // the whole flight, so pulls skip it; and a crash mid-push
+          // leaves the op queued for the boot drain (a pure-pull boot must
+          // never wipe an unconfirmed local edit).
+          if (op) await enqueueOutbox(kv, { ...op, attempts: 0 });
           await run(c, uid);
+          // Confirmed on the server: the row is clean again.
+          if (op) await dequeueOutboxOp(kv, op);
         } catch (e) {
           // Sync-failure surface (Anuraj, Sept 2026): the write did not
-          // reach the server. It is queued for retry, AND the failure is
-          // recorded so the realtor sees it on screen immediately — no
-          // silent queueing, no "looks saved but wasn't".
+          // reach the server. It is already queued for retry (above), AND
+          // the failure is recorded so the realtor sees it on screen
+          // immediately — no silent queueing, no "looks saved but wasn't".
           if (op) {
-            await enqueueOutbox(kv, { ...op, attempts: 0 });
             await recordSyncError(kv, syncErrorForOp(op, e));
           }
+        } finally {
+          if (key) dirtyInflight.delete(key);
         }
       })();
       return;
@@ -351,8 +434,8 @@ export function createSyncedStore(
       }
       // Deal-list hydration: a realtor logging in on a device/browser whose
       // local KV was never seeded must see the escrows that already exist
-      // under their account. Runs after the outbox drain and before the
-      // background push-reconcile, so the push converges on merged state.
+      // under their account. Runs after the outbox drain (queued
+      // user-action pushes retry first); boot is pull-only after that.
       try {
         await pullEscrowsFromCloud();
       } catch {
@@ -373,28 +456,15 @@ export function createSyncedStore(
       } catch {
         // Pull failure keeps the local list as-is.
       }
-      // Lightweight reconcile: upserts are idempotent, so pushing everything
-      // converges any state that missed the outbox (e.g. a launch where the
-      // cloud config was broken and fixed later). Best-effort, background.
-      // The profile push funnels through pushProfileWithMedia (Sept 2026
-      // stale-client-photo fix) so a never-uploaded photo still converges;
-      // the fingerprint guard keeps this from re-uploading every boot.
-      void (async () => {
-        try {
-          if (!c || !userId) return;
-          const profile = await local.getProfile();
-          if (profile)
-            await pushProfileWithMedia(c, userId, kv, profile, (p) => local.saveProfile(p));
-          for (const escrow of await local.listEscrows()) {
-            await pushEscrowNow(c, userId, escrow);
-            for (const inv of await local.listInvites(escrow.id)) {
-              await pushInviteNow(c, inv);
-            }
-          }
-        } catch {
-          // Next launch retries.
-        }
-      })();
+      // Server-is-truth (Anuraj, Sept 2026): boot and foreground return are
+      // PULL ONLY. The old "push everything to converge" background
+      // reconcile is deleted as a pattern — pushing clean local snapshots
+      // on boot is what let a stale device overwrite newer server data
+      // (Sept 27 profile rollback: the server's "jimmy ola" was replaced by
+      // a stale local "Jimmy"). Pushes happen only as the direct result of
+      // an explicit user action (Save, check-off, invite generate/regenerate,
+      // close, revoke); a failed action's op stays queued in the outbox and
+      // the boot drain above retries it.
     }
     return result;
   }
@@ -412,12 +482,31 @@ export function createSyncedStore(
       if (!cloudConfigured()) return;
       const c = client();
       if (!c) return;
-      const ops = await readOutboxOps(kv);
-      if (ops.some((o) => o.op === 'pushProfile')) return; // local is ahead
+      // Never clobber a local edit that is still awaiting push: a dirty
+      // profile (in-flight or queued pushProfile op) means the local
+      // snapshot is the explicit user intent — the pull must not touch it.
+      if (await isDirty(outboxOpKey({ op: 'pushProfile' }))) return; // local is ahead
       const uid = await ensureCloudUser(c);
       if (!uid) return;
       const pulled = await pullProfileNow(c, uid);
-      if (pulled) await local.saveProfile(pulled);
+      if (!pulled) return;
+      // Re-check just before overwriting: a user Save that landed while
+      // the fetch was in flight marks the row dirty, and its explicit push
+      // is the only writer — the save's confirmation is the last word.
+      if (await isDirty(outboxOpKey({ op: 'pushProfile' }))) return;
+      const localProfile = await local.getProfile();
+      if (localProfile && profileCanon(localProfile) !== profileCanon(pulled)) {
+        // Genuine two-writer divergence (e.g. another device saved newer
+        // values): the server row wins — log the resolution for audit
+        // (ARCHITECTURE.md principle 5).
+        await logConflict(kv, {
+          entity: 'profile',
+          id: uid,
+          resolution: 'server-wins',
+          detail: 'pull replaced a diverged clean snapshot with the server row (last committed push wins)',
+        });
+      }
+      await local.saveProfile(pulled);
     } catch {
       // Fail open: the local snapshot keeps rendering.
     }
@@ -443,10 +532,30 @@ export function createSyncedStore(
       if (!c) return existing;
       const cloud = await pullEscrowsNow(c);
       if (cloud === null) return existing;
+      // Re-read AFTER the fetch: a user Save that landed while the fetch
+      // was in flight marks its row dirty, and its explicit push is the
+      // only writer — the pull must not clobber it. The memory flag is
+      // checked per row (synchronously) so even a save that lands mid-merge
+      // is seen.
       const ops = await readOutboxOps(kv);
       for (const e of cloud) {
-        const dirty = ops.some((o) => o.op === 'pushEscrow' && o.escrowId === e.id);
-        if (!dirty) await local.replaceEscrow(e);
+        const key = outboxOpKey({ op: 'pushEscrow', escrowId: e.id });
+        const dirty = dirtyInflight.has(key) || ops.some((o) => outboxOpKey(o) === key);
+        if (dirty) continue;
+        const prev = existing.find((x) => x.id === e.id);
+        if (prev && escrowCanon(prev) !== escrowCanon(e)) {
+          // Genuine two-writer divergence (e.g. another device pushed a
+          // newer escrow unit): the server unit wins — log the resolution
+          // for audit (ARCHITECTURE.md principle 5).
+          await logConflict(kv, {
+            entity: 'escrow',
+            id: e.id,
+            resolution: 'server-wins',
+            detail:
+              'pull replaced a diverged clean escrow with the server unit (last committed push wins)',
+          });
+        }
+        await local.replaceEscrow(e);
       }
       return local.listEscrows();
     } catch {

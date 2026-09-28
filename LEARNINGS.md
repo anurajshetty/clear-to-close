@@ -46,6 +46,30 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   for confirmation — no queueing, no background deferral. Any failure shows an
   immediate, plain-words error with Retry. Reads are server-first; local cache is
   offline fallback only. Supabase Realtime keeps realtor and client views live.
+- **Boot pushed stale local data over newer server data (production clobber,
+  Sept 27, 2026).** `initCloudSync` ran a fire-and-forget "reconcile" that
+  unconditionally pushed the local profile, every local escrow + steps, and
+  every local invite on boot — so a stale device overwrote Anuraj's newer
+  server profile name ("jimmy ola" became "Jimmy" again). The earlier fix had
+  only repaired the pull direction and left the inverse clobber path. Practice:
+  boot/foreground are pure PULL; PUSH happens only as the direct result of an
+  explicit user action. The old boot push-reconcile pattern is deleted as a
+  pattern, not repaired. Regression test: real boot issues zero write calls
+  while stale "Jimmy" converges to server "jimmy ola".
+- **Every multi-writer conflict needs an explicit rule, and resolutions must
+  be auditable (Sept 27, 2026).** Documented in `docs/CONFLICT_RULES.md`:
+  last committed push wins for profile and escrow units (the server's commit
+  order arbitrates — `updated_at` cannot be the arbiter today: only
+  `realtor_profiles` has the column and it has no update trigger); steps
+  follow their parent escrow unit's last committed push, including the
+  documented sharp edge that a stale device's unit push can revert a newer
+  check-off; invite terminal states (redeemed/revoked) are write-once and
+  monotonic — the server's `redeem_invite` RPC refuses redeem-after-revoke
+  and a stale server read never clears a timestamp. Every pull that resolves
+  a genuine divergence appends to a bounded local conflict log
+  (`ctc:conflict-log`, cap 50, read via `readConflictLog`). Practice: write
+  the conflict rule next to the code that writes, with one regression test
+  per rule — "whichever syncs first wins" is never acceptable.
 
 ## Client-facing data exposure (Sept 27, 2026)
 

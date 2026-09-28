@@ -327,9 +327,17 @@ longer vanish without the client ever seeing it. The local snapshot is never
 the eternal source of truth: on boot (and when the app returns to the
 foreground) the realtor profile is refetched from the server and replaces the
 stale local snapshot, and the client side refetches its linked escrow view the
-same way. Conflict care: a locally-dirty row with edits still awaiting push is
+same way. Boot and foreground return are pure PULL: the app never pushes
+saved local data on boot — PUSH happens only as the direct result of an
+explicit user action (tap Save, check a step, generate an invite, close a
+deal). Conflict care: a locally-dirty row with edits still awaiting push is
 never clobbered by the server copy, and a missing server row never wipes the
-local snapshot; offline, the cached snapshot keeps rendering.
+local snapshot; offline, the cached snapshot keeps rendering. Two-writer
+conflicts follow explicit documented rules (see docs/CONFLICT_RULES.md):
+last committed push wins for profile and escrow units (server commit order
+arbitrates), and invite terminal states (redeemed/revoked) are write-once —
+a stale server read never clears them. Every pull that resolves a genuine
+two-writer divergence logs the resolution to a local audit buffer.
 
 **Sync failure reporting** — whenever a write fails to reach the server
 (profile edits, escrow edits and dates, checklist check/uncheck, reorders

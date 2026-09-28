@@ -92,6 +92,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/client_refresh_foreground.test.ts" \
   "$ROOT/tests/profile_boot_converge.test.ts" \
   "$ROOT/tests/sync_error_bar_safe_area.test.ts" \
+  "$ROOT/tests/pull_then_push.test.ts" \
+  "$ROOT/tests/conflict_rules.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -157,6 +159,8 @@ node "$OUT/tests/sync_chain_broad.test.js"
 node "$OUT/tests/client_refresh_foreground.test.js"
 node "$OUT/tests/profile_boot_converge.test.js"
 node "$OUT/tests/sync_error_bar_safe_area.test.js"
+node "$OUT/tests/pull_then_push.test.js"
+node "$OUT/tests/conflict_rules.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

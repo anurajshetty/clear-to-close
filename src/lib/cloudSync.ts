@@ -1046,8 +1046,8 @@ export async function pushProfileWithMedia(
  * upsert retried — the invite's code is updated in place so the caller can
  * persist the final value.
  *
- * The upsert (not insert) matters: the boot reconcile and the outbox drain
- * re-push every local invite, including ones already synced. With a plain
+ * The upsert (not insert) matters: the outbox drain re-pushes every queued
+ * local invite, including ones already synced. With a plain
  * insert the primary-key conflict was misread as a code collision, burning
  * all regeneration attempts and throwing, even though the row was already
  * there. Upserting on id makes a re-push idempotent; a 23505 from the
@@ -1240,11 +1240,77 @@ async function writeOutbox(kv: KV, ops: OutboxOp[]): Promise<void> {
 export async function enqueueOutbox(kv: KV, op: OutboxOp): Promise<void> {
   const ops = await readOutbox(kv);
   // Coalesce: one pending op per (op, escrowId, inviteId, linkId).
-  const key = (o: OutboxOp) =>
-    `${o.op}:${o.escrowId ?? ''}:${o.inviteId ?? ''}:${o.linkId ?? ''}`;
-  const next = ops.filter((o) => key(o) !== key(op));
+  const next = ops.filter((o) => outboxOpKey(o) !== outboxOpKey(op));
   next.push({ ...op, attempts: 0 });
   await writeOutbox(kv, next);
+}
+
+/** Coalescing key for one queued push op. */
+export function outboxOpKey(o: {
+  op: string;
+  escrowId?: string;
+  inviteId?: string;
+  linkId?: string;
+}): string {
+  return `${o.op}:${o.escrowId ?? ''}:${o.inviteId ?? ''}:${o.linkId ?? ''}`;
+}
+
+/**
+ * Drop one queued push op (server-is-truth, Anuraj Sept 2026): the live
+ * save path enqueues its op BEFORE attempting the push, so a crash
+ * mid-push leaves the op queued for the boot drain (a pure-pull boot must
+ * never wipe an unconfirmed local edit). On success the op is dequeued —
+ * the row is clean again.
+ */
+export async function dequeueOutboxOp(
+  kv: KV,
+  op: { op: string; escrowId?: string; inviteId?: string; linkId?: string },
+): Promise<void> {
+  const ops = await readOutbox(kv);
+  const key = outboxOpKey(op);
+  const next = ops.filter((o) => outboxOpKey(o) !== key);
+  if (next.length !== ops.length) await writeOutbox(kv, next);
+}
+
+const K_CONFLICT_LOG = 'ctc:conflict-log';
+const MAX_CONFLICT_LOG = 50;
+
+export interface ConflictEntry {
+  at: string;
+  entity: 'profile' | 'escrow' | 'invite';
+  id: string;
+  resolution: 'server-wins';
+  detail: string;
+}
+
+/**
+ * Auditable conflict resolutions (ARCHITECTURE.md principle 5, Anuraj Sept
+ * 2026): every time a pull resolves a genuine two-writer divergence in the
+ * server's favor, the resolution is appended to a bounded KV ring buffer
+ * for diagnostics. Best-effort; never throws, never blocks sync.
+ */
+export async function logConflict(kv: KV, entry: Omit<ConflictEntry, 'at'>): Promise<void> {
+  try {
+    const raw = await kv.getItem(K_CONFLICT_LOG);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list: ConflictEntry[] = Array.isArray(parsed) ? parsed : [];
+    list.push({ ...entry, at: new Date().toISOString() });
+    while (list.length > MAX_CONFLICT_LOG) list.shift();
+    await kv.setItem(K_CONFLICT_LOG, JSON.stringify(list));
+  } catch {
+    // Diagnostics only — never break sync.
+  }
+}
+
+/** Read the conflict-resolution audit log (newest last). */
+export async function readConflictLog(kv: KV): Promise<ConflictEntry[]> {
+  try {
+    const raw = await kv.getItem(K_CONFLICT_LOG);
+    const parsed: unknown = raw ? (JSON.parse(raw) as ConflictEntry[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
