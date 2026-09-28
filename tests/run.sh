@@ -95,6 +95,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/pull_then_push.test.ts" \
   "$ROOT/tests/conflict_rules.test.ts" \
   "$ROOT/tests/date_field_web_width.test.ts" \
+  "$ROOT/tests/recovery.test.ts" \
+  "$ROOT/tests/password_eye_toggle.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -163,6 +165,8 @@ node "$OUT/tests/sync_error_bar_safe_area.test.js"
 node "$OUT/tests/pull_then_push.test.js"
 node "$OUT/tests/conflict_rules.test.js"
 node "$OUT/tests/date_field_web_width.test.js"
+node "$OUT/tests/recovery.test.js"
+node "$OUT/tests/password_eye_toggle.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

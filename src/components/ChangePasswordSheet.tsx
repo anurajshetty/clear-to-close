@@ -6,8 +6,7 @@
 // shows the "Password updated." toast.
 import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import Svg, { Circle, Path } from 'react-native-svg';
-import { PrimaryButton, Sheet } from './ui';
+import { EyeIcon, PrimaryButton, Sheet } from './ui';
 import {
   auth,
   validatePasswordChange,
@@ -15,31 +14,9 @@ import {
 } from '../lib/auth';
 import { colors, radius } from '../theme';
 
-/** Stroked eye from the approved mockup; slashed when the password is shown. */
-function EyeIcon({ shown }: { shown: boolean }) {
-  const c = colors.muted;
-  return (
-    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden={true}>
-      <Path
-        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"
-        stroke={c}
-        strokeWidth={1.8}
-      />
-      {shown ? (
-        <Path
-          d="M4 4l16 16"
-          stroke={c}
-          strokeWidth={1.8}
-          strokeLinecap="round"
-        />
-      ) : (
-        <Circle cx={12} cy={12} r={3} stroke={c} strokeWidth={1.8} />
-      )}
-    </Svg>
-  );
-}
-
-function PasswordField({
+/** Reused by the recovery "Set new password" screen (app/reset-password.tsx)
+ * so the fields are pixel-identical to this sheet. */
+export function PasswordField({
   label,
   value,
   onChangeText,

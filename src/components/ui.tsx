@@ -5,6 +5,7 @@ import {
   Animated, Keyboard, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, ViewStyle, TextStyle,
   useWindowDimensions,
 } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { colors, radius } from '../theme';
 
 export function Kicker({ children }: { children: ReactNode }) {
@@ -173,6 +174,32 @@ export function BackChevron({ label, onPress }: { label: string; onPress: () => 
   );
 }
 
+/** Stroked eye from the approved change-password mockup; slashed when the
+ * password is shown. Shared by Field's password toggle and the
+ * change-password / recovery screens. */
+export function EyeIcon({ shown }: { shown: boolean }) {
+  const c = colors.muted;
+  return (
+    <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" aria-hidden={true}>
+      <Path
+        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"
+        stroke={c}
+        strokeWidth={1.8}
+      />
+      {shown ? (
+        <Path
+          d="M4 4l16 16"
+          stroke={c}
+          strokeWidth={1.8}
+          strokeLinecap="round"
+        />
+      ) : (
+        <Circle cx={12} cy={12} r={3} stroke={c} strokeWidth={1.8} />
+      )}
+    </Svg>
+  );
+}
+
 export function Field({
   label, value, onChangeText, placeholder, multiline,
   secureTextEntry, keyboardType, autoCapitalize, autoCorrect, testID,
@@ -184,22 +211,44 @@ export function Field({
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   autoCorrect?: boolean;
 }) {
+  // Show/hide toggle (Sept 2026): every password field gets the approved
+  // eye icon inside the field, toggling secureTextEntry. Text fields are
+  // untouched.
+  const [shown, setShown] = useState(false);
+  const isPassword = !!secureTextEntry;
   return (
     <View style={styles.fieldWrap}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.muted}
-        multiline={!!multiline}
-        secureTextEntry={!!secureTextEntry}
-        keyboardType={keyboardType ?? 'default'}
-        autoCapitalize={autoCapitalize ?? 'sentences'}
-        autoCorrect={autoCorrect ?? true}
-        testID={testID}
-        style={[styles.fieldInput, multiline && styles.fieldInputMultiline]}
-      />
+      <View style={isPassword && styles.fieldPwrap}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={colors.muted}
+          multiline={!!multiline}
+          secureTextEntry={isPassword && !shown}
+          keyboardType={keyboardType ?? 'default'}
+          autoCapitalize={autoCapitalize ?? 'sentences'}
+          autoCorrect={autoCorrect ?? true}
+          testID={testID}
+          style={[styles.fieldInput, multiline && styles.fieldInputMultiline, isPassword && styles.fieldInputPassword]}
+        />
+        {isPassword ? (
+          <Pressable
+            onPress={() => setShown((s) => !s)}
+            accessibilityRole="button"
+            accessibilityLabel={shown ? 'Hide password' : 'Show password'}
+            accessibilityState={{ selected: shown }}
+            testID={testID ? `${testID}-eye` : 'field-eye'}
+            style={({ pressed }) => [
+              styles.eyeBtn,
+              pressed && { backgroundColor: colors.accentSoft },
+            ]}
+          >
+            <EyeIcon shown={shown} />
+          </Pressable>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -403,6 +452,17 @@ const styles = StyleSheet.create({
   btnSecondaryText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   fieldWrap: { marginTop: 16 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8 },
+  fieldPwrap: { position: 'relative', justifyContent: 'center' },
+  fieldInputPassword: { paddingRight: 54 },
+  eyeBtn: {
+    position: 'absolute',
+    right: 4,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   fieldInput: {
     borderWidth: 1.5, borderColor: colors.line, borderRadius: radius.input,
     paddingVertical: 13, paddingHorizontal: 14, fontSize: 15,

@@ -162,7 +162,9 @@ central user; the buyers and sellers they represent are the other parties.
   ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
   with email + password in two steps: account creation, then profile creation
   (skippable — "Skip for now" goes straight to the deal list). Login is email
-  + password; password reset via email. The session persists on both
+  + password; password reset via email — the emailed link opens a
+  "Set new password" screen in the browser (expired links get a fresh-link
+  path). The session persists on both
   platforms — **web** in localStorage, **native iOS** in its own storage —
   so a refresh keeps the realtor signed in, on the same screen. The session
   ends on Log out, or when the browser/incognito session ends.

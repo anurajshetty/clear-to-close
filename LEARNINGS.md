@@ -105,6 +105,23 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
 - **Session behavior is a product decision.** Web went from "sign in every visit"
   to persisted sessions on Anuraj's call. Practice: confirm session semantics
   explicitly; don't assume.
+- **Password reset needed its own landing.** The recovery email link redirected
+  to the app, but nothing parsed the recovery payload (`type=recovery` in the
+  URL fragment) and no screen existed to set the new password — the user landed
+  on the home page with a recovery session and no way to act on it (Anuraj
+  caught it live). Also: the client runs with `detectSessionInUrl: false`, so
+  supabase-js never parses the fragment itself. Practice: an auth email flow
+  is only done when the landing URL is handled end to end — detect the link
+  type on launch, establish the session from its tokens, route to the designed
+  screen, and give expired links a fresh-link path, never a dead end. Recovery
+  is web-only by design: the user sets the password in the browser, then signs
+  into the iPhone app with it.
+- **Every password field gets a show/hide eye.** Password fields were
+  dots-only with no way to reveal (Anuraj, Sept 2026). Practice: the shared
+  `Field` renders the approved eye toggle on every `secureTextEntry` field —
+  one place covers login and signup — and the eye icon lives once in `ui.tsx`
+  so the change-password sheet and recovery screen share it with no divergent
+  copies.
 
 ## Copy & docs (standing)
 

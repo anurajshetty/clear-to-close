@@ -106,6 +106,13 @@ export interface AuthClientLike {
     resetPasswordForEmail(
       email: string,
     ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
+    setSession?(args: {
+      access_token: string;
+      refresh_token: string;
+    }): Promise<{
+      data: { session?: { user?: { id?: string } } | null };
+      error?: { message?: string } | null;
+    }>;
     signOut(): Promise<{ error?: { message?: string } | null }>;
     getSession(): Promise<{
       data: { session?: { user?: { id?: string; email?: string } } | null };
@@ -154,6 +161,92 @@ export interface PasswordChangeValidation {
   confirmMatches: boolean;
   canSubmit: boolean;
 }
+
+export interface PasswordResetValidation {
+  newLongEnough: boolean;
+  confirmMatches: boolean;
+  canSubmit: boolean;
+}
+
+/**
+ * Client-side validation for the "set new password" recovery screen. Same
+ * 8+ rule and confirm-match as change-password, minus the current-password
+ * field — the recovery link IS the authentication.
+ */
+export function validatePasswordReset(
+  next: string,
+  confirm: string,
+): PasswordResetValidation {
+  const newLongEnough = next.length >= 8;
+  const confirmMatches = confirm === next;
+  return {
+    newLongEnough,
+    confirmMatches,
+    canSubmit: next.length > 0 && newLongEnough && confirmMatches,
+  };
+}
+
+/**
+ * Parse a web launch URL for a Supabase recovery payload.
+ *
+ * Supabase puts recovery params in the URL FRAGMENT
+ * (`#access_token=…&refresh_token=…&type=recovery`) and error params when
+ * the link is expired/invalid (`#error=…&error_description=…`). The client
+ * runs with detectSessionInUrl: false, so the app parses the fragment
+ * itself and hands the tokens to consumeRecoverySession.
+ */
+export type RecoveryLink =
+  | { kind: 'recovery'; accessToken: string; refreshToken: string }
+  | { kind: 'recovery-error'; errorDescription: string }
+  | { kind: 'none' };
+
+export function parseRecoveryLink(rawUrl: string): RecoveryLink {
+  let hash = '';
+  let search = '';
+  try {
+    // Works for http(s) URLs, scheme URLs (clear-to-close://…), and bare
+    // fragments. Bare "#…" strings fail the URL constructor on their own.
+    const u = rawUrl.startsWith('#')
+      ? new URL(`x://x/${rawUrl}`)
+      : new URL(rawUrl, 'x://x');
+    hash = u.hash;
+    search = u.search;
+  } catch {
+    return { kind: 'none' };
+  }
+  const frag = hash.startsWith('#') ? hash.slice(1) : hash;
+  const fp = new URLSearchParams(frag);
+  const qp = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+  const get = (k: string) => fp.get(k) ?? qp.get(k);
+  if (get('error') || get('error_code')) {
+    return {
+      kind: 'recovery-error',
+      errorDescription: get('error_description') ?? get('error') ?? '',
+    };
+  }
+  const type = get('type');
+  const accessToken = get('access_token');
+  const refreshToken = get('refresh_token');
+  if (type === 'recovery' && accessToken && refreshToken) {
+    return { kind: 'recovery', accessToken, refreshToken };
+  }
+  return { kind: 'none' };
+}
+
+export type RecoveryConsumeResult =
+  | { ok: true }
+  | { ok: false; code: 'expired' | 'network' | 'unconfigured' | 'unknown' };
+
+export type RecoverySetPasswordErrorCode =
+  | 'session_expired'
+  | 'weak_password'
+  | 'network'
+  | 'unconfigured'
+  | 'unknown';
+
+export type RecoverySetPasswordResult =
+  | { ok: true }
+  | { ok: false; code: RecoverySetPasswordErrorCode };
 
 /**
  * Client-side validation for the change-password sheet (approved spec §2.8).
@@ -439,6 +532,9 @@ export function createAuthService(deps: AuthServiceDeps) {
      * Password reset. Anti-enumeration: any non-network outcome (including
      * "unknown email") resolves ok — the UI always shows the same
      * confirmation copy. Only a network failure surfaces a retry error.
+     *
+     * Recovery is web-only: the emailed link opens in the browser (the
+     * Supabase dashboard Site URL), so no redirectTo is needed.
      */
     async sendPasswordReset(email: string): Promise<ResetResult> {
       const client = deps.getClient();
@@ -449,6 +545,69 @@ export function createAuthService(deps: AuthServiceDeps) {
         return { ok: true };
       } catch (e) {
         return isNetworkError(e) ? { ok: false, code: 'network' } : { ok: true };
+      }
+    },
+
+    /**
+     * Establish the recovery session parsed out of a recovery link
+     * (see parseRecoveryLink). The link's access/refresh tokens become a
+     * live Supabase session, which lets the user set a new password
+     * without knowing the old one. Never throws.
+     *
+     * An expired/used link surfaces 'expired' so the screen can offer a
+     * fresh link instead of a dead-end error.
+     */
+    async consumeRecoverySession(
+      accessToken: string,
+      refreshToken: string,
+    ): Promise<RecoveryConsumeResult> {
+      const client = deps.getClient();
+      if (!client) return { ok: false, code: 'unconfigured' };
+      if (typeof client.auth.setSession !== 'function')
+        return { ok: false, code: 'unknown' };
+      try {
+        const { data, error } = await client.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        if (error) {
+          if (isNetworkError(error)) return { ok: false, code: 'network' };
+          const msg = String(error.message ?? '').toLowerCase();
+          if (/expir|invalid|token|revok/i.test(msg))
+            return { ok: false, code: 'expired' };
+          return { ok: false, code: 'unknown' };
+        }
+        if (!data?.session) return { ok: false, code: 'expired' };
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, code: isNetworkError(e) ? 'network' : 'unknown' };
+      }
+    },
+
+    /**
+     * Set the new password from inside a recovery session (the recovery
+     * link IS the authentication — no current password). Never throws.
+     * A lapsed recovery session maps to 'session_expired' so the screen
+     * can route to the fresh-link path.
+     */
+    async setPasswordFromRecovery(
+      newPassword: string,
+    ): Promise<RecoverySetPasswordResult> {
+      const client = deps.getClient();
+      if (!client) return { ok: false, code: 'unconfigured' };
+      try {
+        const { error } = await client.auth.updateUser({
+          password: newPassword,
+        });
+        if (!error) return { ok: true };
+        if (isNetworkError(error)) return { ok: false, code: 'network' };
+        const msg = String(error.message ?? '').toLowerCase();
+        if (/session|jwt|token|expir|invalid/i.test(msg))
+          return { ok: false, code: 'session_expired' };
+        if (/password/i.test(msg)) return { ok: false, code: 'weak_password' };
+        return { ok: false, code: 'unknown' };
+      } catch (e) {
+        return { ok: false, code: isNetworkError(e) ? 'network' : 'unknown' };
       }
     },
 

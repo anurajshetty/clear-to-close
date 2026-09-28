@@ -15,15 +15,38 @@
 // unexpected sign-outs send the realtor to /login?expired=1 with the
 // approved copy. Our own sign-out navigates to /role directly.
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { auth, takeExpectSignOut } from '../src/lib/auth';
+import { auth, parseRecoveryLink, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { PushGate } from '../src/components/PushGate';
 import { SyncErrorBar } from '../src/components/SyncErrorBar';
 import { colors } from '../src/theme';
+
+/**
+ * Password-reset recovery is WEB ONLY (Sept 2026): the reset email opens
+ * in the browser by design; the user sets the new password there and then
+ * signs into the iPhone app with it. No deep-link plumbing.
+ */
+
+/**
+ * Drop the recovery fragment from the web URL after it has been consumed,
+ * so a refresh can't re-trigger the recovery flow.
+ */
+function clearRecoveryFragment(): void {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+  try {
+    window.history.replaceState(
+      null,
+      '',
+      window.location.pathname + window.location.search,
+    );
+  } catch {
+    // ignore
+  }
+}
 
 export default function RootLayout() {
   const router = useRouter();
@@ -34,6 +57,36 @@ export default function RootLayout() {
     let active = true;
     (async () => {
       try {
+        // Password-reset recovery (Sept 2026, WEB ONLY): a recovery link
+        // lands with the Supabase recovery payload in the URL fragment.
+        // Parse it on app start, establish the recovery session, and route
+        // to the "Set new password" screen. Expired/invalid links get the
+        // fresh-link path instead of a dead end.
+        const launchUrl =
+          Platform.OS === 'web' && typeof window !== 'undefined'
+            ? window.location.href
+            : null;
+        const recovery = parseRecoveryLink(launchUrl ?? '');
+        if (recovery.kind === 'recovery') {
+          clearRecoveryFragment();
+          const consumed = await auth.consumeRecoverySession(
+            recovery.accessToken,
+            recovery.refreshToken,
+          );
+          if (consumed.ok) {
+            await auth.setRole('realtor');
+            await auth.setHasAccount(true);
+            if (active) router.replace('/reset-password' as never);
+          } else {
+            if (active) router.replace('/reset-password?expired=1' as never);
+          }
+          return;
+        }
+        if (recovery.kind === 'recovery-error') {
+          clearRecoveryFragment();
+          if (active) router.replace('/reset-password?expired=1' as never);
+          return;
+        }
         // The public realtor profile (/realtor/<id>, Sept 2026) opens for
         // anyone with no login: never redirect away from it on boot. Same
         // for the branded invite deep link (/invite/<code>) and the in-app
@@ -135,6 +188,7 @@ export default function RootLayout() {
         <Stack.Screen name="role" />
         <Stack.Screen name="signup" />
         <Stack.Screen name="login" />
+        <Stack.Screen name="reset-password" />
         <Stack.Screen name="profile-create" />
         <Stack.Screen name="profile-update" />
         <Stack.Screen name="link-dead" />
