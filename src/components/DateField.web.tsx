@@ -29,6 +29,12 @@ export default function DateField({ label, value, onChange, testID }: DateFieldP
           color: colors.ink,
           backgroundColor: colors.inputBg,
           width: '100%',
+          // iOS Safari's native date input has a large intrinsic min-width
+          // and will not shrink to its container (it overflows the sheet
+          // at phone widths). These two lines constrain it without changing
+          // any other styling.
+          maxWidth: '100%',
+          minWidth: 0,
           boxSizing: 'border-box',
           fontFamily: 'inherit',
         }}

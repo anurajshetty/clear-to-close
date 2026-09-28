@@ -121,3 +121,19 @@ Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.
   itself — it cannot inherit a screen's SafeAreaView. Web is a no-op (insets
   are 0), so the same code is safe on both platforms. Pin it with a
   structural test on the source.
+
+## Web forms (Sept 27, 2026)
+
+- **iOS Safari date inputs refuse to shrink.** In the New Escrow sheet, the
+  "Escrow open date" and "Target close date" inputs overflowed past the right
+  edge at iPhone widths while the text inputs fit fine. Root cause: iOS
+  Safari's native `<input type="date">` carries a large intrinsic min-width
+  and will not shrink to its container — `width: 100%` plus
+  `box-sizing: border-box` is not enough on WebKit (headless Chromium does
+  not reproduce it). Practice: every native date/time input on web gets
+  `maxWidth: '100%'` and `minWidth: 0`; the author's `min-width: 0` overrides
+  the UA-imposed intrinsic minimum. Audit every sheet/screen for other date
+  inputs when fixing one (here `DateField` was the only one, used only by
+  the escrow sheet). Pin the constraint with a source-level regression test
+  (`tests/date_field_web_width.test.ts`); the visible outcome (no overflow at
+  360px/390px) was verified with a headless render of the shipped CSS.
