@@ -118,11 +118,9 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/recovery.test.ts" \
   "$ROOT/tests/password_eye_toggle.test.ts" \
   "$ROOT/tests/activate_escrow.test.ts" \
-  "$ROOT/tests/invite_inline_form.test.ts" \
   "$ROOT/tests/invite_expiry.test.ts" \
   "$ROOT/tests/side_lock_confirm_create.test.ts" \
   "$ROOT/tests/profile_media_removal.test.ts" \
-  "$ROOT/tests/clients_kicker.test.ts" \
   "$ROOT/tests/revoke_invite_kills_link.test.ts" \
   "$ROOT/tests/revoke_links_server_authoritative.test.ts" \
   "$ROOT/tests/outbox_concurrency.test.ts" \
@@ -136,6 +134,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/client_realtime.test.ts" \
   "$ROOT/src/lib/toast.ts" \
   "$ROOT/tests/toast_dismiss.test.ts" \
+  "$ROOT/tests/share_screen.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -221,11 +220,9 @@ node "$OUT/tests/realtor_home_banner.test.js"
 node "$OUT/tests/recovery.test.js"
 node "$OUT/tests/password_eye_toggle.test.js"
 node "$OUT/tests/activate_escrow.test.js"
-node "$OUT/tests/invite_inline_form.test.js"
 node "$OUT/tests/invite_expiry.test.js"
 node "$OUT/tests/side_lock_confirm_create.test.js"
 node "$OUT/tests/profile_media_removal.test.js"
-node "$OUT/tests/clients_kicker.test.js"
 node "$OUT/tests/revoke_invite_kills_link.test.js"
 node "$OUT/tests/revoke_links_server_authoritative.test.js"
 node "$OUT/tests/outbox_concurrency.test.js"
@@ -286,3 +283,4 @@ python3 "$ROOT/tests/tc_intake_migration.py"
 # runnable in node.
 python3 "$ROOT/tests/client_realtime_migration.py"
 node "$OUT/tests/toast_dismiss.test.js"
+node "$OUT/tests/share_screen.test.js"

@@ -51,9 +51,10 @@ central user; the buyers and sellers they represent are the other parties.
   stay live); closing the final side revokes the buyer, seller, AND
   coordinator codes. Already-revoked invites are untouched. **No new invites
   on a dead escrow** (Anuraj, Sept 28, 2026): once the whole escrow is closed
-  or cancelled, new invite codes cannot be created for any role — the detail
-  screen's Invite buttons and the client list's "Invite another" offer are
-  hidden, local creation throws, and the server rejects the insert
+  or cancelled, new invite codes cannot be created for any role — the Share
+  screen's invite buttons, inline forms, and cap notes are hidden (the
+  "Share this escrow" entry button itself stays visible), local creation
+  throws, and the server rejects the insert
   (migration 0018). Existing live invites stay visible and revocable. The
   revocation is pushed to
   the cloud immediately — no app restart needed — and a client with the
@@ -171,33 +172,33 @@ central user; the buyers and sellers they represent are the other parties.
   (a stale link would boot the device straight back into the client view), as
   is any client link when a realtor session is newly established. Device-level
   state (chosen role, device id, push-asked) is kept.
-- **Share / invites** — per-escrow, per-party single-use invite codes
-  (6 characters, globally unique). Each code is bound to
-  (escrow, role, party name); name and code must both match at redeem time.
-  Up to **two clients per escrow side** (buyer and seller caps are
-  independent), enforced in the app and by a database trigger — revoking
-  frees a slot. On the transaction detail, **Invite client** sits at the end
-  of the checklist (per side / per dual-agency tab) and becomes **View
-  clients** once an invite exists: name + Invited (amber) / Accepted (teal)
-  status, code + Copy on invited rows, per-client Regenerate and Revoke.
-  **Regenerate** issues a fresh code while atomically killing the old code
-  *and* its device link — the old device lands on a clear "this code no
-  longer works" state. **Revoke** kills the invite *and* its linked client
-  access; the revoked row disappears from the list. **Copy invite link**
-  copies a branded deep link
-  (`https://anurajshetty.github.io/clear-to-close/invite/<CODE>?name=<PARTY>`):
-  opening it shows the single redeem form with the realtor's branded welcome
-  (name, photo, realty group, DRE), the invite code and party name pre-filled
-  (both editable), and one "Join your escrow" button. The role label reads
-  "Transaction Coordinator" for TC invites and "client" for buyer/seller.
-  One **transaction coordinator** per escrow (cap of 1, independent of the
-  buyer/seller caps): the checklist footer gains **Invite transaction
-  coordinator** / **View TC**, managed through the same
-  invite sheet and client list with the same code/regenerate/revoke
-  lifecycle, including the branded invite link. Tapping the row's remove (x)
-  now asks for confirmation in a popup dialog right at the point of action,
-  so the Remove button is seen immediately. A redeemed TC invite opens
-  the TC's read-only home at `/client/tc/<escrowId>`: on a both-side escrow
+- **Share / invites** — one **"Share this escrow"** button at the end of the
+  transaction-detail checklist (per side / per dual-agency tab) opens the
+  full-screen **Share this escrow** route (`/share/<escrowId>`); it stays
+  visible on open, closed, and cancelled escrows. The screen holds three
+  always-visible sections — **Buyers** and **Sellers** (cap 2 each,
+  independent) and **Transaction coordinator** (cap 1) — each labeled
+  "Plural · X of cap". Tapping an invite button expands an inline form:
+  name → **Create code** → the big six-character code → **Copy** (code
+  only) + **Done**. Each code is single-use, 6 characters, globally unique,
+  bound to (escrow, role, party name); name and code must both match at
+  redeem time. Rows show name + Invited (amber) / Accepted (teal) status,
+  code + Copy on invited rows only, per-invite **Regenerate**, and a red
+  remove (x). Remove and Regenerate ask for confirmation inline, right under
+  the row. **Regenerate** issues a fresh code while atomically killing the
+  old code *and* its device link — the old device lands on a clear "this
+  code no longer works" state. **Revoke** (the remove x) kills the invite
+  *and* its linked client access; the revoked row disappears from the list.
+  At cap, the buyer/seller sections show "Two invites max per side. Remove
+  one to invite someone new."; the TC section simply offers no button. On a
+  closed or cancelled escrow the invite buttons, forms, and cap notes are
+  hidden — existing rows stay visible and removable/regenerable. The branded
+  invite link was dropped (Anuraj, Sept 29, 2026): sharing is code-only. A
+  redeemed TC invite opens the TC's read-only home at `/client/tc/<escrowId>`:
+  on a both-side escrow the TC sees **both** the buyer and seller checklists
+  (labeled sections, combined progress), on a single-side escrow the active
+  side's — reusing the same top card and read-only checklist as the client
+  views.
   the TC sees **both** the buyer and seller checklists (labeled sections,
   combined progress), on a single-side escrow the active side's — reusing
   the same top card and read-only checklist as the client views.

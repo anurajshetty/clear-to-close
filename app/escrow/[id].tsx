@@ -19,15 +19,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
-import type { ChecklistDraftStep, ClientRole, Escrow, Invite, StepT } from '../../src/lib/types';
+import type { ChecklistDraftStep, ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { uid } from '../../src/lib/store';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard } from '../../src/components/TcIntakeEntry';
 import { describeTcIntakeStatus, showTcIntakeForRealtorSide } from '../../src/lib/tcIntake';
 import { EditableChecklist } from '../../src/components/Checklist';
-import { InviteSheet } from '../../src/components/InviteSheet';
-import { ClientList } from '../../src/components/ClientList';
 import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight } from '../../src/components/ui';
 import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
 import { colors } from '../../src/theme';
@@ -143,20 +141,9 @@ export default function TransactionDetail() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
   };
-  // Invite-client flow (approved Sept 2026): per-side invites live at the end
-  // of the checklist page/tab.
-  const [invites, setInvites] = useState<Invite[]>([]);
-  const [sheetSide, setSheetSide] = useState<ClientRole | null>(null);
-  const [clientSide, setClientSide] = useState<ClientRole | null>(null);
-
-  const refreshInvites = useCallback(async () => {
-    if (!escrowId) return;
-    try {
-      setInvites(await store.listInvites(escrowId));
-    } catch (err) {
-      console.warn('listInvites failed', err);
-    }
-  }, [escrowId]);
+  // Share flow (Anuraj's final decision, Sept 29, 2026): the single
+  // "Share this escrow" button below pushes the full-screen Share route.
+  // Per-side invite state now lives on that screen, not here.
 
   const both = escrow?.side === 'both';
   const role: ClientRole = both ? tab : escrow?.side === 'sell' ? 'seller' : 'buyer';
@@ -165,7 +152,6 @@ export default function TransactionDetail() {
     if (!escrowId) return;
     try {
       setEscrow(await store.getEscrow(escrowId));
-      await refreshInvites();
     } catch (err) {
       console.warn('getEscrow failed', err);
     } finally {
@@ -368,39 +354,19 @@ export default function TransactionDetail() {
     );
   };
 
-  // "Invite client" → "View clients" at the end of the checklist (approved
-  // invite-client flow, Sept 2026). Present on buy, sell, and each dual-
-  // agency tab; flips to "View clients" once an active invite exists.
-  const renderInviteButton = (r: ClientRole) => {
-    const count = invites.filter((i) => i.role === r && !i.revokedAt).length;
-    // No new invites on a dead escrow (Anuraj, Sept 28, 2026): the "Invite
-    // client" offer is hidden when the escrow is closed or cancelled.
-    // "View clients" stays for legacy live invites so they can be revoked.
-    if (escrow && escrow.status !== 'open' && count === 0) return null;
+  // "Share this escrow" at the end of the checklist (Anuraj's final
+  // decision, Sept 29, 2026): ONE entry button replaces the three
+  // per-side/TC "Invite client"/"View clients"/"Invite TC"/"View TC"
+  // buttons. It pushes the full-screen Share route for this escrow and
+  // stays visible on open, closed, and cancelled escrows alike — the
+  // Share screen itself gates invite creation on dead escrows.
+  const renderShareButton = () => {
+    if (!escrow) return null;
     return (
       <View style={styles.inviteBtnWrap}>
         <SecondaryButton
-          title={count > 0 ? 'View clients' : 'Invite client'}
-          onPress={() => (count > 0 ? setClientSide(r) : setSheetSide(r))}
-        />
-      </View>
-    );
-  };
-
-  // Transaction coordinator (Sept 2026): exactly one TC invite per escrow,
-  // managed through the same InviteSheet/ClientList as the sides. The TC is
-  // per-escrow, not per-side, so this button renders identically under the
-  // side's invite button on every tab.
-  const renderTcButton = () => {
-    const count = invites.filter((i) => i.role === 'tc' && !i.revokedAt).length;
-    // Same dead-escrow rule as renderInviteButton: no "Invite TC" offer on
-    // closed/cancelled escrows; "View TC" stays for legacy live invites.
-    if (escrow && escrow.status !== 'open' && count === 0) return null;
-    return (
-      <View style={styles.inviteBtnWrap}>
-        <SecondaryButton
-          title={count > 0 ? 'View TC' : 'Invite TC'}
-          onPress={() => (count > 0 ? setClientSide('tc') : setSheetSide('tc'))}
+          title="Share this escrow"
+          onPress={() => router.push(`/share/${escrow.id}`)}
         />
       </View>
     );
@@ -590,8 +556,7 @@ export default function TransactionDetail() {
                   <Text style={styles.footnote}>
                     {'Tap the circle to check a step off. Tap it again to undo.'}
                   </Text>
-                  {renderInviteButton(r)}
-                  {renderTcButton()}
+                  {renderShareButton()}
                 </View>
               )
             }
@@ -714,36 +679,13 @@ export default function TransactionDetail() {
                   <Text style={styles.footnote}>
                     {'Tap the circle to check a step off. Tap it again to undo.'}
                   </Text>
-                  {renderInviteButton(role)}
-                  {renderTcButton()}
+                  {renderShareButton()}
                 </View>
               )
             }
           />
           {editingRole === role ? renderStickyAdd(role) : null}
         </View>
-      )}
-      {sheetSide && (
-        <InviteSheet
-          visible
-          side={sheetSide}
-          escrowId={escrow.id}
-          onClose={() => setSheetSide(null)}
-          onCreated={refreshInvites}
-        />
-      )}
-      {clientSide && (
-        <ClientList
-          visible
-          side={clientSide}
-          address={escrow.address}
-          escrowId={escrow.id}
-          escrowClosed={escrow.status !== 'open'}
-          onClose={() => {
-            setClientSide(null);
-            refreshInvites();
-          }}
-        />
       )}
       {/* Toast sits above the scroll view so it never scrolls away. */}
       {toastMsg && (

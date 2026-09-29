@@ -1,10 +1,12 @@
 // invite_closed_block.test.ts — REGRESSION: no new invite codes may be
 // created on a closed or cancelled escrow (Anuraj, Sept 28, 2026). Three
 // layers, belt and suspenders:
-//  1. App UI: the detail screen hides the "Invite client"/"Invite TC"
-//     offer on closed/cancelled escrows ("View clients"/"View TC" stays for
-//     legacy live invites); the ClientList "Invite another" form + cap note
-//     are hidden via the escrowClosed prop.
+//  1. App UI (Sept 29, 2026 redesign): the detail screen has ONE "Share
+//     this escrow" entry button that pushes /share/[escrowId] and stays
+//     visible on open, closed, AND cancelled escrows. Invite CREATION is
+//     gated inside app/share/[id].tsx: no invite buttons, inline forms,
+//     or cap notes when the escrow is closed/cancelled — while existing
+//     rows, remove, and regenerate stay available.
 //  2. Store: local createInvite throws on closed/cancelled escrows (any
 //     role). Per-side-closed escrows (status still 'open') are unaffected.
 //  3. Server: migration 0018 adds a BEFORE INSERT trigger on invites that
@@ -266,50 +268,60 @@ async function test_syncedGateBlocksClosedEscrow() {
 }
 
 // --- Structural UI tests (RN components are not importable in node) -------
-function test_detailButtonsGated() {
+function test_shareEntryPoint() {
   const src = read('app/escrow/[id].tsx');
+  // ONE entry button, visible on every escrow status (no dead-escrow hide).
+  assert(src.includes("Share this escrow"), 'detail: single "Share this escrow" button exists');
   assert(
-    src.includes("escrow.status !== 'open'") && src.includes('renderInviteButton'),
-    'detail: invite buttons must be gated on escrow.status',
-  );
-  // The "Invite client"/"Invite TC" offer disappears; "View clients"/"View TC"
-  // stays for legacy live invites.
-  assert(
-    /renderInviteButton[\s\S]{0,600}if \(escrow && escrow\.status !== 'open' && count === 0\) return null/.test(
-      src,
-    ),
-    'detail: renderInviteButton hides the offer when closed/cancelled with no live invites',
+    /router\.push\(`\/share\/\$\{escrow\.id\}`\)/.test(src),
+    'detail: "Share this escrow" pushes /share/[escrowId]',
   );
   assert(
-    /renderTcButton[\s\S]{0,600}if \(escrow && escrow\.status !== 'open' && count === 0\) return null/.test(
-      src,
-    ),
-    'detail: renderTcButton hides the offer when closed/cancelled with no live invites',
+    !/escrow\.status !== 'open'[\s\S]{0,200}Share this escrow/.test(src),
+    'detail: share button is NOT gated on escrow status (stays visible on closed/cancelled)',
   );
-  assert(
-    src.includes('escrowClosed={escrow.status'),
-    'detail: ClientList receives the escrowClosed prop',
-  );
+  // The old three-button flow and its overlays are gone.
+  for (const gone of [
+    'renderInviteButton',
+    'renderTcButton',
+    '<InviteSheet',
+    '<ClientList',
+    "'Invite client'",
+    "'View clients'",
+    "'Invite TC'",
+    "'View TC'",
+  ]) {
+    assert(!src.includes(gone), `detail: old invite flow removed (${gone})`);
+  }
 }
 
-function test_clientListInlineFormGated() {
-  const src = read('src/components/ClientList.tsx');
-  assert(src.includes('escrowClosed?: boolean'), 'ClientList: escrowClosed prop declared');
+function test_shareScreenDeadEscrowGate() {
+  const src = read('app/share/[id].tsx');
+  // Invite CREATION is gated inside the share screen on dead escrows via a
+  // single escrowOpen flag: the invite button, the inline form, and the cap
+  // note all hide when the escrow is closed/cancelled, while existing rows
+  // (remove/regenerate) keep rendering.
   assert(
-    src.includes('!escrowClosed && invites.length < cap'),
-    'ClientList: "Invite another" offer gated on !escrowClosed',
+    src.includes("const escrowOpen = escrow.status === 'open'"),
+    'share: single escrowOpen creation gate defined from escrow.status',
   );
   assert(
-    src.includes(') : !escrowClosed ? ('),
-    'ClientList: cap note also hidden when escrowClosed',
+    src.includes('showInviteUi = escrowOpen'),
+    'share: invite button gated on escrowOpen',
   );
-  // InviteSheet (first-invite flow) is only reachable through the detail
-  // buttons, which are gated above; its create path is covered by the
-  // store-level throw backstop.
-  const sheet = read('src/components/InviteSheet.tsx');
   assert(
-    sheet.includes('store.createInvite'),
-    'InviteSheet: still goes through store.createInvite (backstopped by the status gate)',
+    src.includes('showCapNote = escrowOpen'),
+    'share: cap note gated on escrowOpen',
+  );
+  // The inline form only ever opens through the gated invite button
+  // (openForm's sole call site), so no creation UI exists on dead escrows.
+  assert(
+    (src.match(/openForm\(s\.role\)/g) || []).length === 1,
+    'share: form opens only via the gated invite button',
+  );
+  assert(
+    !/escrow\.status !== 'open'[\s\S]{0,120}return null/.test(src.split('return (')[0]),
+    'share: dead escrows still render their invite rows (no early return before render)',
   );
 }
 
@@ -340,8 +352,8 @@ async function main(): Promise<void> {
   test_isClosedEscrowRejection();
   await test_serverClosedRejectionFailsAtomically();
   await test_syncedGateBlocksClosedEscrow();
-  test_detailButtonsGated();
-  test_clientListInlineFormGated();
+  test_shareEntryPoint();
+  test_shareScreenDeadEscrowGate();
   test_migration0018();
   summary('invite_closed_block');
 }

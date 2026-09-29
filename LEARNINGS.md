@@ -3,6 +3,43 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Share screen v1 (Sept 29, 2026)
+
+- **A new screen inherits existing regression guards.** `header_top_gap`
+  already listed `app/share/[id].tsx` the moment the file existed: it pins
+  the safe-area top gap and the back button's 44pt minimum touch target.
+  The first implementation failed it because the shared `BackChevron` has
+  no `minHeight` — the old screen's local `backBtn` style did. Fixed with a
+  `backBtn` wrapper (minHeight 44, centered) around `BackChevron`, keeping
+  the shared component and the guard's intent. Practice: when adding a
+  screen, grep the tests dir for the new file path first — structural
+  regression tests may already cover it.
+- **Deleting a component deletes its tests.** Removing `InviteSheet` and
+  `ClientList` orphaned `clients_kicker` and `invite_inline_form`, and
+  broke `keyboard_avoidance` (sheet list) and `invite_closed_block`
+  (structural UI layer). Practice: a component deletion's checklist is
+  its dedicated tests, shared-suite references, and `run.sh` entries —
+  grep the tests dir for the filename before deleting.
+- **A redesign moves the gate; the invariant stays.** The dead-escrow
+  "no new invites" rule moved from the detail screen's per-side buttons
+  (Sept 28) to a single `escrowOpen` flag inside the share screen (Sept
+  29), while the entry button itself stays visible on dead escrows. The
+  store/sync/migration layers of `invite_closed_block` were untouched;
+  only the structural UI layer was rewritten to pin the gate's NEW
+  location. Practice: when a redesign relocates an invariant, rewrite the
+  structural assertions for the new location — never delete the guard.
+- **A pending decision is not scaffolding.** The branded invite link was
+  built with an "EXTENSION POINT" comment while Anuraj decided; his final
+  call dropped it outright, so the scaffolding was removed completely —
+  the code phase is exactly the mockup's Copy + Done. Practice: once a
+  pending decision lands, delete the provisional scaffolding; leftover
+  "just in case" comments rot into misleading documentation.
+- **A suite abort hides later suites.** The first full run failed at
+  `header_top_gap` and `set -e` stopped the run — `share_screen` and every
+  suite after it never executed, so "64 all green" was a partial count.
+  Practice: when a suite run fails, check whether the suites after the
+  failure even ran before reporting green counts.
+
 ## TC intake v1 (Sept 29, 2026)
 
 - **A read error is not "nothing saved."** `pullTcIntake` converted every

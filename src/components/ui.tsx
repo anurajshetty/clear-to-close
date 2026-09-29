@@ -424,7 +424,7 @@ export function Sheet({
             (Sept 2026 sheet-scroll fix: sheet content used to grow unbounded and
             overflow small screens, leaving lower fields and the save button
             unreachable. The ScrollView is height-bounded so it scrolls on native
-            and on web alike; the 480 bound matches the existing ClientList sheet
+            and on web alike; the 480 bound matches the shared sheet
             pattern.) */}
         <ScrollView
           style={[styles.sheetScroll, { maxHeight: scrollMaxHeight }]}
@@ -523,8 +523,8 @@ const styles = StyleSheet.create({
   // keyboard-avoidance update, Sept 28 detent lock). The bound lives on the
   // ScrollView itself — not on the sheet container — so it constrains the
   // scrolling element on native and on web (react-native-web only scrolls a
-  // ScrollView with a definite height bound). Matches the pre-existing
-  // ClientList "View clients" sheet pattern. The Sheet component derives
+  // ScrollView with a definite height bound). Matches the shared sheet
+  // pattern used by every other sheet in the app. The Sheet component derives
   // maxHeight at render time from the locked open height (detent): the
   // keyboard never resizes the sheet, it only lifts it; the region never
   // exceeds the visible window (minus chrome).

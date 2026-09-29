@@ -65,7 +65,6 @@ assert(
 const sheetFiles = [
   ['src/components/EscrowFormSheet.tsx', 'New escrow sheet'],
   ['src/components/EscrowFormSheet.tsx', 'Update escrow sheet'],
-  ['src/components/InviteSheet.tsx', 'Invite sheet'],
   ['src/components/CancelEscrowSheet.tsx', 'Cancel escrow sheet'],
   ['src/components/ChangePasswordSheet.tsx', 'Change password sheet'],
   ['src/components/ReviewSheet.tsx', 'Review sheet'],
