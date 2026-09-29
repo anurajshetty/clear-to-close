@@ -45,6 +45,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/push.ts" \
   "$ROOT/src/lib/clientView.ts" \
   "$ROOT/src/lib/escrowList.ts" \
+  "$ROOT/src/lib/tcIntake.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/outbox_seed.ts" \
@@ -76,6 +77,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/profilefetch_live.test.ts" \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
+  "$ROOT/tests/tc_intake.test.ts" \
   "$ROOT/tests/invite_cap_sync.test.ts" \
   "$ROOT/tests/invite_closed_block.test.ts" \
   "$ROOT/tests/celebration_kicker.test.ts" \
@@ -169,6 +171,7 @@ node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/tc_view.test.js"
+node "$OUT/tests/tc_intake.test.js"
 node "$OUT/tests/profilepull.test.js"
 node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"
@@ -269,6 +272,12 @@ python3 "$ROOT/tests/key_dates_push_migration.py"
 # (including the concurrent same-code race-loser path), and scopes push
 # tokens per link (SQL, not runnable in node).
 python3 "$ROOT/tests/multi_escrow_migration.py"
+# TC intake migration self-check (Sept 29, 2026): the 0031 migration
+# creates tc_intakes (escrow_id PK -> escrows cascade), locks direct access
+# to the owner (no anon grant), and replaces get_client_view so the tc
+# branch alone embeds the intake data payload — buyer/seller branches carry
+# no tc_intake key (SQL, not runnable in node).
+python3 "$ROOT/tests/tc_intake_migration.py"
 # Client realtime migration self-check (Sept 2026): the 0030 migration puts
 # escrows/steps/client_links/realtor_profiles on the supabase_realtime
 # publication and adds the four TO anon, token-claim-keyed SELECT policies

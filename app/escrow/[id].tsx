@@ -23,6 +23,8 @@ import type { ChecklistDraftStep, ClientRole, Escrow, Invite, StepT } from '../.
 import { uid } from '../../src/lib/store';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
+import { TcEntryCard } from '../../src/components/TcIntakeEntry';
+import { describeTcIntakeStatus, showTcIntakeForRealtorSide } from '../../src/lib/tcIntake';
 import { EditableChecklist } from '../../src/components/Checklist';
 import { InviteSheet } from '../../src/components/InviteSheet';
 import { ClientList } from '../../src/components/ClientList';
@@ -41,6 +43,55 @@ const X_PATH =
 
 function sortedSteps(raw: StepT[]): StepT[] {
   return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+/**
+ * TC intake entry row (Sept 29, 2026, mockup 04 device 1): directly below
+ * the time-tracker card on listing-side escrows only — seller-only escrows
+ * always, dual-agency escrows on the seller tab only, buyer-only escrows
+ * never. "Not started" + chevron until anything is saved, then
+ * "X of Y filled"/"Complete" + the pencil-once-saved. Tapping always
+ * opens the editable form (read-only on closed/cancelled escrows).
+ */
+function TcIntakeEntryRow({
+  escrowId,
+  side,
+  tab,
+}: {
+  escrowId: string;
+  side: 'buy' | 'sell' | 'both';
+  tab: ClientRole;
+}) {
+  const rowRouter = useRouter();
+  const [status, setStatus] = useState(describeTcIntakeStatus(null));
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        // Server is the source of truth: pure pull first (never throws),
+        // then read the converged cache for the status line.
+        await store.refreshTcIntake(escrowId);
+        const row = await store.getTcIntake(escrowId);
+        if (!cancelled) setStatus(describeTcIntakeStatus(row ? row.data : null));
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [escrowId]),
+  );
+  if (!showTcIntakeForRealtorSide(side, tab === 'seller' ? 'seller' : 'buyer')) return null;
+  return (
+    <TcEntryCard
+      title="TC intake"
+      caption={status.text}
+      icon="clipboard"
+      trailing={status.started ? 'pencil' : 'chevron'}
+      onPress={() => rowRouter.push(`/tc-intake/${escrowId}`)}
+      accessibilityLabel={`TC intake. ${status.text}.`}
+      accessibilityHint="Opens the editable TC intake form for the listing."
+      testID="tc-intake-entry"
+    />
+  );
 }
 
 export default function TransactionDetail() {
@@ -599,6 +650,7 @@ export default function TransactionDetail() {
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
             />
+            <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -648,6 +700,7 @@ export default function TransactionDetail() {
                   openDate={escrow.openDate}
                   closeDate={escrow.closeDate}
                 />
+                <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
                 {renderChecklistHead(role)}
                 {renderLifecycle(role)}
               </View>

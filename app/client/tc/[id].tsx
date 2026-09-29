@@ -19,6 +19,8 @@ import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
+import { TcEntryCard } from '../../../src/components/TcIntakeEntry';
+import { showTcDetailsForTcView } from '../../../src/lib/tcIntake';
 import { mostRecentAction } from '../../../src/lib/latest';
 import { colors } from '../../../src/theme';
 
@@ -157,6 +159,23 @@ export default function TcView() {
               router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
           />
+
+          {/* TC intake (Sept 29, 2026, mockup 04 device 4): "View listing
+              details" — directly below the top card, above the checklist, on
+              listing-side escrows only (buyer-only TC views never see it).
+              Read-only; opens the details page. */}
+          {showTcDetailsForTcView(view.seller !== null) && (
+            <TcEntryCard
+              title="View listing details"
+              caption="Listing information from your realtor"
+              icon="eye"
+              trailing="chevron"
+              onPress={() => router.push(`/tc-listing-details/${id}`)}
+              accessibilityLabel="View listing details."
+              accessibilityHint="Opens the listing details from your realtor."
+              testID="tc-view-listing-details"
+            />
+          )}
 
           {/* "LATEST FROM {NAME}" (mockup screen 7): directly below the top
               card, above the checklist, in every state — always visible. */}

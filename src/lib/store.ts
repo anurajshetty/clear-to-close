@@ -9,6 +9,7 @@
 import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, normalizeStepTitle, type StepTemplate } from './steps';
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
+import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import type {
   ApplyChecklistResult,
   ChecklistDraftStep,
@@ -63,6 +64,18 @@ export interface CancelEscrowResult {
 }
 
 /**
+ * TC intake cache row (Sept 29, 2026, mockup 04): one saved intake per
+ * escrow. Local data is explicitly a cache — the server (tc_intakes table,
+ * migration 0031) is the source of truth; this row only ever lands here
+ * after a confirmed server write or a server pull.
+ */
+export interface TcIntakeRow {
+  escrowId: string;
+  data: TcIntakeData;
+  updatedAt: string;
+}
+
+/**
  * The local collections as one deep-cloned unit (Sept 2026, synchronous
  * server-first writes). A preview computes a mutation against a cloned
  * snapshot — the live in-memory data and the persisted keys are untouched
@@ -74,6 +87,7 @@ export interface LocalSnapshot {
   escrows: Escrow[];
   invites: Invite[];
   links: ClientLink[];
+  tcIntakes: Record<string, TcIntakeRow>;
 }
 
 /** A computed-but-unapplied local mutation: the result plus the snapshot
@@ -133,6 +147,37 @@ export interface Store {
   dismissSyncError(key: string): Promise<void>;
   listEscrows(): Promise<Escrow[]>;
   getEscrow(id: string): Promise<Escrow | null>;
+  /**
+   * TC intake cache read (Sept 29, 2026, mockup 04): the last
+   * server-confirmed intake for this escrow, or null when nothing was
+   * ever saved. Never throws.
+   */
+  getTcIntake(escrowId: string): Promise<TcIntakeRow | null>;
+  /**
+   * Compute a TC intake save against a cloned snapshot (no load, no
+   * persist): upserts the intake row for the escrow. The live data is
+   * untouched until the server confirms the write (commitPreview).
+   * Single writer (the realtor) on a single per-escrow row — last write
+   * wins, no conflict rule needed.
+   */
+  previewSaveTcIntake(escrowId: string, data: TcIntakeData): Promise<Preview<TcIntakeRow>>;
+  /**
+   * Converge a server-pulled intake into the local cache (pure pull —
+   * refreshes on open, never overrides the server). Never throws.
+   */
+  setTcIntakeCache(row: TcIntakeRow): Promise<void>;
+  /**
+   * TC intake confirmed write (Sept 29, 2026, mockup 04): server first,
+   * local cache only on confirmation; failures throw plain-language and
+   * leave the previously confirmed snapshot intact. Implemented by the
+   * synced store (src/lib/syncedStore.ts).
+   */
+  saveTcIntake(escrowId: string, data: TcIntakeData): Promise<TcIntakeRow>;
+  /**
+   * Converge the server's confirmed intake into the local cache (pure
+   * pull). Never throws. Implemented by the synced store.
+   */
+  refreshTcIntake(escrowId: string): Promise<void>;
   createEscrow(input: CreateEscrowInput): Promise<Escrow>;
   /**
    * Edit an escrow's fields (deal-list edit round, Sept 2026). Validates
@@ -319,6 +364,7 @@ const K_PROFILE = 'ctc:profile';
 const K_ESCROWS = 'ctc:escrows';
 const K_INVITES = 'ctc:invites';
 const K_LINKS = 'ctc:links';
+const K_TC_INTAKES = 'ctc:tc-intakes';
 
 // Invite code alphabet: no 0/O/1/I/L to avoid visual confusion.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -408,15 +454,17 @@ export function createStore(kv: KV): Store {
     escrows: Escrow[];
     invites: Invite[];
     links: ClientLink[];
-  } = { loaded: false, profile: null, escrows: [], invites: [], links: [] };
+    tcIntakes: Record<string, TcIntakeRow>;
+  } = { loaded: false, profile: null, escrows: [], invites: [], links: [], tcIntakes: {} };
 
   async function ensureLoaded(): Promise<void> {
     if (data.loaded) return;
-    const [p, e, i, l] = await Promise.all([
+    const [p, e, i, l, t] = await Promise.all([
       kv.getItem(K_PROFILE),
       kv.getItem(K_ESCROWS),
       kv.getItem(K_INVITES),
       kv.getItem(K_LINKS),
+      kv.getItem(K_TC_INTAKES),
     ]);
     data.profile = p ? (JSON.parse(p) as RealtorProfile) : null;
     if (data.profile) {
@@ -494,6 +542,25 @@ export function createStore(kv: KV): Store {
       deviceId: link.deviceId ?? null,
       revokedAt: link.revokedAt ?? null,
     }));
+    // TC intake cache (Sept 29, 2026): rows are defensively normalized —
+    // a corrupt persisted row renders "Not provided", never crashes.
+    data.tcIntakes = {};
+    if (t) {
+      try {
+        const parsed = JSON.parse(t) as Record<string, TcIntakeRow>;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && typeof v.escrowId === 'string') {
+            data.tcIntakes[k] = {
+              escrowId: v.escrowId,
+              data: normalizeTcIntake(v.data),
+              updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '',
+            };
+          }
+        }
+      } catch {
+        data.tcIntakes = {};
+      }
+    }
     data.loaded = true;
   }
 
@@ -503,6 +570,7 @@ export function createStore(kv: KV): Store {
       kv.setItem(K_ESCROWS, JSON.stringify(data.escrows)),
       kv.setItem(K_INVITES, JSON.stringify(data.invites)),
       kv.setItem(K_LINKS, JSON.stringify(data.links)),
+      kv.setItem(K_TC_INTAKES, JSON.stringify(data.tcIntakes)),
     ]);
   }
 
@@ -520,6 +588,7 @@ export function createStore(kv: KV): Store {
         escrows: data.escrows,
         invites: data.invites,
         links: data.links,
+        tcIntakes: data.tcIntakes,
       }),
     ) as LocalSnapshot;
   }
@@ -1185,6 +1254,67 @@ export function createStore(kv: KV): Store {
       return e ?? null;
     },
 
+    async getTcIntake(escrowId: string): Promise<TcIntakeRow | null> {
+      await ensureLoaded();
+      return data.tcIntakes[escrowId] ?? null;
+    },
+
+    async previewSaveTcIntake(escrowId: string, intake: TcIntakeData): Promise<Preview<TcIntakeRow>> {
+      return previewFor((h) => {
+        const row: TcIntakeRow = {
+          escrowId,
+          data: normalizeTcIntake(intake),
+          updatedAt: new Date().toISOString(),
+        };
+        h.tcIntakes[escrowId] = row;
+        return row;
+      });
+    },
+
+    async setTcIntakeCache(row: TcIntakeRow): Promise<void> {
+      await ensureLoaded();
+      data.tcIntakes[row.escrowId] = {
+        escrowId: row.escrowId,
+        data: normalizeTcIntake(row.data),
+        updatedAt: row.updatedAt,
+      };
+      await persist();
+    },
+
+    /**
+     * Local-only intake write (preview + commit). The synced store's
+     * saveTcIntake (server-first, confirmed-or-loud) is what screens call;
+     * this exists so the Store contract is complete for local-only
+     * consumers and tests.
+     */
+    async saveTcIntake(escrowId: string, intake: TcIntakeData): Promise<TcIntakeRow> {
+      const p = await previewFor((h) => {
+        const row: TcIntakeRow = {
+          escrowId,
+          data: normalizeTcIntake(intake),
+          updatedAt: new Date().toISOString(),
+        };
+        h.tcIntakes[escrowId] = row;
+        return row;
+      });
+      await ensureLoaded();
+      data.profile = p.snapshot.profile;
+      data.escrows = p.snapshot.escrows;
+      data.invites = p.snapshot.invites;
+      data.links = p.snapshot.links;
+      data.tcIntakes = p.snapshot.tcIntakes;
+      await persist();
+      return p.result;
+    },
+
+    /**
+     * No-op on the local store: there is no server to pull from. The synced
+     * store's refreshTcIntake converges the confirmed row into this cache.
+     */
+    async refreshTcIntake(_escrowId: string): Promise<void> {
+      await ensureLoaded();
+    },
+
     async createEscrow(input: CreateEscrowInput): Promise<Escrow> {
       await ensureLoaded();
       const escrow = computeCreateEscrow(data, input);
@@ -1589,6 +1719,7 @@ export function createStore(kv: KV): Store {
       data.escrows = p.snapshot.escrows;
       data.invites = p.snapshot.invites;
       data.links = p.snapshot.links;
+      data.tcIntakes = p.snapshot.tcIntakes;
       await persist();
       return p.result;
     },

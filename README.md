@@ -211,6 +211,20 @@ central user; the buyers and sellers they represent are the other parties.
   platforms — **web** in localStorage, **native iOS** in its own storage —
   so a refresh keeps the realtor signed in, on the same screen. The session
   ends on Log out, or when the browser/incognito session ends.
+- **TC intake (Sept 2026)** — on seller-side escrows a **TC intake** row
+  sits below the time-tracker card (seller tab only on dual-agency;
+  buyer-only escrows never show it): a full-screen six-section form
+  (Property, Sellers, Terms, Commission, Details, Vendors) with up to three
+  sellers, conditional fields (trust details, home-of-choice contingency, HOA
+  amount, solar details), and the TC/broker fees prefilled at **$500 /
+  $995** (editable). Drafts stay local until **Save**, which waits for
+  server confirmation (`tc_intakes` table, migration 0031) — a failed save
+  throws a plain-language error and keeps the last confirmed snapshot
+  untouched; **Share** copies a plain-text summary of the current form.
+  Once anything is saved the row shows a pencil instead of the chevron.
+  The transaction coordinator's listing-side view gets a **"View listing
+  details"** card below the top card that opens the saved intake read-only;
+  buyer/seller views never see it.
 
 **For buyers / sellers (clients)**
 

@@ -357,4 +357,11 @@ export interface TcView {
   buyer: ClientView | null;
   /** Seller side, or null when the escrow has no seller side. */
   seller: ClientView | null;
+  /**
+   * TC intake (Sept 29, 2026, Anuraj-approved mockup 04): the realtor's
+   * saved listing details, read-only for the TC. Carried by get_client_view
+   * ONLY for the tc role (migration 0031) — buyer/seller payloads never
+   * contain it. Null when the realtor has not saved anything yet.
+   */
+  tcIntake?: import('./tcIntake').TcIntakeData | null;
 }

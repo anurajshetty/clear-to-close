@@ -3,6 +3,58 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## TC intake v1 (Sept 29, 2026)
+
+- **A read error is not "nothing saved."** `pullTcIntake` converted every
+  read failure to null, so a broken read (migration not applied, offline,
+  RLS) was indistinguishable from "no intake yet." The fix throws on error
+  and lets `refreshTcIntake` keep the confirmed cache while logging the
+  diagnostic (`console.warn`, the same channel the escrow screen's own
+  refresh uses) — the screen is never blocked. Practice: a null return
+  must mean "the server said empty," never "the read failed"; the caller
+  decides how a failure surfaces.
+- **A misnamed route param is a latent bug.** `app/tc-listing-details/[linkId]`
+  received the escrow id (the TC screen passes its own `id`, which
+  `getTcView` treats as escrowId) — the name invited a future reader to pass
+  a real link id. Renamed to `[escrowId]`; navigation unchanged. Practice:
+  when a param's name disagrees with its contract, rename the param, not
+  the callers.
+- **The details page is one card, not six.** The first implementation gave
+  each intake section its own card plus a separate "From your realtor"
+  kicker; the approved mockup (device 5) is a single card with the kicker
+  inside. Fixed before any UI test. Practice: for an approved-mockup build,
+  diff the DOM structure against the mockup, not just the copy — card
+  count is structure.
+
+- **A segmented choice is not a yes/no.** The completion counter counted
+  `solarLeasedOwned` (leased / owned) with yes/no semantics, so it could
+  never count as filled — a fully-filled intake read 34/35 and could never
+  reach Complete. The node suite caught it because the fixture mirrors the
+  mockup's device-3 example. Practice: every counted field's fill rule must
+  match its control type (yes/no vs text vs segmented) — and the "Complete"
+  golden fixture must exercise every control type, or the bug hides.
+- **The confirmed-write helper already exists — use it.** The first TC
+  intake push invented a `verifyCloudRowCount` wrapper that did not exist;
+  the codebase already had `upsertAll` (upsert + RETURNING row-count check,
+  the exact confirmed-write discipline). Practice: before adding a new
+  write path, grep for the existing table helpers and reuse them — a new
+  name for the same discipline is drift.
+- **A shared Store interface means both stores implement everything.**
+  The synced store's `saveTcIntake`/`refreshTcIntake` and the local store's
+  `previewSaveTcIntake`/`setTcIntakeCache` all live on one `Store` interface
+  (the `redeemInvite` precedent), so each store had to implement the other's
+  additions — the local store's `saveTcIntake` is the local-only preview +
+  commit path and its `refreshTcIntake` is a documented no-op (no server to
+  pull from). Practice: when extending a shared interface, compile both
+  implementations in the same pass; the typechecker, not memory, is the
+  checklist.
+- **normalize() must be idempotent and intent-preserving.** The first
+  version mapped an explicitly cleared fee back to the default, erasing the
+  user's clear. Defaults now apply only to absent fields; an explicit empty
+  string stays empty and counts unfilled. Practice: normalization should
+  never destroy information the user deliberately entered — absent and
+  empty are different inputs.
+
 ## Key-date clearing (Sept 28, 2026, Anuraj-reported)
 
 - **A picker that only commits is a write-only field.** The native DateField's

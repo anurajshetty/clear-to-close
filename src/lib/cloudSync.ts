@@ -43,6 +43,7 @@ import { daysToClose } from './dates';
 import { applyDerivedStatus } from './lifecycle';
 import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMedia, type MediaKind } from './mediaUpload';
 import { backfillTemplateKey } from './steps';
+import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -669,6 +670,11 @@ function mapTcSteps(
     daysToClose: daysToClose(closeDate),
     buyer: side === 'sell' ? null : buildRpcClientView(e, 'buyer', buyerRaw, closeDate, myReviewId),
     seller: side === 'buy' ? null : buildRpcClientView(e, 'seller', sellerRaw, closeDate, myReviewId),
+    // TC intake (Sept 29, 2026, mockup 04): carried on the tc payload only
+    // (migration 0031 embeds it in the tc branch of get_client_view).
+    // Buyer/seller payloads never carry it — enforced in buildRpcClientView
+    // by construction (no tcIntake key there at all).
+    tcIntake: d.tc_intake ? normalizeTcIntake(d.tc_intake) : null,
   };
 }
 
@@ -935,6 +941,61 @@ async function upsertAll(client: Cloud, table: string, rows: Record<string, unkn
   if (error) throw error;
   const affected = Array.isArray(data) ? data.length : 0;
   if (affected < rows.length) throw new SyncNotAppliedError(table, rows.length, affected);
+}
+
+/**
+ * Server-confirmed TC intake upsert (Sept 29, 2026, mockup 04): one row
+ * per escrow in tc_intakes (migration 0031). Confirmed-or-loud like every
+ * other write — throws on a missing table or RLS rejection; no silent
+ * legacy fallback.
+ */
+export async function pushTcIntakeNow(
+  client: Cloud,
+  userId: string,
+  escrowId: string,
+  data: TcIntakeData,
+): Promise<void> {
+  // upsertAll verifies the affected row count (the same confirmed-write
+  // discipline as every other table): an RLS rejection looks like a
+  // success without the RETURNING check.
+  await upsertAll(
+    client,
+    'tc_intakes',
+    [
+      {
+        escrow_id: escrowId,
+        owner_id: userId,
+        data: normalizeTcIntake(data),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    'escrow_id',
+  );
+}
+
+/**
+ * Get the confirmed TC intake for a realtor-owned escrow. Returns null
+ * when nothing is saved yet, and when the table does not exist (a fresh
+ * install before migration 0031 runs): a missing intake is a legitimate
+ * state, never an error on the read path.
+ */
+export async function pullTcIntake(
+  client: Cloud,
+  escrowId: string,
+): Promise<TcIntakeData | null> {
+  const { data: row, error } = await client
+    .from('tc_intakes')
+    .select('data')
+    .eq('escrow_id', escrowId)
+    .maybeSingle();
+  // A read error (migration 0031 not applied yet, offline, RLS) is a
+  // failure, not "nothing saved" — conflating the two would let a broken
+  // read silently masquerade as an empty intake. The single caller
+  // (refreshTcIntake) catches this, keeps the cached snapshot, and logs
+  // the diagnostic; the transaction screen is never blocked.
+  if (error) throw error;
+  if (!row) return null;
+  return normalizeTcIntake((row as { data?: unknown }).data);
 }
 
 /** Push one escrow and ALL of its steps (both roles) — idempotent. */
