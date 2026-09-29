@@ -24,8 +24,13 @@ REQUIRED_MARKERS = [
     "exp.host/--/api/v2/push/send",  # Expo Push API endpoint
     "DeviceNotRegistered",          # dead-token cleanup
     "EXPO_ACCESS_TOKEN",            # read from env, never hardcoded
-    "checked off",                  # approved copy line 1
-    "added a new step to your escrow",  # approved copy line 2
+    "just completed",               # approved single check-off copy (Sept 28, 2026)
+    "Your realtor completed",       # approved coalesced copy (Sept 28, 2026)
+    "added a new step to your escrow",  # compat event copy (new trigger never emits)
+    "flush_step_pushes",            # per-minute coalescing cron event (0024)
+    "quiet_checkin_sweep",          # hourly check-in cron event (0024)
+    "last_checkoff_activity_at",    # durable activity stamp for stale-checkin revalidation
+    "mark_quiet_checkin_sent",      # one check-in per quiet stretch
     "Your closing date is now",   # approved copy line 3 (Sept 28, 2026)
     "Your inspection contingency deadline is now",  # Sept 28, 2026 rule
     "Your appraisal deadline is now",  # Sept 28, 2026 rule

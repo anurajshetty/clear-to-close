@@ -13,6 +13,7 @@ import { AppState } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../lib/auth';
 import { store } from '../lib/store-instance';
+import { unregisterPushTokenForLink } from '../lib/push';
 import type { ClientRole } from '../lib/types';
 
 export type ClientGateState = 'checking' | 'valid' | 'error';
@@ -40,8 +41,12 @@ export function useClientLinkGate(
       const silent = opts?.silent === true;
       if (!silent) setGateState('checking');
       try {
-        const link = await auth.getClientLink();
-        if (!link || link.escrowId !== escrowId || link.role !== role || !link.linkId) {
+        // Multi-escrow (Sept 28, 2026): resolve THIS screen's link from the
+        // device's link set. A revoked/superseded link for this escrow
+        // removes ONLY this escrow's link and routes to /link-dead; the
+        // device's other escrows' links stay valid and usable.
+        const link = await auth.getClientLinkForEscrow(escrowId);
+        if (!link || link.role !== role || !link.linkId) {
           router.replace('/link-dead');
           return;
         }
@@ -49,7 +54,17 @@ export function useClientLinkGate(
         if (res.valid) {
           if (!silent) setGateState('valid');
         } else {
-          router.replace('/link-dead');
+          // Dead link, dead escrow: drop just this link, never the set.
+          await auth.removeClientLink(link.linkId);
+          try {
+            await unregisterPushTokenForLink(link.linkId);
+          } catch {
+            // best-effort
+          }
+          router.replace({
+            pathname: '/link-dead',
+            params: link.partyName ? { name: link.partyName } : undefined,
+          });
         }
       } catch (err) {
         console.warn('client link validation failed', err);

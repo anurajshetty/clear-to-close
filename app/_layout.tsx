@@ -21,6 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import { auth, parseRecoveryLink, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
+import { unregisterPushTokenForLink } from '../src/lib/push';
 import { PushGate } from '../src/components/PushGate';
 import { SyncErrorBar } from '../src/components/SyncErrorBar';
 import { colors } from '../src/theme';
@@ -99,9 +100,9 @@ export default function RootLayout() {
         )
           return;
         const isWeb = auth.isWeb();
-        const [role, clientLink, hasAccount] = await Promise.all([
+        const [role, clientLinks, hasAccount] = await Promise.all([
           auth.getRole(),
-          auth.getClientLink(),
+          auth.getClientLinks(),
           auth.getHasAccount(),
         ]);
         // The realtor session persists on both platforms (web: localStorage,
@@ -109,7 +110,28 @@ export default function RootLayout() {
         // the same screen. The session ends on Log out, or when the
         // browser/incognito session ends.
         const sessionUserId = await auth.getSessionUserId();
-        let href = resolveBootHref({ role, sessionUserId, clientLink, hasAccount, isWeb });
+        // Multi-escrow: validate every link. Invalid links are dropped
+        // individually — a dead escrow never kills the device's other
+        // escrows. Offline validation failure fails open (the screen
+        // re-checks on focus).
+        const liveLinks = [];
+        for (const link of clientLinks) {
+          try {
+            const v = await store.validateClientLink(link.linkId);
+            if (v.valid) liveLinks.push(link);
+            else {
+              await auth.removeClientLink(link.linkId);
+              try {
+                await unregisterPushTokenForLink(link.linkId);
+              } catch {
+                // best-effort
+              }
+            }
+          } catch {
+            liveLinks.push(link);
+          }
+        }
+        let href = resolveBootHref({ role, sessionUserId, clientLinks: liveLinks, hasAccount, isWeb });
         if (href === '/' && sessionUserId) {
           // Mid-onboarding resume: an account with no profile (and no skip)
           // resumes at profile creation (step 2), not the deal list. The
@@ -129,15 +151,8 @@ export default function RootLayout() {
             // Profile read failure: fall through to the deal list.
           }
         }
-        if (href.startsWith('/client/') && clientLink) {
-          // Validate the stored link before rendering the escrow.
-          try {
-            const v = await store.validateClientLink(clientLink.linkId);
-            if (!v.valid) href = '/link-dead';
-          } catch {
-            // Validation failure fails open: render; the screen re-checks.
-          }
-        }
+        // Every client href above was built from links already validated
+        // per-link in this boot pass; the screens re-check on focus.
         if (active) router.replace(href as never);
       } catch {
         if (active) router.replace('/role' as never);

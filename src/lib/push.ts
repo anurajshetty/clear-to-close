@@ -131,31 +131,35 @@ export function shouldShowPrePrompt(args: {
  */
 export function escrowRouteFromResponse(response: unknown): {
   escrowId: string;
-  role: 'buyer' | 'seller';
+  role: 'buyer' | 'seller' | 'tc';
 } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (response as any)?.notification?.request?.content?.data ?? {};
     const escrowId = typeof data.escrowId === 'string' ? data.escrowId : '';
     if (!escrowId) return null;
-    return { escrowId, role: data.role === 'seller' ? 'seller' : 'buyer' };
+    const role = data.role === 'seller' ? 'seller' : data.role === 'tc' ? 'tc' : 'buyer';
+    return { escrowId, role };
   } catch {
     return null;
   }
 }
 
 /**
- * Register this device's Expo push token for the current client link.
- * Re-run on every launch while granted: reinstalls and token rotations
- * self-heal. Returns true when a token is live server-side.
+ * Register this device's Expo push token for EVERY client link on the
+ * device, one token row per link. Multi-escrow (Sept 28, 2026): the token
+ * identity is link-scoped — registering a second escrow's link adds a row
+ * instead of replacing the first escrow's registration. Re-run on every
+ * launch while granted: reinstalls and token rotations self-heal. Returns
+ * true when at least one link's token is live server-side.
  */
 export async function registerPushToken(): Promise<boolean> {
   const N = loadNotifications();
   if (!N) return false;
   try {
     if ((await getPushPermission()) !== 'granted') return false;
-    const link = await auth.getClientLink();
-    if (!link) return false;
+    const links = await auth.getClientLinks();
+    if (!links.length) return false;
     const projectId = getExpoProjectId();
     if (!projectId) {
       // Standalone builds need extra.eas.projectId (set by `eas init`).
@@ -169,19 +173,51 @@ export async function registerPushToken(): Promise<boolean> {
     const deviceId = await auth.getDeviceId();
     const client = getSupabase();
     if (!client) return false;
-    const { data, error } = await client.rpc('register_push_token', {
-      p_link_id: link.linkId,
-      p_device_id: deviceId,
-      p_token: token,
-    });
-    if (error) return false;
-    return (data as { ok?: boolean } | null)?.ok === true;
+    // The SAME Expo token registers once per link: each escrow gets its
+    // own row (migration 0022: upsert on (device_id, link_id)). One link's
+    // failure must not block the others.
+    // IANA zone drives quiet-hours + day counting (0024+). Web/node
+    // fall back to the resolved offset zone if Intl is unavailable.
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    let anyOk = false;
+    for (const link of links) {
+      try {
+        const { data, error } = await client.rpc('register_push_token', {
+          p_link_id: link.linkId,
+          p_device_id: deviceId,
+          p_token: token,
+          p_timezone: timeZone,
+        });
+        if (!error && (data as { ok?: boolean } | null)?.ok === true) anyOk = true;
+      } catch {
+        // One link's failure must not block the others.
+      }
+    }
+    return anyOk;
   } catch {
     return false;
   }
 }
 
-/** Drop this device's token (link revoked, start-over, opt-out). */
+/**
+ * Drop ONE link's token row (multi-escrow, Sept 28, 2026): the dead
+ * link's pushes stop without touching the device's other escrows'
+ * registrations. The device-wide unregisterPushToken below still exists
+ * for start-over / opt-out.
+ */
+export async function unregisterPushTokenForLink(linkId: string): Promise<void> {
+  const N = loadNotifications();
+  if (!N) return;
+  try {
+    const client = getSupabase();
+    if (!client) return;
+    await client.rpc('unregister_push_token_for_link', { p_link_id: linkId });
+  } catch {
+    // best-effort
+  }
+}
+
+/** Drop this device's tokens (client start-over, opt-out). */
 export async function unregisterPushToken(): Promise<void> {
   const N = loadNotifications();
   if (!N) return;

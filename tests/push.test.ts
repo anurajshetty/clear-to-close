@@ -27,10 +27,10 @@ import { memoryKV } from '../src/lib/kv';
 declare const process: { exitCode?: number };
 
 async function main(): Promise<void> {
-  // ---- exact FINAL copy (Anuraj, Sept 26 2026) ----
+  // ---- approved single check-off copy (Anuraj, Sept 28 2026) ----
   assert(
     buildPushBody('step_done', 'Maya Sharma', 'Home inspection', null) ===
-      'Maya checked off Home inspection in your escrow.',
+      'Your realtor just completed Home inspection.',
     'step_done copy is exact',
   );
   assert(
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
       { expo_push_token: 'tok-1', role: 'buyer' },
       { expo_push_token: 'tok-2', role: 'seller' },
     ],
-    'Maya checked off Appraisal in your escrow.',
+    'Your realtor just completed Appraisal.',
     'esc-1',
   );
   assert(msgs.length === 2, 'one message per token');

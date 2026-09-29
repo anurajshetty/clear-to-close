@@ -3,6 +3,47 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Multi-escrow (Sept 29, 2026)
+
+- **The race loser must re-query before failing.** The first cut of migration
+  0022's `redeem_invite` returned `already_used` whenever the guarded
+  `redeemed_at` update found no row — so two concurrent same-code/same-device
+  redeems could resolve to one link for caller A and a dead-end error for
+  caller B. The fix re-checks the live `(device_id, escrow_id)` link inside
+  the `not found` branch: if it exists, return it (one link, both callers);
+  only then report `already_used`. Practice: in any claim-style RPC, losing
+  the claim is not the same as losing the resource — always re-read the
+  resource's current state before declaring failure.
+- **A same-escrow re-redeem is a read, not a write.** The old single-link
+  model treated every redeem as a link-minting event. Under multi-escrow the
+  same device redeeming the same escrow must return the existing link id
+  without a new row — in the RPC (`reused: true`), in the mock server, and in
+  `auth.addClientLink` (replace-by-escrow locally). Practice: idempotency
+  keys are (device, escrow), not just the invite code — pin the same link id
+  coming back on re-redeem, not just "ok".
+- **Dead-link handling is per-link, never per-device.** Boot validation,
+  the link gate, and the dead screen all used to read one global link and
+  wipe it. With a link set, every one of those paths must resolve the link
+  for the target escrow and remove/unregister only that one. Practice: when
+  a singleton becomes a collection, grep every consumer of the old accessor
+  (`getClientLink`) and convert each to the scoped accessor — the compiler
+  only catches the ones still typechecking; the semantics shift is the real
+  risk.
+- **The mock server must model the new index, not the old one.** The
+  faithful mock initially kept the one-live-link-per-device gate
+  (`device_has_link`), which made the new tests fail for the wrong reason
+  and old tests pass for the wrong reason. Practice: when a migration
+  changes the server's contract, update the mock's contract in the same
+  commit — a faithful mock that encodes yesterday's rules is worse than no
+  mock.
+- **Push tokens are rows per link, not per device.** The same Expo token
+  registers once per link (`register_push_token` upsert on
+  `(device_id, link_id)`); per-link unregister deletes by `link_id` only.
+  The mock now models this, and `tests/multi_escrow.test.ts` proves adding
+  a second escrow does not clobber the first escrow's token row. Practice:
+  notification targeting follows the same granularity as access — when
+  access goes per-escrow, so must the token lifecycle.
+
 ## Key-dates push copy correction (Sept 29, 2026)
 
 - **The trigger implemented "close date wins" instead of "count the changes".**
@@ -957,3 +998,99 @@ existing card model tests.
 - Unchecking a step on a closed side reopens the side (approved per-side
   semantics) but the killed client link stays dead until re-invited —
   consistent with explicit-close-kills-access.
+
+## Push notifications: coalescing, quiet hours, check-ins (Sept 28, 2026)
+
+Migration 0024 (0022/0023 reserved for the multi-escrow stream) ships the
+full approved notification rules. Lessons:
+
+- **Migration-number coordination matters when streams run in parallel.**
+  The draft was written as 0022 before checking the reservation — the
+  multi-escrow stream owned 0022+. Renamed to 0024 and documented the
+  reservation in the migration header. Release-lead takeaway: reserve
+  number ranges in the brief, not in the workstream.
+- **Index widening belongs to the stream that changes the invariant.**
+  Widening `push_tokens(device_id)` to `(device_id, escrow_id)` was in the
+  push draft first, but multi-escrow is what makes it true — so it moved
+  out of 0024 and into the multi-escrow stream. 0024's send paths already
+  detect multi-escrow rows (address in the body) so nothing in push needs
+  rewriting when the widen lands.
+- **Quiet-stretch activity must be a durable server stamp, not derived.**
+  `max(steps.completed_at)` lies after an uncheck (completed_at can survive
+  the uncheck). 0024 stamps `escrows.last_checkoff_activity_at` ONLY on
+  forward check-offs; the sweep, the re-arm, and the stale-queued-check-in
+  revalidation all read that column.
+- **Structural edits and unchecks are not pushes — the trigger encodes it.**
+  Only INSERT-with-done and false→true transitions buffer; reorder/title
+  edits and unchecks insert nothing. A checked custom step buffers as a
+  normal completion (approved: custom steps included).
+- **Copy conflicts need flagging, not silent invention.** The approved
+  check-in examples used em dashes, contradicting the standing no-em-dash
+  rule; shipped with colon/comma and flagged for Anuraj rather than silently
+  "fixing" the punctuation.
+- **Generator markers guard copy, so they must track copy.** The single-file
+  generator's REQUIRED_MARKERS still pinned the old check-off sentence; they
+  were updated to the approved copy plus the new cron-event/event-kind
+  markers. Stale markers give false green.
+- **Time math stays in the client's zone.** Quiet hours (21:00–08:00),
+  next-08:00 queueing, and close-date day counting all run through an
+  Intl-based zone offset — never the server's local clock. Tokens registered
+  before timezone capture fall back to America/Los_Angeles.
+
+Regression: `tests/push_coalesce_quiet.test.ts` (quiet-hour boundaries in
+LA and IST, morning-queue targets, zoned day counting, coalesced + check-in
+copy with an em-dash sweep, multi-escrow address, internal cron events,
+TC/seller/buyer tap routing); `tests/push.test.ts` updated to the approved
+check-off copy; `tests/run.sh` wires both.
+## Secure realtime for client views (Sept 29, 2026)
+
+- **The anon key proves nothing, so realtime needed its own credential.**
+  Client views previously converged only on foreground-focus refetch.
+  Supabase Realtime enforces RLS per row on the server, but the stock anon
+  key carries no identity — so the `client-realtime-token` Edge Function
+  validates (link_id, device_id) against `client_links` (link exists,
+  unrevoked, invite unrevoked, device bound) and mints a 15-minute JWT
+  signed with the project's JWT secret (`SUPABASE_JWT_SECRET`), claims
+  `device_link_id` / `escrow_id` / `link_role`. The client passes it to
+  `realtime.setAuth()` on a dedicated supabase client (the shared client
+  keeps the realtor session untouched). Forgery requires the JWT secret.
+- **Revocation must kill the stream at the database, not just in the app.**
+  A revoked link's token stays signature-valid until expiry, so the 0030
+  RLS policies on steps/escrows/realtor_profiles additionally require a
+  LIVE link (`EXISTS ... revoked_at IS NULL` on both link and invite).
+  The client's own `client_links` row is deliberately NOT revoked-filtered
+  — that is how the client observes its own revocation and routes to
+  /link-dead immediately instead of waiting for a foreground round-trip.
+- **Realtime is an invalidation signal, not a data pipe.** On any event the
+  client re-pulls `get_client_view` (debounced 750 ms to coalesce rapid
+  check-offs). Payloads are never applied directly — no client-side
+  conflict surface, no optimistic UI, the synchronous-writes model stands.
+- **postgres_changes filters can't scope realtor_profiles by escrow**
+  (the table has no escrow_id), so that binding has no filter — the 0030
+  RLS policy scopes it server-side to the token escrow's realtor. Verified
+  by binding assertion in `tests/client_realtime.test.ts`.
+- **Token refresh must beat the heartbeat.** realtime-js closes the channel
+  at token expiry with no automatic resubscribe, so the manager refreshes
+  2 minutes early via setAuth; any failure falls back to the reconnect
+  path, which mints fresh.
+- **Migration numbering across parallel streams:** multi-escrow reserved
+  0022+, so realtime took 0030 (recorded in the migration header) — the
+  merge lead must keep 0030 out of the multi-escrow stream.
+- **Test seam, not a mock framework:** `src/lib/clientRealtime.ts` takes
+  injected deps (fetch, realtime client factory, timers), so the node
+  suite pins the whole wiring contract (mint -> setAuth -> bindings ->
+  callbacks -> reconnect -> teardown) without a socket.
+- **Merge-time API drift between parallel streams is invisible to git.**
+  The realtime stream called `auth.getClientLink()` (singular) while the
+  multi-escrow stream had renamed the API to `auth.getClientLinks()`
+  (plural, returns `DeviceClientLink[]`). Both streams were green alone;
+  the merged tree failed `tsc` in `src/hooks/useClientRealtime.ts`. Git
+  merges cleanly when streams touch different files, so the release lead
+  must run the FULL typecheck on the merged tree (not just per-stream
+  results). Fix: the hook now finds its escrow's link via
+  `getClientLinks().find((l) => l.escrowId === escrowId)`.
+- **tsconfig without `include` typechecks nested worktrees.** The parent
+  tree's `wt/` holds full worktree checkouts (12k+ TS files); a bare
+  `npx tsc --noEmit` tried to check them all and got OOM-killed. The
+  shipping bar's typecheck must exclude `wt` (release-check config),
+  matching what the unit suite already does with explicit file lists.

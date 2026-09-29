@@ -11,8 +11,8 @@ export interface BootInput {
   role: 'realtor' | 'client' | null;
   /** Persisted Supabase session user id (restored on both platforms), or null. */
   sessionUserId: string | null;
-  /** Device client link from a previous client redeem, or null. */
-  clientLink: DeviceClientLink | null;
+  /** Device client links from previous client redeems (multi-escrow). */
+  clientLinks: DeviceClientLink[];
   /** True once a realtor account has been created on this device. */
   hasAccount: boolean;
   isWeb: boolean;
@@ -20,14 +20,19 @@ export interface BootInput {
 
 /**
  * Resolve the launch destination href.
+ * Multi-escrow (Sept 28, 2026, Anuraj-approved): 0 valid links → redeem,
+ * 1 valid link → open directly, 2+ valid links → the escrow list.
  * Client-link validity (regenerated/revoked) is checked AFTER this returns
- * the client href — callers must run validateClientLink and send dead links
- * to '/link-dead' before rendering the escrow.
+ * a client href — callers must run validateClientLink per link and send
+ * dead links to '/link-dead' before rendering the escrow.
  */
 export function resolveBootHref(input: BootInput): string {
-  if (input.clientLink) {
-    const l = input.clientLink;
+  if (input.clientLinks.length === 1) {
+    const l = input.clientLinks[0];
     return `/client/${l.role}/${l.escrowId}`;
+  }
+  if (input.clientLinks.length > 1) {
+    return '/client/escrows';
   }
   if (input.sessionUserId) {
     return '/';

@@ -5,10 +5,11 @@
 //    The redeeming device never puts them in its local store; the
 //    realtor's device never holds them locally at all (local data.links
 //    is written only by the offline redeem fallback).
-//  - redeem_invite enforces the one-live-link-per-device unique index:
-//    a redeem on a device that already holds a LIVE link for a different
-//    escrow fails with the 23505 violation, which the app maps to
-//    device_has_link. A revoked link frees the slot.
+//  - redeem_invite enforces the (device_id, escrow_id) live unique index
+//    (multi-escrow, migration 0022): the same device redeeming the same
+//    escrow again returns the EXISTING link (idempotent, no duplicate); a
+//    redeem for a different escrow mints a new link. A revoked link frees
+//    the (device, escrow) slot.
 //  - A revoked invite's code is dead ('revoked').
 // Tests that seed local data.links instead of this server pass for the
 // wrong reason — they must drive this mock's RPC/query surface instead.
@@ -30,6 +31,7 @@ interface ServerInvite {
 interface ServerLink {
   id: string;
   inviteId: string;
+  escrowId: string;
   deviceId: string;
   revokedAt: string | null;
 }
@@ -69,6 +71,17 @@ export interface MockServer {
   seedRows: Record<string, unknown[]>;
   /** Every upsert call, in order (lets tests assert what the server received). */
   upsertLog: { table: string; rows: unknown }[];
+  /**
+   * Link-scoped push tokens (multi-escrow, migration 0022): key
+   * `${deviceId}|${linkId}` — one row per link for the same Expo token.
+   */
+  pushTokens: Map<string, { deviceId: string; linkId: string; token: string }>;
+  /**
+   * Per-escrow realtor profiles returned by get_client_view in this mock,
+   * keyed by escrow id. Lets branding-isolation tests prove each escrow's
+   * view carries only its own realtor's profile.
+   */
+  viewProfiles: Record<string, unknown>;
   select(table: string, filters: Filter[]): { data: unknown; error: unknown };
   update(
     table: string,
@@ -161,14 +174,26 @@ export function createMockServer(): MockServer {
       const inv = inviteId ? invites.get(inviteId) : undefined;
       if (!inv) return { data: { ok: false, error: 'invalid' }, error: null };
       if (inv.revokedAt) return { data: { ok: false, error: 'revoked' }, error: null };
-      const liveForDevice = [...links.values()].find(
-        (l) => l.deviceId === deviceId && l.revokedAt === null,
+      // Multi-escrow idempotency (migration 0022): the same device
+      // redeeming the same escrow again returns the EXISTING live link —
+      // no duplicate row.
+      const existingForEscrow = [...links.values()].find(
+        (l) => l.deviceId === deviceId && l.escrowId === inv.escrowId && l.revokedAt === null,
       );
-      // The one-live-link-per-device unique index: a live link on ANY
-      // other escrow blocks this redeem.
-      if (liveForDevice) return { data: { ok: false, error: 'device_has_link' }, error: null };
+      if (existingForEscrow) {
+        return {
+          data: {
+            ok: true,
+            escrow_id: inv.escrowId,
+            role: inv.role,
+            party_name: String(params?.p_name ?? ''),
+            link_id: existingForEscrow.id,
+          },
+          error: null,
+        };
+      }
       const id = `srv-link-${++linkSeq}`;
-      links.set(id, { id, inviteId: inv.id, deviceId, revokedAt: null });
+      links.set(id, { id, inviteId: inv.id, escrowId: inv.escrowId, deviceId, revokedAt: null });
       return {
         data: {
           ok: true,
@@ -184,9 +209,44 @@ export function createMockServer(): MockServer {
       const link = links.get(String(params?.p_link_id ?? ''));
       if (!link || link.revokedAt) return { data: { ok: false, error: 'revoked' }, error: null };
       return {
-        data: { ok: true, escrow: { close_date: '2026-11-28' }, buyer_steps: [], profile: null },
+        data: {
+          ok: true,
+          escrow: {
+            id: link.escrowId,
+            address: `mock-${link.escrowId}`,
+            city: 'Santa Clarita',
+            close_date: '2026-11-28',
+          },
+          buyer_steps: [],
+          // Per-escrow realtor branding (multi-escrow, Sept 28, 2026):
+          // tests seed server.viewProfiles[escrowId] to prove each escrow's
+          // view carries only its own realtor's profile.
+          profile: server.viewProfiles[link.escrowId] ?? null,
+        },
         error: null,
       };
+    }
+    if (name === 'register_push_token') {
+      // Migration 0022: upsert on (device_id, link_id) — one row per link.
+      const deviceId = String(params?.p_device_id ?? '');
+      const linkId = String(params?.p_link_id ?? '');
+      const token = String(params?.p_token ?? '');
+      server.pushTokens.set(`${deviceId}|${linkId}`, { deviceId, linkId, token });
+      return { data: { ok: true }, error: null };
+    }
+    if (name === 'unregister_push_token_for_link') {
+      const linkId = String(params?.p_link_id ?? '');
+      for (const key of [...server.pushTokens.keys()]) {
+        if (key.endsWith(`|${linkId}`)) server.pushTokens.delete(key);
+      }
+      return { data: { ok: true }, error: null };
+    }
+    if (name === 'unregister_push_token') {
+      const deviceId = String(params?.p_device_id ?? '');
+      for (const key of [...server.pushTokens.keys()]) {
+        if (key.startsWith(`${deviceId}|`)) server.pushTokens.delete(key);
+      }
+      return { data: { ok: true }, error: null };
     }
     if (name === 'regenerate_invite') {
       const inviteId = String(params?.p_invite_id ?? '');
@@ -247,6 +307,8 @@ export function createMockServer(): MockServer {
     failStepDelete: false,
     seedRows: {},
     upsertLog,
+    pushTokens: new Map<string, { deviceId: string; linkId: string; token: string }>(),
+    viewProfiles: {},
     select,
     update,
     remove,

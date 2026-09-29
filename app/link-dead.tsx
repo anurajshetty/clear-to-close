@@ -1,10 +1,17 @@
-// Clear to Close — dead client link (approved onboarding/auth ㉓).
-// Shown when the stored device client link no longer validates (the realtor
-// regenerated the code and the old link was killed, or the invite was
-// revoked). Never a blank or half-loaded escrow: an explicit state with the
-// two recovery paths. "Enter the new code" re-opens the redeem form with the
-// name pre-filled.
-import React, { useState } from 'react';
+// Clear to Close — dead client link (approved onboarding/auth ㉓,
+// multi-escrow Sept 28, 2026).
+// Shown when this escrow's device client link no longer validates (the
+// realtor regenerated the code and the old link was killed, or the invite
+// was revoked). Never a blank or half-loaded escrow: an explicit state with
+// the two recovery paths. "Enter the new code" re-opens the redeem form with
+// the name pre-filled (the name arrives as a param, because the dead link
+// itself is already gone).
+//
+// Multi-escrow: only this escrow's link died — the device's other escrows'
+// links stay valid. "Start over" becomes "Back to my escrows" when other
+// valid links remain, so the client never loses their other escrows from
+// here.
+import React, { useEffect, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -12,24 +19,38 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { PrimaryButton, TextLink } from '../src/components/ui';
 import { colors } from '../src/theme';
 
 export default function LinkDead() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ name?: string }>();
   const [busy, setBusy] = useState(false);
+  const [hasOtherLinks, setHasOtherLinks] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    auth
+      .getClientLinks()
+      .then((links) => {
+        if (active) setHasOtherLinks(links.length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const prefillName = Array.isArray(params.name) ? params.name[0] : params.name;
 
   const onEnterNewCode = async () => {
     if (busy) return;
     setBusy(true);
     try {
-      const link = await auth.getClientLink();
-      const params = link?.partyName
-        ? { name: link.partyName }
-        : undefined;
-      router.push({ pathname: '/redeem', params });
+      const redeemParams = prefillName ? { name: prefillName } : undefined;
+      router.push({ pathname: '/redeem', params: redeemParams });
     } finally {
       setBusy(false);
     }
@@ -39,10 +60,17 @@ export default function LinkDead() {
     if (busy) return;
     setBusy(true);
     try {
+      if (hasOtherLinks) {
+        // Multi-escrow: other escrows still live on this device — go back
+        // to the list, never wipe them.
+        router.replace('/client/escrows');
+        return;
+      }
       await auth.clearClientLink();
       await auth.clearRole();
-    } finally {
       router.replace('/role');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -61,7 +89,10 @@ export default function LinkDead() {
         <View style={styles.cta}>
           <PrimaryButton title="Enter the new code" onPress={onEnterNewCode} />
         </View>
-        <TextLink title="Not your escrow? Start over" onPress={onStartOver} />
+        <TextLink
+          title={hasOtherLinks ? 'Back to my escrows' : 'Not your escrow? Start over'}
+          onPress={onStartOver}
+        />
       </ScrollView>
     </SafeAreaView>
   );

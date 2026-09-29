@@ -67,10 +67,9 @@ export default function ClientRealtorProfile() {
         if (active) setFailed(true);
       });
     // "Back to my escrow" returns to THIS client's own home view.
-    auth
-      .getClientLink()
+    (escrowId ? auth.getClientLinkForEscrow(escrowId) : auth.getClientLinks().then((ls) => ls[0] ?? null))
       .then((link) => {
-        if (active && link && (!escrowId || link.escrowId === escrowId)) {
+        if (active && link) {
           setHomeRoute({ role: link.role, escrowId: link.escrowId });
         }
       })

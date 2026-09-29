@@ -140,7 +140,9 @@ export default function InAppRealtorProfile() {
       return;
     }
     try {
-      const link = await auth.getClientLink();
+      const link = escrowId
+        ? await auth.getClientLinkForEscrow(escrowId)
+        : (await auth.getClientLinks())[0] ?? null;
       const homeId = escrowId || link?.escrowId;
       if (homeId) {
         router.replace(`/client/${link?.role ?? 'buyer'}/${homeId}`);

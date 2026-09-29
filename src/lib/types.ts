@@ -237,7 +237,7 @@ export interface Invite {
 
 export type RedeemResult =
   | { ok: true; escrowId: string; role: ClientRole; partyName: string; linkId: string }
-  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'device_has_link' };
+  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' };
 
 /**
  * The inviting realtor's public branding for the branded invite welcome
@@ -333,6 +333,13 @@ export interface ClientView {
    * 'cancelled').
    */
   status?: 'open' | 'closed' | 'cancelled';
+  /**
+   * Server-side escrow updated_at (ISO). Drives the multi-escrow list
+   * ordering (Sept 28, 2026, Anuraj-approved): in-progress first, then
+   * completed; most-recently-updated first within each group. Absent on
+   * older cached views — those sort as oldest.
+   */
+  updatedAt?: string;
 }
 
 /**

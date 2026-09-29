@@ -541,7 +541,11 @@ export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } 
     } as RpcRedeemOk;
   }
   const err = (d?.error as string) ?? 'invalid';
-  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network', 'device_has_link'] as const;
+  // Multi-escrow (Sept 28, 2026): the different-escrow device_has_link
+  // rejection is gone — redeem_invite returns the existing link for a
+  // same-device/same-escrow redeem instead of erroring, and the
+  // (device_id, escrow_id) index makes a second escrow's redeem succeed.
+  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network'] as const;
   return { ok: false, error: valid.includes(err as (typeof valid)[number]) ? (err as (typeof valid)[number]) : 'invalid' };
 }
 
@@ -638,6 +642,10 @@ function buildRpcClientView(
       e.status === 'open' || e.status === 'closed' || e.status === 'cancelled'
         ? e.status
         : undefined,
+    // Server updated_at (escrows.updated_at) — drives the multi-escrow list
+    // ordering (Sept 28, 2026): most-recently-updated first within each
+    // status group. Absent on older payloads; those sort as oldest.
+    updatedAt: typeof e.updated_at === 'string' ? e.updated_at : undefined,
   };
 }
 
@@ -1471,11 +1479,13 @@ export async function redeemViaCloud(
     // A transport/RPC-level error (network down, timeout, missing function)
     // is NOT a bad code — surface it as retryable 'network' so the client
     // never sees "invalid code" for a server problem. Bad codes arrive as
-    // data {ok:false}, mapped below. One exception: the 0002 one-live-link-
-    // per-device index (23505) means this device already holds a different
-    // escrow's link — a permanent, connection-independent state, so it gets
-    // its own non-retryable error instead of the misleading 'network'.
-    if (error) return { ok: false, error: isUniqueViolation(error) ? 'device_has_link' : 'network' };
+    // data {ok:false}, mapped below. Multi-escrow (Sept 28, 2026): the old
+    // 0002 one-live-link-per-device index (23505) is replaced by the
+    // (device_id, escrow_id) index whose conflicts are resolved INSIDE the
+    // redeem_invite RPC (the race loser is handed the winner's link) — a
+    // 23505 escaping the RPC is unexpected and must never read as a code
+    // verdict, so it falls into the generic retryable 'network'.
+    if (error) return { ok: false, error: 'network' };
     return mapRedeemRpc(data);
   } catch {
     return { ok: false, error: 'network' };

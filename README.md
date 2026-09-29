@@ -233,6 +233,26 @@ central user; the buyers and sellers they represent are the other parties.
   device-local fallback); tapping it opens the realtor's profile **in-app**
   (never a browser tab). Redemption binds
   access to the device; reopening the app goes straight back into the escrow.
+- **Multiple escrows on one device** (Sept 2026) — a client can join more
+  than one escrow: each redeem adds that escrow's link, and one device holds
+  one live link per escrow. With two or more links the app opens a **My
+  escrows** list instead of dropping into a single escrow: each row shows the
+  address/city, a Buyer/Seller/TC badge, the state (In progress/Completed),
+  and the realtor's name with their photo (teal initials when no photo).
+  In-progress escrows sort first, completed second, newest-updated first
+  within each group; completed rows are dimmed and read-only. Every escrow
+  keeps its own branding, views, and checklist state — nothing leaks across
+  escrows or realtors. The client homes gain a conditional **My escrows**
+  back control and a shared **Join another escrow** entry; redeeming a code
+  for a new escrow shows an "Added to your escrows." toast, and re-redeeming
+  an already-linked escrow just opens it (no duplicate). A legacy single
+  link stored by an older version migrates into the set automatically.
+  Server side this is migration `supabase/migrations/0022_multi_escrow.sql`:
+  the device-wide live-link unique index is replaced by a (device_id,
+  escrow_id) one, `redeem_invite` returns the existing link for a
+  same-device/same-escrow re-redeem (idempotent, race-safe), and push tokens
+  are stored per link (`unregister_push_token_for_link` drops one escrow's
+  row without touching the others).
 - **Read-only checklist** styled exactly like the realtor's stepper (check
   circles, short connector segments, subtitles, UP NEXT tag) but with no tap
   targets, no drag grips, and no "Custom" tag. One single list in the
@@ -292,7 +312,11 @@ central user; the buyers and sellers they represent are the other parties.
     `0020_step_template_key.sql` (permanent template keys + explainers),
     `0021_key_dates_push.sql` (key-date changes fire the client push:
     "Your closing date is now Nov 15, 2026." for a single changed date,
-    "{First} updated your key dates." for several changed together).
+    "{First} updated your key dates." for several changed together),
+    `0024_push_coalesce_quiet.sql` (0022/0023 reserved for the multi-escrow
+    stream: check-off coalescing, quiet hours 9 PM–8 AM with an 8 AM queue,
+    the five-day quiet check-in, token cleanup on link/invite revocation,
+    and TC deep-link routing).
   - **Step explainers** (Sept 28, 2026, Anuraj-approved) — client checklist
     rows with an explainer are tappable: tap reveals a one-line
     plain-language explanation below the title, tap again collapses; rows
@@ -385,14 +409,25 @@ central user; the buyers and sellers they represent are the other parties.
   asked once whether to allow notifications ("Stay in the loop": "Get
   notified the moment {first name} checks off a step — you'll never have to
   keep checking"). **Forward progress only**: a push fires when the realtor
-  checks off a step, adds a custom step, or changes a key date;
-  **unchecking a step never sends a push**. Key-date copy (Anuraj, Sept 28,
-  2026): one date changed sends the specific copy ("Your closing date is
+  checks off a step or changes a key date; **unchecking a step and
+  structural checklist edits (reorder/title/add) never send a push**.
+  Check-off copy (Anuraj, Sept 28, 2026): "Your realtor just completed the
+  home inspection."; rapid check-offs within ~2 minutes coalesce into one:
+  "Your realtor completed 3 steps". Key-date copy (Anuraj, Sept 28, 2026):
+  one date changed sends the specific copy ("Your closing date is
   now Nov 15, 2026.", "Your inspection contingency deadline is now Oct 15,
   2026.", etc.); several dates changed together send "{First} updated your
-  key dates." Tapping a notification opens the
-  client's escrow home. While the app is open, no banner appears (the Latest
-  card shows the update). Web is out of push scope — no prompt, no tokens.
+  key dates." **Quiet hours**: nothing buzzes
+  9 PM–8 AM client-local — notifications are queued for 8 AM. **Five-day
+  quiet check-in** (the manual nudge is dead): after five days with no
+  check-off activity on an active escrow, one check-in fires
+  ("Your escrow is on track: {done} of {total} steps done, closing in {n}
+  days." or, within a week of closing, "Closing is {n} days away, {open}
+  steps still to go."). Multi-escrow devices see the property address in the
+  body; revoked links/invites and closed/cancelled escrows never receive
+  pushes. Tapping a notification opens the correct escrow home. While the
+  app is open, no banner appears (the Latest card shows the update). Web is
+  out of push scope — no prompt, no tokens.
   Requires a fresh iOS binary (new native module) — see "iOS release".
 - Buyer access can never expose seller data and vice versa.
 
@@ -545,20 +580,25 @@ python3 scripts/deploy_gh_pages.py   # deploy web to gh-pages
 
 ## Push notifications (dashboard steps, Anuraj's)
 
-After the app change ships, pushes need three server-side steps in the
+After the app change ships, pushes need four server-side steps in the
 Supabase dashboard (one-time):
 
 1. Run `supabase/migrations/0008_push_tokens.sql` in the SQL editor
    (`pg_net` must be enabled: Database → Extensions). The migration mints a
    trigger shared secret into Vault and prints it once as
    `PUSH_TRIGGER_SECRET` — copy it.
-2. Deploy the `send-client-push` Edge Function from the generated single
+2. Run `supabase/migrations/0024_push_coalesce_quiet.sql` in the SQL editor
+   (AFTER 0008/0021; `pg_cron` must be enabled: Database → Extensions).
+   This adds check-off coalescing, quiet hours, the morning queue, the
+   five-day check-in, and token cleanup on revocation — plus two pg_cron
+   schedules (per-minute coalesce flush, hourly check-in sweep).
+3. Deploy the `send-client-push` Edge Function from the generated single
    file `~/workspace/your_files/send-client-push-single.ts` (regenerate with
    `python3 tools/make_send_client_push_single.py` after any source change —
    never hand-edit the generated file). Set its secrets:
    `PUSH_TRIGGER_SECRET` (from step 1), `EXPO_ACCESS_TOKEN` (expo.dev →
    Access Tokens).
-3. Confirm Apple Push credentials for the EAS project, then build + submit
+4. Confirm Apple Push credentials for the EAS project, then build + submit
    a fresh iOS binary (`eas build --platform ios` / `eas submit --platform
    ios`) — the `expo-notifications` native module is compiled into the app,
    so pushes cannot work on the currently installed build. Also run
@@ -580,10 +620,55 @@ alter table escrows disable trigger trg_escrows_push_notify;
 
 Physical-iPhone checks (can't be automated): redeem a client code → allow
 notifications → background/kill the app → check off a step as the realtor
-from another device → push arrives and taps through to the client home; no
-banner while the client app is foreground; unchecking sends nothing;
-custom-step and target-date pushes arrive; denied permission never re-prompts
-(turn it back on in iOS Settings).
+from another device → push arrives ("Your realtor just completed …") and
+taps through to the client home; no banner while the client app is
+foreground; unchecking sends nothing; adding/renaming a checklist item
+sends nothing; key-date pushes arrive (single date → specific copy,
+several at once → "{First} updated your key dates."); denied permission
+never re-prompts (turn it back on in iOS Settings); nothing buzzes
+9 PM–8 AM local (queued for 8 AM).
+
+## Realtime for client views (dashboard steps, Anuraj's)
+
+Client screens (buyer/seller/TC) subscribe to live Supabase Realtime
+events for their escrow: a realtor check-off, key-date change, or link
+revocation updates the open client screen without a foreground round-trip.
+Clients have no login — they authenticate by device link. The
+`client-realtime-token` Edge Function validates the device's
+`(link_id, device_id)` and mints a 15-minute JWT signed with the project
+JWT secret; migration `0030_client_realtime.sql` adds the escrow tables to
+the realtime publication and admits exactly that token's escrow through
+RLS (revoked links are cut off at the database immediately). Realtime is
+a read-only invalidation signal: every event re-pulls the client view
+from the server. Any failure degrades silently to the existing
+focus/foreground refetch.
+
+Two server-side steps in the Supabase dashboard (one-time):
+
+1. Run `supabase/migrations/0030_client_realtime.sql` in the SQL editor
+   (multi-escrow must NOT reuse number 0030 — it reserved 0022+).
+2. Deploy the `client-realtime-token` Edge Function from the generated
+   single file `~/workspace/your_files/client-realtime-token-single.ts`
+   (regenerate with `python3 tools/make_client_realtime_token_single.py`
+   after any source change — never hand-edit the generated file). No
+   extra secrets: the platform provides `SUPABASE_URL`,
+   `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET`.
+
+Kill switch (no code deploy needed): clients degrade to
+foreground-focus refetch automatically —
+
+```sql
+alter publication supabase_realtime drop table public.steps;
+alter publication supabase_realtime drop table public.escrows;
+alter publication supabase_realtime drop table public.client_links;
+alter publication supabase_realtime drop table public.realtor_profiles;
+```
+
+Physical-iPhone checks (can't be automated): open a client escrow → check
+off a step as the realtor from another device → the client checklist
+updates without backgrounding the app; edit a key date → the KEY DATES
+sheet updates; revoke the invite → the client lands on the link-dead
+screen; airplane mode → no error shown, foreground return still refreshes.
 
 ## iOS release (Anuraj's step)
 

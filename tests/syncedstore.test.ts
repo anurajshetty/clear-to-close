@@ -2,7 +2,8 @@
 // (src/lib/syncedStore.ts). The delegate functions are tested elsewhere;
 // these pin the wrapper's own timeout/gating/mirror logic:
 //  - redeemInvite: the 8s-timeout race -> 'network' (the exact path screens
-//    call), unique-violation -> 'device_has_link', bad codes -> 'invalid'
+//    call), unexpected unique-violation -> 'network' (multi-escrow: the old
+//    one-live-link-per-device gate is gone), bad codes -> 'invalid'
 //  - validateClientLink: revoked/invalid -> fail-closed invalid; transport
 //    failure -> fail-open valid (never strand a client on a flaky network)
 //  - getClientProfile: linked-first for client devices, local fallback
@@ -61,7 +62,9 @@ async function main(): Promise<void> {
     assert(!r.ok && r.error === 'network', 'redeem rpc timeout -> network (not invalid)');
   }
   {
-    // Second live link on the same device_id: 23505 -> 'device_has_link'.
+    // Multi-escrow (migration 0022): an unexpected 23505 escaping the RPC is
+    // a server anomaly, mapped to the retryable 'network' code — same
+    // device/same escrow idempotency is the RPC's own job.
     const kv = memoryKV();
     const { store } = createSyncedStore(kv, {
       cloudClient: () =>
@@ -69,7 +72,7 @@ async function main(): Promise<void> {
       redeemTimeoutMs: 50,
     });
     const r = await store.redeemInvite('ABCDEF', 'Priya Nair', 'dev-1');
-    assert(!r.ok && r.error === 'device_has_link', 'redeem unique violation -> device_has_link');
+    assert(!r.ok && r.error === 'network', 'redeem unique violation -> network (device_has_link is gone)');
   }
   {
     // Genuine bad code still maps to 'invalid' through the wrapper.

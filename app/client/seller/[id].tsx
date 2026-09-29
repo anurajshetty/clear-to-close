@@ -22,9 +22,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
+import { useClientRealtime } from '../../../src/hooks/useClientRealtime';
 import { useReviewSheet } from '../../../src/hooks/useReviewSheet';
 import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { SecondaryButton } from '../../../src/components/ui';
+import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/EscrowSwitcher';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
@@ -80,9 +82,9 @@ export default function SellerView() {
     // The greeting uses the name from this device's link (what the buyer
     // entered at redeem).
     auth
-      .getClientLink()
+      .getClientLinkForEscrow(id ?? '')
       .then((link) => {
-        if (active && link && link.escrowId === id) setPartyName(link.partyName);
+        if (active && link) setPartyName(link.partyName);
       })
       .catch(() => {});
     return () => {
@@ -94,6 +96,10 @@ export default function SellerView() {
   const { gateState, retry } = useClientLinkGate(id, 'seller', {
     onForegroundRefresh: load,
   });
+  // Secure realtime (Sept 2026): once the gate validates the link, live
+  // server events re-pull this view; any failure degrades silently to the
+  // focus/foreground refetch above.
+  useClientRealtime(id, { enabled: gateState === 'valid', onDataChanged: load });
   // 100% triumph "Leave a review" -> the profile stream's review sheet.
   const review = useReviewSheet(view, profile, setProfile, setView);
 
@@ -124,6 +130,7 @@ export default function SellerView() {
         <Text style={styles.loading}>Loading…</Text>
       ) : (
         <>
+          <MyEscrowsBack />
           <ClientTopCard
             greeting={greeting}
             kicker="Your transaction"
@@ -193,6 +200,7 @@ export default function SellerView() {
               <Text style={styles.note}>
                 Updated by your realtor.{'\n'}This view is read-only.
               </Text>
+              <JoinAnotherEscrow />
             </>
           )}
         </>

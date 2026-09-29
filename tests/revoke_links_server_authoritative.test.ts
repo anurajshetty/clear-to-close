@@ -14,8 +14,10 @@
 //  1. cancelEscrow converges the server link's revoked_at (no zombie);
 //  2. a device whose client was removed via cancel can redeem a NEW code
 //     afterward (different escrow AND same-escrow re-invite);
-//  3. a genuinely-live link on another escrow still blocks the redeem
-//     (device_has_link), so the fix doesn't over-release;
+//  3. MULTI-ESCROW (Sept 28, 2026, migration 0022): a live link on another
+//     escrow no longer blocks — the same device holds one link per escrow
+//     (the old device_has_link gate is gone; multi_escrow.test.ts pins the
+//     full multi-escrow matrix).
 //  4. cancelling an escrow whose invites were never redeemed enqueues no
 //     link ops.
 import { assert, summary } from './assert';
@@ -107,7 +109,7 @@ async function main(): Promise<void> {
     );
   }
 
-  // --- 3. A genuinely-live link still blocks ------------------------------
+  // --- 3. Multi-escrow: a live link on ANOTHER escrow no longer blocks ----
   {
     const server = createMockServer();
     const kv = memoryKV();
@@ -128,8 +130,8 @@ async function main(): Promise<void> {
     await tick();
     const rB = await store.redeemInvite(invB.code, 'Jay', 'dev-9');
     assert(
-      !rB.ok && (rB as { error?: string }).error === 'device_has_link',
-      `live link on another escrow still blocks (got ${JSON.stringify(rB)})`,
+      rB.ok && rB.linkId !== rA.linkId,
+      `live link on another escrow no longer blocks — second link minted (got ${JSON.stringify(rB)})`,
     );
   }
 

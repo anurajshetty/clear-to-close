@@ -52,7 +52,7 @@ export function useReviewSheet(
   const submit = useCallback(
     async ({ stars, text }: { stars: number; text: string }) => {
       const client = getSupabase();
-      const link = await auth.getClientLink().catch(() => null);
+      const link = await auth.getClientLinkForEscrow(view?.escrowId ?? '').catch(() => null);
       if (!client || !link) {
         setError(friendlyError('network'));
         return;
@@ -86,7 +86,7 @@ export function useReviewSheet(
 
   const remove = useCallback(async () => {
     const client = getSupabase();
-    const link = await auth.getClientLink().catch(() => null);
+    const link = await auth.getClientLinkForEscrow(view?.escrowId ?? '').catch(() => null);
     const reviewId = view?.myReviewId;
     if (!client || !link || !reviewId) {
       setError(friendlyError('invalid'));

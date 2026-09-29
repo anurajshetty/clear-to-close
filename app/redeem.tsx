@@ -35,8 +35,6 @@ const ERROR_COPY: Record<RedeemError, string> = {
   revoked: 'This code is no longer active. Ask your realtor for the new code.',
   name_mismatch: "That name doesn't match this invite. Check the spelling and try again.",
   network: 'Something went wrong on our end. Check your connection and try again.',
-  device_has_link:
-    'This device is already linked to another escrow. Ask your realtor to release it, then try again.',
 };
 
 /** "Transaction Coordinator" for TC, "client" for buyer/seller. */
@@ -125,7 +123,14 @@ export default function Redeem() {
         setRedeemError(res.error);
         return;
       }
-      await auth.setClientLink({
+      // Multi-escrow (Sept 28, 2026): the redeem adds (or replaces, per
+      // escrow) this device's link — the device's other escrows' links are
+      // never touched. The server is the authority: redeem_invite returns
+      // the EXISTING link when this device already links to this escrow
+      // (idempotent re-redeem — no duplicate).
+      const before = await auth.getClientLinks();
+      const alreadyLinked = before.some((l) => l.escrowId === res.escrowId);
+      await auth.addClientLink({
         linkId: res.linkId,
         escrowId: res.escrowId,
         role: res.role,
@@ -133,6 +138,19 @@ export default function Redeem() {
         deviceId,
       });
       await auth.setRole('client');
+      if (alreadyLinked) {
+        // Re-redeeming an escrow already on this device: open it, no
+        // duplicate, no celebration.
+        router.replace(`/client/${res.role}/${res.escrowId}`);
+        return;
+      }
+      const count = (await auth.getClientLinks()).length;
+      if (count > 1) {
+        // A valid second (or third…) code: the list shows a one-time
+        // "Added to your escrows." toast.
+        router.replace({ pathname: '/client/escrows', params: { added: '1' } });
+        return;
+      }
       setLinked({ escrowId: res.escrowId, role: res.role, partyName: res.partyName });
     } finally {
       setBusy(false);
@@ -140,6 +158,15 @@ export default function Redeem() {
   };
 
   const onStartOver = async () => {
+    // Multi-escrow: never wipe the device's escrow links from here — the
+    // client may have reached redeem to join another escrow. Leave the
+    // screen instead; the wipe only applies to a linkless device.
+    const links = await auth.getClientLinks();
+    if (links.length > 0) {
+      if (router.canGoBack()) router.back();
+      else router.replace('/client/escrows');
+      return;
+    }
     await auth.clearClientLink();
     await auth.clearRole();
     router.replace('/role');

@@ -29,8 +29,10 @@
 //  4. revoking an invite with no redeemed link enqueues nothing;
 //  5. (synced) revokeInvite converges link.revoked_at to the server — the
 //     convergeLinkRevokes outbox op reaches pushLinkRevokeNow and drains.
-// A genuinely-live link on another escrow still maps the 23505 unique
-// violation to device_has_link (pinned separately in syncedstore.test.ts).
+// MULTI-ESCROW (Sept 28, 2026): the old one-live-link-per-device gate is
+// gone — a live link on another escrow no longer blocks a redeem (the
+// (device_id, escrow_id) index allows one link per escrow; unexpected
+// 23505s map to 'network', pinned in syncedstore.test.ts).
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import { createStore } from '../src/lib/store';

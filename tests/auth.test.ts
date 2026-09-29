@@ -417,15 +417,52 @@ async function main(): Promise<void> {
     assert(typeof d1 === 'string' && d1.length > 0 && d1 === d2, 'device id is stable per device');
   }
   {
+    // Multi-escrow (Sept 28, 2026, Anuraj-approved): one device holds one
+    // live link per escrow. addClientLink adds; a second link for the same
+    // escrow REPLACES the row (re-redeem — never a duplicate); removing one
+    // link never touches the others; clearClientLink wipes the set.
     const svc = serviceFor(mockClient({}));
-    const link: DeviceClientLink = {
+    const linkA: DeviceClientLink = {
       linkId: 'lid-1', escrowId: 'eid-1', role: 'buyer', partyName: 'Priya Nair', deviceId: 'dev-1',
     };
-    await svc.setClientLink(link);
-    const back = await svc.getClientLink();
-    assert(back !== null && back.linkId === 'lid-1' && back.partyName === 'Priya Nair', 'client link persists (the device access key)');
+    const linkB: DeviceClientLink = {
+      linkId: 'lid-2', escrowId: 'eid-2', role: 'seller', partyName: 'Priya Nair', deviceId: 'dev-1',
+    };
+    await svc.addClientLink(linkA);
+    await svc.addClientLink(linkB);
+    const both = await svc.getClientLinks();
+    assert(both.length === 2 && both[0].linkId === 'lid-1' && both[1].linkId === 'lid-2',
+      'two escrows on one device: both links persist');
+    assert((await svc.getClientLinkForEscrow('eid-2'))?.linkId === 'lid-2',
+      'per-escrow link resolution');
+    assert((await svc.getClientLinkForEscrow('eid-zzz')) === null,
+      'unknown escrow resolves null');
+    // Re-redeem of eid-1 replaces its row — still exactly one link.
+    await svc.addClientLink({ ...linkA, linkId: 'lid-1b' });
+    const after = await svc.getClientLinks();
+    assert(after.length === 2 && (await svc.getClientLinkForEscrow('eid-1'))?.linkId === 'lid-1b',
+      're-redeem replaces the escrow row, never duplicates');
+    // Removing one link leaves the other live.
+    assert((await svc.removeClientLink('lid-1b')) === true, 'removeClientLink reports removal');
+    assert((await svc.getClientLinks()).length === 1, 'one link removed, the other survives');
+    assert((await svc.removeClientLink('lid-nope')) === false, 'removing an absent link reports false');
     await svc.clearClientLink();
-    assert((await svc.getClientLink()) === null, 'client link clears');
+    assert((await svc.getClientLinks()).length === 0, 'clearClientLink wipes the set');
+  }
+  {
+    // One-time upgrade: the pre-multi-escrow single link (ctc:clientlink)
+    // migrates into the array on first read; the old key is removed after.
+    const kv = memoryKV();
+    await kv.setItem('ctc:clientlink', JSON.stringify({
+      linkId: 'lid-old', escrowId: 'eid-old', role: 'buyer', partyName: 'Priya Nair', deviceId: 'dev-1',
+    }));
+    const svc = serviceFor(mockClient({}), kv);
+    const links = await svc.getClientLinks();
+    assert(links.length === 1 && links[0].linkId === 'lid-old',
+      'legacy single link migrates into the multi-link array');
+    assert((await kv.getItem('ctc:clientlink')) === null, 'legacy key removed after migration');
+    // Second read is stable (no re-migration weirdness).
+    assert((await svc.getClientLinks()).length === 1, 'migrated link stays put');
   }
   {
     const svc = serviceFor(mockClient({}));
@@ -441,27 +478,38 @@ async function main(): Promise<void> {
   }
 
   // ------------------------------------------------------- boot routing ----
+  // Multi-escrow (Sept 28, 2026): 0 links -> redeem, 1 link -> open
+  // directly, 2+ links -> the escrow list.
   {
-    assert(resolveBootHref({ role: null, sessionUserId: null, clientLink: null, hasAccount: false, isWeb: false }) === '/role',
+    assert(resolveBootHref({ role: null, sessionUserId: null, clientLinks: [], hasAccount: false, isWeb: false }) === '/role',
       'first launch -> role picker');
-    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLink: null, hasAccount: false, isWeb: false }) === '/signup',
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLinks: [], hasAccount: false, isWeb: false }) === '/signup',
       'native: realtor picked, never signed up -> sign-up');
-    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLink: null, hasAccount: true, isWeb: false }) === '/login',
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLinks: [], hasAccount: true, isWeb: false }) === '/login',
       'native: lapsed session with an existing account -> login (not sign-up)');
-    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLink: null, hasAccount: true, isWeb: true }) === '/login',
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: null, clientLinks: [], hasAccount: true, isWeb: true }) === '/login',
       'web: realtor with no live session -> login');
-    assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLink: null, hasAccount: true, isWeb: true }) === '/',
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLinks: [], hasAccount: true, isWeb: true }) === '/',
       'web: live session survives refresh -> deal list');
-    assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLink: null, hasAccount: true, isWeb: false }) === '/',
+    assert(resolveBootHref({ role: 'realtor', sessionUserId: UID, clientLinks: [], hasAccount: true, isWeb: false }) === '/',
       'native: live session -> deal list (mid-onboarding resume handled by the layout)');
-    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLink: null, hasAccount: false, isWeb: false }) === '/redeem',
-      'client picked -> redeem');
+    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLinks: [], hasAccount: false, isWeb: false }) === '/redeem',
+      'client picked, no links -> redeem');
     const buyerLink: DeviceClientLink = { linkId: 'l', escrowId: 'eid-9', role: 'buyer', partyName: 'P', deviceId: 'd' };
-    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLink: buyerLink, hasAccount: false, isWeb: false }) === '/client/buyer/eid-9',
-      'stored buyer link -> buyer escrow');
+    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLinks: [buyerLink], hasAccount: false, isWeb: false }) === '/client/buyer/eid-9',
+      'one stored link -> buyer escrow opens directly');
     const sellerLink: DeviceClientLink = { linkId: 'l', escrowId: 'eid-9', role: 'seller', partyName: 'P', deviceId: 'd' };
-    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLink: sellerLink, hasAccount: false, isWeb: true }) === '/client/seller/eid-9',
-      'stored seller link -> seller escrow (web too)');
+    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLinks: [sellerLink], hasAccount: false, isWeb: true }) === '/client/seller/eid-9',
+      'one stored link -> seller escrow (web too)');
+    const tcLink: DeviceClientLink = { linkId: 'l2', escrowId: 'eid-10', role: 'tc', partyName: 'P', deviceId: 'd' };
+    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLinks: [buyerLink, tcLink], hasAccount: false, isWeb: false }) === '/client/escrows',
+      'two stored links -> the escrow list');
+    assert(resolveBootHref({ role: 'client', sessionUserId: null, clientLinks: [buyerLink, sellerLink, tcLink], hasAccount: false, isWeb: true }) === '/client/escrows',
+      'three stored links -> the escrow list (web too)');
+    // A live realtor session beats a stale client link set — same priority
+    // as before (links are checked first only when no session exists).
+    assert(resolveBootHref({ role: 'client', sessionUserId: UID, clientLinks: [buyerLink], hasAccount: true, isWeb: false }) === '/client/buyer/eid-9',
+      'client links still beat a session at boot (realtor sign-up kills them, F3)');
   }
 
   // --------------------------------------- post-auth + profile nudge --------

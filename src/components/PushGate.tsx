@@ -49,9 +49,9 @@ export function PushGate(): React.ReactElement | null {
     if (!loadNotifications()) return;
     const cleanup = setupPushHandling(routeToEscrow);
     void auth
-      .getClientLink()
-      .then((link) => {
-        if (link) return registerPushToken();
+      .getClientLinks()
+      .then((links) => {
+        if (links.length > 0) return registerPushToken();
         return false;
       })
       .catch(() => false);
@@ -68,18 +68,18 @@ export function PushGate(): React.ReactElement | null {
     let active = true;
     (async () => {
       try {
-        const [role, link, asked, permission] = await Promise.all([
+        const [role, links, asked, permission] = await Promise.all([
           auth.getRole(),
-          auth.getClientLink(),
+          auth.getClientLinks(),
           hasBeenAskedPush(),
           getPushPermission(),
         ]);
         if (
-          !shouldShowPrePrompt({ role, hasLink: !!link, asked, permission })
+          !shouldShowPrePrompt({ role, hasLink: links.length > 0, asked, permission })
         ) {
           return;
         }
-        const profile = await store.getClientProfile(link!.escrowId).catch(() => null);
+        const profile = await store.getClientProfile(links[0]?.escrowId ?? null).catch(() => null);
         const first = (profile?.name ?? '').trim().split(/\s+/)[0] ?? '';
         // Small settle delay so the home/celebration lands first.
         await new Promise((r) => setTimeout(r, 1200));

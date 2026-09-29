@@ -44,6 +44,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/profile.ts" \
   "$ROOT/src/lib/push.ts" \
   "$ROOT/src/lib/clientView.ts" \
+  "$ROOT/src/lib/escrowList.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/outbox_seed.ts" \
@@ -62,6 +63,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
   "$ROOT/tests/push.test.ts" \
+  "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
   "$ROOT/tests/profilepull.test.ts" \
@@ -125,6 +127,10 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/checklist_bulk_apply.test.ts" \
   "$ROOT/tests/key_dates.test.ts" \
   "$ROOT/tests/update_closed_lifecycle.test.ts" \
+  "$ROOT/tests/escrow_list.test.ts" \
+  "$ROOT/tests/multi_escrow.test.ts" \
+  "$ROOT/src/lib/clientRealtime.ts" \
+  "$ROOT/tests/client_realtime.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -155,6 +161,7 @@ node "$OUT/tests/sharecopy.test.js"
 TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"
 node "$OUT/tests/push.test.js"
+node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/syncedstore.test.js"
@@ -219,6 +226,9 @@ node "$OUT/tests/outbox_concurrency.test.js"
 node "$OUT/tests/checklist_bulk_apply.test.js"
 node "$OUT/tests/key_dates.test.js"
 node "$OUT/tests/update_closed_lifecycle.test.js"
+node "$OUT/tests/escrow_list.test.js"
+node "$OUT/tests/multi_escrow.test.js"
+node "$OUT/tests/client_realtime.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows
@@ -248,3 +258,17 @@ python3 "$ROOT/tests/push_migration.py"
 # counts changed date fields — one date -> specific event, several together
 # -> generic key_dates_changed (SQL, not runnable in node).
 python3 "$ROOT/tests/key_dates_push_migration.py"
+
+# Multi-escrow migration self-check (Sept 28, 2026): the 0022 migration
+# replaces the device-wide live-link unique index with (device_id,
+# escrow_id), keeps redeem_invite idempotent per (device, escrow)
+# (including the concurrent same-code race-loser path), and scopes push
+# tokens per link (SQL, not runnable in node).
+python3 "$ROOT/tests/multi_escrow_migration.py"
+# Client realtime migration self-check (Sept 2026): the 0030 migration puts
+# escrows/steps/client_links/realtor_profiles on the supabase_realtime
+# publication and adds the four TO anon, token-claim-keyed SELECT policies
+# (live-link liveness on steps/escrows/profiles; own-row, unfiltered on
+# client_links so the client observes its own revocation). SQL, not
+# runnable in node.
+python3 "$ROOT/tests/client_realtime_migration.py"

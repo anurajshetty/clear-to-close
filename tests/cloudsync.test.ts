@@ -211,12 +211,15 @@ async function main(): Promise<void> {
   const rpcInvalid = { rpc: async () => ({ data: { ok: false, error: 'invalid' }, error: null }) };
   const viaInvalid = await redeemViaCloud(rpcInvalid as never, 'ZZZZZZ', 'Nobody', 'dev-1');
   assert(viaInvalid.ok === false && viaInvalid.error === 'invalid', 'bad code via data -> invalid');
-  // The 0002 one-live-link-per-device index: a second live link on the same
-  // device_id raises 23505 — permanent and connection-independent, so it
-  // surfaces as 'device_has_link', never the misleading retryable 'network'.
+  // Multi-escrow (migration 0022): the (device_id, escrow_id) live unique
+  // index no longer produces device_has_link. Same-device/same-escrow
+  // idempotency is server-side (the RPC returns the existing link), so an
+  // unexpected 23505 escaping the RPC is a server anomaly — permanent but
+  // connection-independent — and maps to the retryable 'network' code, not
+  // a dead-end that strands the user.
   const rpcDup = { rpc: async () => ({ data: null, error: { code: '23505', message: 'duplicate key' } }) };
   const viaDup = await redeemViaCloud(rpcDup as never, 'ABCDEF', 'Priya Nair', 'dev-1');
-  assert(viaDup.ok === false && viaDup.error === 'device_has_link', 'unique violation (second live link) -> device_has_link');
+  assert(viaDup.ok === false && viaDup.error === 'network', 'unexpected unique violation escaping the RPC -> network (never device_has_link)');
 
   // regenerate_invite RPC mapping: success returns the new/old codes and the
   // server-issued invite id; a data-level failure throws (the synced store

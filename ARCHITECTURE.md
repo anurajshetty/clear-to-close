@@ -34,6 +34,31 @@ record converge without user action. Where realtime cannot reach
 (offline, unauthenticated client links), the fallback is explicit
 server-first refetch on focus/foreground — never stale-cache service.
 
+Implemented for client views (Sept 29, 2026):
+
+- Clients have no login, so they authenticate by device link: the
+  `client-realtime-token` Edge Function validates (link_id, device_id)
+  server-side and mints a 15-minute JWT signed with the project JWT
+  secret (claims: `device_link_id`, `escrow_id`, `link_role`). The client
+  passes it to `realtime.setAuth()` on a dedicated supabase client.
+- Migration 0030 puts `escrows`, `steps`, `client_links`, and
+  `realtor_profiles` on the `supabase_realtime` publication and adds four
+  SELECT-only TO anon RLS policies keyed on those claims. Steps, escrows,
+  and profiles are admitted only for the token's escrow AND only while
+  the device link is live (link and invite `revoked_at IS NULL`) — a
+  revoked link's event stream dies at the database immediately. The
+  client's own link row is visible unfiltered so the client observes its
+  own revocation and routes to /link-dead without a foreground
+  round-trip. The stock anon key (no claims) matches zero rows.
+- Realtime is a read-only invalidation signal: on any data event the
+  client re-pulls `get_client_view` (debounced 750 ms to coalesce rapid
+  check-offs). Payloads are never applied directly, so there is no
+  client-side conflict surface — the server remains the single source of
+  truth and the synchronous-writes model is untouched.
+- Any failure (no env, mint failure, socket error, channel close)
+  degrades silently to the existing focus/foreground refetch, with
+  backoff reconnect. Nothing realtime ever throws to the UI.
+
 ## 5. Designed conflict rules
 
 Any situation where two writers can disagree gets an explicit,

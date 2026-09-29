@@ -274,6 +274,12 @@ export function validatePasswordChange(
 const K_DEVICE_ID = 'ctc:deviceid';
 const K_ROLE = 'ctc:role';
 const K_CLIENT_LINK = 'ctc:clientlink';
+/**
+ * Multi-escrow link array (Sept 28, 2026, Anuraj-approved): one device
+ * holds one LIVE link per escrow. The pre-multi-escrow single link
+ * (K_CLIENT_LINK above) is migrated into this array on first read.
+ */
+const K_CLIENT_LINKS = 'ctc:clientlinks';
 const K_PROFILE_SKIPPED = 'ctc:profileskipped';
 const K_PENDING_NAME = 'ctc:pendingname';
 const K_HAS_ACCOUNT = 'ctc:hasaccount';
@@ -308,10 +314,39 @@ export function createAuthService(deps: AuthServiceDeps) {
    */
   async function clearStaleClientLink(): Promise<void> {
     try {
+      await kv.removeItem(K_CLIENT_LINKS);
       await kv.removeItem(K_CLIENT_LINK);
     } catch {
       // best-effort
     }
+  }
+
+  function validLink(l: unknown): l is DeviceClientLink {
+    const x = l as DeviceClientLink | null;
+    return (
+      !!x &&
+      typeof x.linkId === 'string' && x.linkId.length > 0 &&
+      typeof x.escrowId === 'string' && x.escrowId.length > 0 &&
+      typeof x.role === 'string' && x.role.length > 0
+    );
+  }
+
+  async function readLinks(): Promise<DeviceClientLink[]> {
+    const raw = await readJson<DeviceClientLink[]>(K_CLIENT_LINKS);
+    if (Array.isArray(raw)) return raw.filter(validLink);
+    // One-time upgrade: the pre-multi-escrow single link migrates into
+    // the array; the old key is removed after.
+    const single = await readJson<DeviceClientLink>(K_CLIENT_LINK);
+    if (validLink(single)) {
+      await writeJson(K_CLIENT_LINKS, [single]);
+      try {
+        await kv.removeItem(K_CLIENT_LINK);
+      } catch {
+        // best-effort
+      }
+      return [single];
+    }
+    return [];
   }
 
   return {
@@ -379,15 +414,49 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
     },
 
-    // -- client link (device access key) -------------------------------------
-    async getClientLink(): Promise<DeviceClientLink | null> {
-      return readJson<DeviceClientLink>(K_CLIENT_LINK);
+    // -- client links (device access keys, multi-escrow) -----------------------
+    //
+    // One device holds one live link per escrow. Rows are added by redeem
+    // (redeem_invite is the server authority), replaced per-escrow on
+    // re-redeem, and removed when the link dies (revoked/regenerated).
+    /** Every live device link, oldest-redeemed first. */
+    async getClientLinks(): Promise<DeviceClientLink[]> {
+      return readLinks();
     },
-    async setClientLink(link: DeviceClientLink): Promise<void> {
-      await writeJson(K_CLIENT_LINK, link);
+
+    /** This device's link for one escrow, or null. */
+    async getClientLinkForEscrow(escrowId: string): Promise<DeviceClientLink | null> {
+      const links = await readLinks();
+      return links.find((l) => l.escrowId === escrowId) ?? null;
     },
+
+    /**
+     * Add (or replace, per escrow) a device link. One link per escrow on
+     * this device — a re-redeem of the same escrow replaces the old row,
+     * never duplicates it.
+     */
+    async addClientLink(link: DeviceClientLink): Promise<void> {
+      if (!validLink(link)) return;
+      const links = await readLinks();
+      const idx = links.findIndex((l) => l.escrowId === link.escrowId);
+      if (idx >= 0) links[idx] = link;
+      else links.push(link);
+      await writeJson(K_CLIENT_LINKS, links);
+    },
+
+    /** Remove one link by its link id (dead-link removal). Returns true when a link was removed. */
+    async removeClientLink(linkId: string): Promise<boolean> {
+      const links = await readLinks();
+      const kept = links.filter((l) => l.linkId !== linkId);
+      if (kept.length === links.length) return false;
+      await writeJson(K_CLIENT_LINKS, kept);
+      return true;
+    },
+
+    /** Remove every device link (client "Start over"). */
     async clearClientLink(): Promise<void> {
       try {
+        await kv.removeItem(K_CLIENT_LINKS);
         await kv.removeItem(K_CLIENT_LINK);
       } catch {
         // best-effort

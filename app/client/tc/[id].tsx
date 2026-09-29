@@ -11,8 +11,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
+import { useClientRealtime } from '../../../src/hooks/useClientRealtime';
 import type { ClientView, RealtorProfile, TcView } from '../../../src/lib/types';
 import { Kicker, SecondaryButton } from '../../../src/components/ui';
+import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/EscrowSwitcher';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
@@ -78,9 +80,9 @@ export default function TcView() {
     // The greeting uses the name from this device's link (what the
     // coordinator entered at redeem).
     auth
-      .getClientLink()
+      .getClientLinkForEscrow(id ?? '')
       .then((link) => {
-        if (active && link && link.escrowId === id) setPartyName(link.partyName);
+        if (active && link) setPartyName(link.partyName);
       })
       .catch(() => {});
     return () => {
@@ -92,6 +94,10 @@ export default function TcView() {
   const { gateState, retry } = useClientLinkGate(id, 'tc', {
     onForegroundRefresh: load,
   });
+  // Secure realtime (Sept 2026): once the gate validates the link, live
+  // server events re-pull this view; any failure degrades silently to the
+  // focus/foreground refetch above.
+  useClientRealtime(id, { enabled: gateState === 'valid', onDataChanged: load });
 
   useFocusEffect(load);
 
@@ -130,6 +136,7 @@ export default function TcView() {
         <Text style={styles.loading}>Loading…</Text>
       ) : (
         <>
+          <MyEscrowsBack />
           <ClientTopCard
             greeting={greeting}
             kicker="Transaction coordinator"
@@ -186,6 +193,7 @@ export default function TcView() {
           <Text style={styles.note}>
             Updated by your realtor.{'\n'}This view is read-only.
           </Text>
+          <JoinAnotherEscrow />
         </>
       )}
     </ScrollView>
