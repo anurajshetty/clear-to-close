@@ -14,8 +14,11 @@
 //   custom_step_added:           "{First} added a new step to your escrow." (compat; new trigger never emits)
 //   close_date_changed:          "Your closing date is now {date}."
 //   inspection_deadline_changed: "Your inspection contingency deadline is now {date}."
+//                                (cleared -> "Your inspection contingency deadline was removed.")
 //   appraisal_deadline_changed:  "Your appraisal deadline is now {date}."
+//                                (cleared -> "Your appraisal deadline was removed.")
 //   loan_approval_date_changed:  "Your loan approval date is now {date}."
+//                                (cleared -> "Your loan approval date was removed.")
 //   key_dates_changed:           "{First} updated your key dates."
 // Forward progress only: unchecks never produce an event (the DB trigger
 // matches transitions, never state).
@@ -102,18 +105,21 @@ export function buildPushBody(
       return `Your closing date is now ${formatPushDate(d)}.`;
     }
     case 'inspection_deadline_changed': {
-      const d = dateFor(null);
-      if (!d) return null;
+      // A clear is a change too (0021 counts it via IS DISTINCT FROM): a
+      // null new_date means the realtor removed a date the client could
+      // see — the client gets the honest "removed" copy, never silence.
+      const d = (newDate ?? '').trim();
+      if (!d) return 'Your inspection contingency deadline was removed.';
       return `Your inspection contingency deadline is now ${formatPushDate(d)}.`;
     }
     case 'appraisal_deadline_changed': {
-      const d = dateFor(null);
-      if (!d) return null;
+      const d = (newDate ?? '').trim();
+      if (!d) return 'Your appraisal deadline was removed.';
       return `Your appraisal deadline is now ${formatPushDate(d)}.`;
     }
     case 'loan_approval_date_changed': {
-      const d = dateFor(null);
-      if (!d) return null;
+      const d = (newDate ?? '').trim();
+      if (!d) return 'Your loan approval date was removed.';
       return `Your loan approval date is now ${formatPushDate(d)}.`;
     }
     case 'key_dates_changed':

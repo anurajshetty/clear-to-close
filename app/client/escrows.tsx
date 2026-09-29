@@ -6,8 +6,8 @@
 // Branding is isolated per row: each row's address, role, realtor name and
 // photo arrive through that row's own link — never shared across rows.
 // Opening a row loads ONLY that escrow (deep link to its client home).
-import React, { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { auth } from '../../src/lib/auth';
@@ -23,6 +23,7 @@ import {
 } from '../../src/lib/escrowList';
 import type { ClientView, DeviceClientLink, TcView } from '../../src/lib/types';
 import { colors, type } from '../../src/theme';
+import { ToastTimer } from '../../src/lib/toast';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -53,16 +54,20 @@ export default function EscrowsList() {
   const [entries, setEntries] = useState<EscrowListEntry[]>([]);
   const [greeting, setGreeting] = useState('Hi there');
   // One-time toast after a successful second redeem (approved copy).
-  const [showAddedToast, setShowAddedToast] = useState(false);
+  // The dismiss timer lives inside ToastTimer (src/lib/toast.ts), NOT in
+  // the effect below: consuming the `added` param re-renders this screen,
+  // and a timer armed in that effect would be cancelled by the effect
+  // cleanup — the Sept 28 stuck-toast bug (the toast never dismissed).
+  const addedToast = useMemo(() => new ToastTimer(), []);
+  const [showAddedToast, setShowAddedToast] = useState(addedToast.visible);
+  useEffect(() => addedToast.subscribe(setShowAddedToast), [addedToast]);
 
   useEffect(() => {
     if (params.added !== '1') return;
-    setShowAddedToast(true);
     // Consume the flag: a remount (back from an escrow) must not replay it.
     router.setParams({ added: undefined });
-    const t = setTimeout(() => setShowAddedToast(false), 3200);
-    return () => clearTimeout(t);
-  }, [params.added]);
+    addedToast.show();
+  }, [params.added, addedToast]);
 
   const load = useCallback(() => {
     let active = true;
@@ -168,9 +173,15 @@ export default function EscrowsList() {
         </>
       )}
       {showAddedToast ? (
-        <View style={styles.toast} pointerEvents="none">
+        <Pressable
+          style={styles.toast}
+          onPress={() => addedToast.dismiss()}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss notification"
+          testID="added-toast"
+        >
           <Text style={styles.toastText}>Added to your escrows.</Text>
-        </View>
+        </Pressable>
       ) : null}
     </ScrollView>
   );

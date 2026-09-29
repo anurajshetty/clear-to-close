@@ -126,11 +126,14 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/outbox_concurrency.test.ts" \
   "$ROOT/tests/checklist_bulk_apply.test.ts" \
   "$ROOT/tests/key_dates.test.ts" \
+  "$ROOT/tests/keydate_clear.test.ts" \
   "$ROOT/tests/update_closed_lifecycle.test.ts" \
   "$ROOT/tests/escrow_list.test.ts" \
   "$ROOT/tests/multi_escrow.test.ts" \
   "$ROOT/src/lib/clientRealtime.ts" \
   "$ROOT/tests/client_realtime.test.ts" \
+  "$ROOT/src/lib/toast.ts" \
+  "$ROOT/tests/toast_dismiss.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -225,6 +228,7 @@ node "$OUT/tests/revoke_links_server_authoritative.test.js"
 node "$OUT/tests/outbox_concurrency.test.js"
 node "$OUT/tests/checklist_bulk_apply.test.js"
 node "$OUT/tests/key_dates.test.js"
+node "$OUT/tests/keydate_clear.test.js"
 node "$OUT/tests/update_closed_lifecycle.test.js"
 node "$OUT/tests/escrow_list.test.js"
 node "$OUT/tests/multi_escrow.test.js"
@@ -272,3 +276,4 @@ python3 "$ROOT/tests/multi_escrow_migration.py"
 # client_links so the client observes its own revocation). SQL, not
 # runnable in node.
 python3 "$ROOT/tests/client_realtime_migration.py"
+node "$OUT/tests/toast_dismiss.test.js"

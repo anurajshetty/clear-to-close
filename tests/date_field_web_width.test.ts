@@ -53,9 +53,12 @@ assert(
 
 // The constraint must live on the input itself (not just a parent): the
 // intrinsic min-width belongs to the replaced date control.
+// (Sept 28, 2026: the input now sits in a flex row with the clear ×, so it
+// fills the field via flex:1 instead of width:'100%'. The visible outcome is
+// unchanged — the input still spans the full field width.)
 assert(
-  /width\s*:\s*['"]100%['"]/.test(styleBlock),
-  "date <input> keeps width:'100%' so it fills the field like the text inputs above it",
+  /width\s*:\s*['"]100%['"]/.test(styleBlock) || /flex\s*:\s*1/.test(styleBlock),
+  "date <input> fills the field (width:'100%' or flex:1) like the text inputs above it",
 );
 
 summary('date_field_web_width');

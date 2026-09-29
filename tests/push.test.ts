@@ -77,13 +77,32 @@ async function main(): Promise<void> {
       'Your closing date is now Nov 24, 2026.',
     'close_date_changed via new_date',
   );
+  // A cleared date is a change too (0021 counts it via IS DISTINCT FROM):
+  // null/blank new_date -> the honest "removed" copy, never silence.
   assert(
-    buildPushBody('inspection_deadline_changed', 'Maya', null, null, '') === null,
-    'specific date change with blank date drops',
+    buildPushBody('inspection_deadline_changed', 'Maya', null, null, '') ===
+      'Your inspection contingency deadline was removed.',
+    'cleared inspection deadline says removed',
   );
   assert(
-    buildPushBody('inspection_deadline_changed', 'Maya', null, null, null) === null,
-    'specific date change with null date drops',
+    buildPushBody('inspection_deadline_changed', 'Maya', null, null, null) ===
+      'Your inspection contingency deadline was removed.',
+    'cleared inspection deadline (null) says removed',
+  );
+  assert(
+    buildPushBody('appraisal_deadline_changed', 'Maya', null, null, null) ===
+      'Your appraisal deadline was removed.',
+    'cleared appraisal deadline says removed',
+  );
+  assert(
+    buildPushBody('loan_approval_date_changed', 'Maya', null, null, null) ===
+      'Your loan approval date was removed.',
+    'cleared loan approval date says removed',
+  );
+  // close_date is NOT NULL (0001): a missing date there still drops.
+  assert(
+    buildPushBody('close_date_changed', 'Maya', null, null, null) === null,
+    'close_date_changed with null date drops',
   );
 
   // ---- first-name extraction ----

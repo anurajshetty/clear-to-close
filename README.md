@@ -307,11 +307,15 @@ central user; the buyers and sellers they represent are the other parties.
     year) plus "today" / "tomorrow" / "in N days" / "overdue by N days" —
     amber when within 7 days, red when overdue, muted otherwise. Dates are
     set by the realtor on the Update escrow sheet (optional fields, open
-    escrows only); unset dates show "Not set". Migrations
+    escrows only); unset dates show "Not set". A set date can be cleared
+    with the red × at the end of its row (same remove control as checklist
+    edit mode) — clearing writes NULL on the confirmed save. The closing
+    date is required and has no ×. Migrations
     `supabase/migrations/0019_key_dates.sql` (columns),
     `0020_step_template_key.sql` (permanent template keys + explainers),
     `0021_key_dates_push.sql` (key-date changes fire the client push:
     "Your closing date is now Nov 15, 2026." for a single changed date,
+    "Your inspection contingency deadline was removed." for a cleared date,
     "{First} updated your key dates." for several changed together),
     `0024_push_coalesce_quiet.sql` (0022/0023 reserved for the multi-escrow
     stream: check-off coalescing, quiet hours 9 PM–8 AM with an 8 AM queue,
@@ -623,8 +627,9 @@ notifications → background/kill the app → check off a step as the realtor
 from another device → push arrives ("Your realtor just completed …") and
 taps through to the client home; no banner while the client app is
 foreground; unchecking sends nothing; adding/renaming a checklist item
-sends nothing; key-date pushes arrive (single date → specific copy,
-several at once → "{First} updated your key dates."); denied permission
+sends nothing; key-date pushes arrive (single date → specific copy, a
+removed date → "Your {label} was removed.", several at once →
+"{First} updated your key dates."); denied permission
 never re-prompts (turn it back on in iOS Settings); nothing buzzes
 9 PM–8 AM local (queued for 8 AM).
 

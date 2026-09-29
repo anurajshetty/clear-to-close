@@ -539,6 +539,13 @@ export function EscrowFormSheet({
                   setInspectionDeadline(v);
                   clear('inspectionDeadline');
                 }}
+                // Key-date clearing (Sept 28, 2026, Anuraj-approved): the ×
+                // stages a blank; the submit maps blank to NULL through the
+                // confirmed write path (never "saved" unconfirmed).
+                onClear={() => {
+                  setInspectionDeadline('');
+                  clear('inspectionDeadline');
+                }}
                 testID="escrow-inspection-deadline"
               />
             </FieldWrap>
@@ -551,6 +558,10 @@ export function EscrowFormSheet({
                   setAppraisalDeadline(v);
                   clear('appraisalDeadline');
                 }}
+                onClear={() => {
+                  setAppraisalDeadline('');
+                  clear('appraisalDeadline');
+                }}
                 testID="escrow-appraisal-deadline"
               />
             </FieldWrap>
@@ -561,6 +572,10 @@ export function EscrowFormSheet({
                 value={loanApprovalDate}
                 onChange={(v) => {
                   setLoanApprovalDate(v);
+                  clear('loanApprovalDate');
+                }}
+                onClear={() => {
+                  setLoanApprovalDate('');
                   clear('loanApprovalDate');
                 }}
                 testID="escrow-loan-approval-date"

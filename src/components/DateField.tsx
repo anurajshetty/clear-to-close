@@ -11,6 +11,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
+import Svg, { Path } from 'react-native-svg';
 import { colors, radius } from '../theme';
 
 export interface DateFieldProps {
@@ -18,6 +19,15 @@ export interface DateFieldProps {
   /** ISO date 'YYYY-MM-DD' ('' when unset). */
   value: string;
   onChange: (isoDate: string) => void;
+  /**
+   * When provided AND a date is set, a red × clear control renders at the
+   * trailing end of the field (key-date clearing, Sept 28, 2026,
+   * Anuraj-approved). Clearing the field stages '' — the owning form maps
+   * blank to NULL on the confirmed write path. Styling reuses the checklist
+   * edit-mode remove control (StepRow): same Material close glyph, red,
+   * 44pt target, pressed opacity — no new design language.
+   */
+  onClear?: () => void;
   testID?: string;
 }
 
@@ -40,11 +50,20 @@ function parseISODate(s: string): Date | null {
   return dt;
 }
 
-export default function DateField({ label, value, onChange, testID }: DateFieldProps) {
+// Material "close" (X) path, 24x24 viewBox — the SAME glyph as the checklist
+// edit-mode remove control (StepRow): red X, 44pt target. UI-reuse
+// principle: no new design language for the key-date clear affordance.
+const CLEAR_X_PATH =
+  'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
+
+export default function DateField({ label, value, onChange, onClear, testID }: DateFieldProps) {
   // Collapsed until the user taps the field (Sept 28, 2026: the calendar
   // used to render expanded inline on sheet open, with no way to dismiss).
   const [open, setOpen] = React.useState(false);
   const selected = parseISODate(value);
+  // The × only exists once a date is set (and only where the owner passes
+  // onClear — open/close dates are required and never clearable).
+  const canClear = !!onClear && !!selected;
   const onPick = (event: DateTimePickerEvent, date?: Date) => {
     if (Platform.OS === 'android') {
       // Android fires for both set and dismissed; only a real date commits.
@@ -60,18 +79,34 @@ export default function DateField({ label, value, onChange, testID }: DateFieldP
   return (
     <View style={styles.wrap}>
       <Text style={styles.label}>{label}</Text>
-      <Pressable
-        style={styles.box}
-        testID={testID}
-        accessibilityRole="button"
-        accessibilityLabel={label}
-        accessibilityHint={open ? 'Close the calendar' : 'Open the calendar'}
-        onPress={() => setOpen((o) => !o)}
-      >
-        <Text style={[styles.boxText, !selected && styles.boxPlaceholder]}>
-          {selected ? value : 'Select date'}
-        </Text>
-      </Pressable>
+      <View style={styles.fieldRow}>
+        <Pressable
+          style={[styles.box, styles.boxFill]}
+          testID={testID}
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityHint={open ? 'Close the calendar' : 'Open the calendar'}
+          onPress={() => setOpen((o) => !o)}
+        >
+          <Text style={[styles.boxText, !selected && styles.boxPlaceholder]}>
+            {selected ? value : 'Select date'}
+          </Text>
+        </Pressable>
+        {canClear && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Clear ${label}`}
+            testID={testID ? `${testID}-clear` : undefined}
+            hitSlop={10}
+            onPress={onClear}
+            style={({ pressed }) => [styles.clearBtn, pressed && { opacity: 0.55 }]}
+          >
+            <Svg width={18} height={18} viewBox="0 0 24 24" aria-hidden={true}>
+              <Path d={CLEAR_X_PATH} fill={colors.red} />
+            </Svg>
+          </Pressable>
+        )}
+      </View>
       {open && (
         <DateTimePicker
           value={selected ?? new Date()}
@@ -92,9 +127,26 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8,
   },
+  // The field box and the (optional) clear × sit in a row: the box fills
+  // the row exactly as it filled the column before, so fields without a
+  // clear control render byte-identical to the old layout.
+  fieldRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   box: {
     borderWidth: 1.5, borderColor: colors.line, borderRadius: radius.input,
     paddingVertical: 13, paddingHorizontal: 14, backgroundColor: colors.inputBg,
+  },
+  boxFill: { flex: 1 },
+  // Clear ×: checklist edit-mode remove-control styling (StepRow.removeBtn).
+  clearBtn: {
+    flexShrink: 0,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   boxText: { fontSize: 15, color: colors.ink },
   boxPlaceholder: { color: colors.muted },

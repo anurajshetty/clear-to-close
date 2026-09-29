@@ -3,6 +3,52 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Key-date clearing (Sept 28, 2026, Anuraj-reported)
+
+- **A picker that only commits is a write-only field.** The native DateField's
+  inline calendar always produced a date — once a key date was set, no path
+  in the UI could return the field to empty, even though the form, store
+  ("explicit null = clear"), and DB columns (nullable) all supported it.
+  Practice: every optional field needs a visible un-set path from day one —
+  pin it in the same commit as the field, not as a follow-up bug.
+- **Required-ness is a stack, not a feeling.** Before giving the closing date
+  a clear ×, the evidence said no: `close_date date not null`
+  (0001_init.sql:31), the form's "Please enter the target close date.",
+  the store's assertDate, and the client's "always present" contract. The ×
+  went only on the three optional dates. Practice: a clear affordance is a
+  schema question first — check DB nullability, validation, and every
+  consumer before adding one.
+- **"Removed" is a change the client deserves to hear about.** Migration
+  0021 already counted a clear via IS DISTINCT FROM and the edge function
+  dropped it silently (null date -> no push). The fix sends the honest copy
+  ("Your inspection contingency deadline was removed.") instead of silence.
+  Practice: when the trigger already models an event, the function must say
+  something true about it — a null payload that drops is a swallowed
+  notification, not a non-event.
+
+## Stuck toast (Sept 28, 2026)
+
+- **Never arm a dismiss timer in an effect that also mutates unrelated
+  state.** Anuraj reported the multi-escrow list's "Added to your escrows."
+  toast appeared and never dismissed. Root cause: the dismiss `setTimeout`
+  was armed in the same `useEffect` that consumed the `added` route param —
+  `router.setParams` re-rendered the screen, the effect re-ran, and its
+  cleanup (`clearTimeout`) cancelled the dismiss timer, so the toast stayed
+  forever. The fix moved the timer into a framework-free `ToastTimer`
+  (`src/lib/toast.ts`) that owns show/auto-dismiss(~3s)/tap-dismiss: only
+  `show()`/`dismiss()` ever touch the armed timer, and the screen's param
+  effect just calls `show()`. The toast also became a `Pressable` (it was
+  `pointerEvents="none"`, so taps could not dismiss it). A side-effect audit
+  of every other toast ("Checklist updated.", "Escrow updated.",
+  "Password updated.", "Code copied.", invite toasts) found the same
+  stuck shape in none of them — each already clears and re-arms its own
+  timer on show — so the stuck behavior was a one-off, not a missing
+  component-level timer. Practice: a timer armed next to the state change
+  that re-triggers its own effect is a self-cancelling timer — keep
+  timers in a unit whose lifecycle nothing else touches, and pin it with a
+  test that drives the timer past unrelated state churn.
+  (tests/toast_dismiss.test.ts)
+
 ## Multi-escrow (Sept 29, 2026)
 
 - **The race loser must re-query before failing.** The first cut of migration

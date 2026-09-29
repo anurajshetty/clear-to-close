@@ -12,7 +12,8 @@
 // Inspection contingency deadline, Appraisal deadline, Loan approval date —
 // each with date + relative line computed at render, never ticking: muted
 // for future dates, amber within 7 days (including today), red date + red
-// line when overdue. Empty state (no realtor-entered dates): a single
+// line when overdue. A cleared date shows the neutral "Not set" row
+// (muted, never amber/red). Empty state (no realtor-entered dates): a single
 // quiet line, "No key dates yet. Your realtor adds them here."
 //
 // The sheet closes via ×, tap-outside, grabber drag, or Esc (web). Focus
@@ -112,15 +113,33 @@ function toneStyles(tone: KeyDateTone) {
   return { date: styles.date, when: styles.when };
 }
 
-function KeyDateRow({ label, date, today }: { label: string; date: string; today: string }) {
-  const line = describeKeyDate(date, today);
-  const tone = toneStyles(line.tone);
+function KeyDateRow({
+  label,
+  date,
+  today,
+}: {
+  label: string;
+  /** Null = cleared or never set: renders the neutral "Not set" treatment
+   * (Sept 28, 2026, Anuraj-approved) — muted, never amber/red, never a
+   * crash. Cleared dates stay visible as rows so the client sees the date
+   * is intentionally absent, not missing. */
+  date: string | null;
+  today: string;
+}) {
+  const line = date ? describeKeyDate(date, today) : null;
+  const tone = line ? toneStyles(line.tone) : null;
   return (
     <View style={styles.row} testID={`key-date-row-${label}`}>
       <Text style={styles.label}>{label}</Text>
       <View style={styles.dateWrap}>
-        <Text style={tone.date}>{line.dateLabel}</Text>
-        <Text style={tone.when}>{line.when}</Text>
+        {line && tone ? (
+          <>
+            <Text style={tone.date}>{line.dateLabel}</Text>
+            <Text style={tone.when}>{line.when}</Text>
+          </>
+        ) : (
+          <Text style={styles.when}>Not set</Text>
+        )}
       </View>
     </View>
   );
@@ -151,11 +170,13 @@ export function KeyDatesRows({
       </Text>
     );
   }
+  // Cleared dates render as rows with the neutral "Not set" treatment
+  // (never skipped, never urgency-colored).
   return (
     <View style={styles.rows}>
-      {rows.map((r) =>
-        r.date ? <KeyDateRow key={r.label} label={r.label} date={r.date} today={now} /> : null,
-      )}
+      {rows.map((r) => (
+        <KeyDateRow key={r.label} label={r.label} date={r.date} today={now} />
+      ))}
     </View>
   );
 }
