@@ -45,7 +45,7 @@ import {
   todayLocal,
 } from '../src/lib/keyDates';
 import { stepExplainer, explainerCoverage } from '../src/lib/stepExplainers';
-import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, isKnownTemplateKey } from '../src/lib/steps';
+import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, isKnownTemplateKey, normalizeStepTitle } from '../src/lib/steps';
 import {
   toEscrowRow,
   fromEscrowRow,
@@ -349,6 +349,32 @@ async function main() {
     assert(
       backfillTemplateKey('buyer', { custom: false, title: 'Escrow opened' }) === 'escrow-open',
       'current "Escrow opened" backfills to escrow-open',
+    );
+    // Visible-title normalization (Anuraj Sept 28, 2026): the approved
+    // "Escrow open" -> "Escrow opened" rename applies to existing stored
+    // rows, not just new defaults.
+    assert(
+      normalizeStepTitle({ custom: false, title: 'Escrow open', templateKey: 'escrow-open' }) ===
+        'Escrow opened',
+      'legacy "Escrow open" normalizes to "Escrow opened"',
+    );
+    assert(
+      normalizeStepTitle({ custom: false, title: 'Escrow open' }) === 'Escrow opened',
+      'legacy title normalizes even before the key is backfilled',
+    );
+    assert(
+      normalizeStepTitle({ custom: false, title: 'Escrow opened', templateKey: 'escrow-open' }) ===
+        'Escrow opened',
+      'current "Escrow opened" is untouched',
+    );
+    assert(
+      normalizeStepTitle({ custom: true, title: 'Escrow open' }) === 'Escrow open',
+      'custom step titled "Escrow open" keeps its user-entered title',
+    );
+    assert(
+      normalizeStepTitle({ custom: false, title: 'Home inspection', templateKey: 'home-inspection' }) ===
+        'Home inspection',
+      'unrelated titles are untouched',
     );
     assert(
       stepExplainer('buyer', { custom: true }) === null,

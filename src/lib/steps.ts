@@ -97,3 +97,24 @@ export function backfillTemplateKey(
   const map = role === 'buyer' ? BUYER_TITLE_TO_KEY : SELLER_TITLE_TO_KEY;
   return map.get(step.title) ?? null;
 }
+
+/**
+ * Visible-title normalization for the approved Sept 28, 2026 rename:
+ * "Escrow open" -> "Escrow opened". Existing stored rows carry the old
+ * title; new defaults already use the new one. This normalizes the
+ * display so all escrows show the approved copy. Idempotent — rows
+ * already on the new title are untouched. Custom steps are never touched
+ * (a custom step titled "Escrow open" keeps its user-entered title).
+ */
+export function normalizeStepTitle(
+  step: { custom: boolean; title: string; templateKey?: string | null },
+): string {
+  if (step.custom) return step.title;
+  const key = step.templateKey ?? null;
+  // The key may not be backfilled yet at the call site; fall back to
+  // matching the legacy title directly.
+  if (step.title === 'Escrow open' && (key === 'escrow-open' || key === null)) {
+    return 'Escrow opened';
+  }
+  return step.title;
+}

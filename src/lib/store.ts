@@ -6,7 +6,7 @@
 // single-threaded execution that makes concurrent redeems resolve to exactly
 // one winner.
 
-import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, type StepTemplate } from './steps';
+import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, normalizeStepTitle, type StepTemplate } from './steps';
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import type {
@@ -476,11 +476,15 @@ export function createStore(kv: KV): Store {
       // One-time template-key backfill (Sept 28, 2026, Anuraj): steps built
       // before keys existed recover theirs by title match. Idempotent —
       // steps that already have a key keep it; custom steps never get one.
+      // The approved "Escrow open" -> "Escrow opened" rename (Sept 28, 2026)
+      // normalizes the visible title on existing rows too.
       for (const s of esc.buyerSteps) {
         if (!s.custom && !s.templateKey) s.templateKey = backfillTemplateKey('buyer', s);
+        s.title = normalizeStepTitle(s);
       }
       for (const s of esc.sellerSteps) {
         if (!s.custom && !s.templateKey) s.templateKey = backfillTemplateKey('seller', s);
+        s.title = normalizeStepTitle(s);
       }
     }
     data.invites = i ? (JSON.parse(i) as Invite[]) : [];
@@ -863,7 +867,12 @@ export function createStore(kv: KV): Store {
     // City is no longer edited (Sept 28, 2026): a supplied value still
     // applies, otherwise the stored city is preserved.
     if (input.city !== undefined) e.city = input.city.trim();
-    e.side = input.side;
+    // Side is LOCKED after creation (Anuraj, Sept 28, 2026 — lifecycle
+    // side-effect): the form never offers it, and this is the store-level
+    // backstop so no direct call can change it either.
+    if (input.side !== e.side) {
+      throw new Error('updateEscrow: side cannot be changed after creation');
+    }
     e.buyerName = trimName(input.buyerName);
     e.sellerName = trimName(input.sellerName);
     e.openDate = input.openDate;
@@ -922,7 +931,11 @@ export function createStore(kv: KV): Store {
     // City is no longer edited (Sept 28, 2026): a supplied value still
     // applies, otherwise the stored city is preserved.
     if (input.city !== undefined) e.city = input.city.trim();
-    e.side = input.side;
+    // Side is LOCKED after creation (Anuraj, Sept 28, 2026 — lifecycle
+    // side-effect): reactivation never changes it either.
+    if (input.side !== e.side) {
+      throw new Error('activateEscrow: side cannot be changed after creation');
+    }
     e.buyerName = trimName(input.buyerName);
     e.sellerName = trimName(input.sellerName);
     e.openDate = input.openDate;

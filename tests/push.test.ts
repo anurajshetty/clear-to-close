@@ -53,6 +53,39 @@ async function main(): Promise<void> {
     'key_dates_changed falls back to "Your realtor"',
   );
 
+  // ---- specific single-date copy (Anuraj Sept 28, 2026 rule) ----
+  // One date changed -> specific "Your {label} is now {date}."
+  assert(
+    buildPushBody('inspection_deadline_changed', 'Maya Sharma', null, null, '2026-10-15') ===
+      'Your inspection contingency deadline is now Oct 15, 2026.',
+    'inspection_deadline_changed copy is exact',
+  );
+  assert(
+    buildPushBody('appraisal_deadline_changed', 'Maya Sharma', null, null, '2026-10-20') ===
+      'Your appraisal deadline is now Oct 20, 2026.',
+    'appraisal_deadline_changed copy is exact',
+  );
+  assert(
+    buildPushBody('loan_approval_date_changed', 'Maya Sharma', null, null, '2026-10-25') ===
+      'Your loan approval date is now Oct 25, 2026.',
+    'loan_approval_date_changed copy is exact',
+  );
+  // close_date_changed accepts the date via new_date (0021+) or the legacy
+  // new_close_date field.
+  assert(
+    buildPushBody('close_date_changed', 'Maya Sharma', null, null, '2026-11-24') ===
+      'Your closing date is now Nov 24, 2026.',
+    'close_date_changed via new_date',
+  );
+  assert(
+    buildPushBody('inspection_deadline_changed', 'Maya', null, null, '') === null,
+    'specific date change with blank date drops',
+  );
+  assert(
+    buildPushBody('inspection_deadline_changed', 'Maya', null, null, null) === null,
+    'specific date change with null date drops',
+  );
+
   // ---- first-name extraction ----
   assert(firstNameOf('Maya Sharma') === 'Maya', 'first name extracted');
   assert(firstNameOf('  Maya  ') === 'Maya', 'name trimmed');
@@ -89,6 +122,18 @@ async function main(): Promise<void> {
   assert(
     parseTriggerPayload({ event: 'key_dates_changed', escrow_id: 'esc-1' }) !== null,
     'key_dates_changed payload accepted',
+  );
+  assert(
+    parseTriggerPayload({ event: 'inspection_deadline_changed', escrow_id: 'esc-1', new_date: '2026-10-15' }) !== null,
+    'inspection_deadline_changed payload accepted',
+  );
+  assert(
+    parseTriggerPayload({ event: 'appraisal_deadline_changed', escrow_id: 'esc-1', new_date: '2026-10-20' }) !== null,
+    'appraisal_deadline_changed payload accepted',
+  );
+  assert(
+    parseTriggerPayload({ event: 'loan_approval_date_changed', escrow_id: 'esc-1', new_date: '2026-10-25' }) !== null,
+    'loan_approval_date_changed payload accepted',
   );
   assert(
     parseTriggerPayload({ event: 'uncheck_happened', escrow_id: 'esc-1' }) === null,

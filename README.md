@@ -385,8 +385,12 @@ central user; the buyers and sellers they represent are the other parties.
   asked once whether to allow notifications ("Stay in the loop": "Get
   notified the moment {first name} checks off a step — you'll never have to
   keep checking"). **Forward progress only**: a push fires when the realtor
-  checks off a step, adds a custom step, or moves the target close date;
-  **unchecking a step never sends a push**. Tapping a notification opens the
+  checks off a step, adds a custom step, or changes a key date;
+  **unchecking a step never sends a push**. Key-date copy (Anuraj, Sept 28,
+  2026): one date changed sends the specific copy ("Your closing date is
+  now Nov 15, 2026.", "Your inspection contingency deadline is now Oct 15,
+  2026.", etc.); several dates changed together send "{First} updated your
+  key dates." Tapping a notification opens the
   client's escrow home. While the app is open, no banner appears (the Latest
   card shows the update). Web is out of push scope — no prompt, no tokens.
   Requires a fresh iOS binary (new native module) — see "iOS release".

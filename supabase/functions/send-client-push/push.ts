@@ -3,21 +3,35 @@
 // file AND compiles under node for unit tests.
 //
 // Push copy (step_done / custom_step_added FINAL, Anuraj Sept 26 2026;
-// close_date_changed + key_dates_changed FINAL, Anuraj Sept 28 2026):
-//   step_done:          "{First} checked off {step} in your escrow."
-//   custom_step_added:  "{First} added a new step to your escrow."
-//   close_date_changed: "Your closing date is now {date}."
-//   key_dates_changed:  "{First} updated your key dates."
+// close_date_changed + key_dates_changed FINAL, Anuraj Sept 28 2026;
+// inspection/appraisal/loan specific copy, Anuraj Sept 28 2026 rule:
+//   one date changed -> specific "Your {label} is now {date}."
+//   several dates changed together -> "{First} updated your key dates."):
+//   step_done:                   "{First} checked off {step} in your escrow."
+//   custom_step_added:           "{First} added a new step to your escrow."
+//   close_date_changed:          "Your closing date is now {date}."
+//   inspection_deadline_changed: "Your inspection contingency deadline is now {date}."
+//   appraisal_deadline_changed:  "Your appraisal deadline is now {date}."
+//   loan_approval_date_changed:  "Your loan approval date is now {date}."
+//   key_dates_changed:           "{First} updated your key dates."
 // Forward progress only: unchecks never produce an event (the DB trigger
 // matches transitions, never state).
 
-export type PushEvent = 'step_done' | 'custom_step_added' | 'close_date_changed' | 'key_dates_changed';
+export type PushEvent =
+  | 'step_done'
+  | 'custom_step_added'
+  | 'close_date_changed'
+  | 'inspection_deadline_changed'
+  | 'appraisal_deadline_changed'
+  | 'loan_approval_date_changed'
+  | 'key_dates_changed';
 
 export interface TriggerPayload {
   event: PushEvent;
   escrow_id: string;
   step_title: string | null;
-  new_close_date: string | null; // 'YYYY-MM-DD'
+  new_close_date: string | null; // 'YYYY-MM-DD' (legacy: close_date_changed only)
+  new_date: string | null; // 'YYYY-MM-DD' (specific key-date change events)
 }
 
 export interface ExpoMessage {
@@ -57,8 +71,14 @@ export function buildPushBody(
   realtorName: string | null | undefined,
   stepTitle: string | null | undefined,
   newCloseDate: string | null | undefined,
+  newDate?: string | null | undefined,
 ): string | null {
   const first = firstNameOf(realtorName);
+  // Specific date-change events carry the date in new_date (0021+); the
+  // legacy new_close_date is honored for close_date_changed payloads from
+  // pre-0021 triggers.
+  const dateFor = (fallback: string | null | undefined): string =>
+    ((newDate ?? fallback ?? '') as string).trim();
   switch (event) {
     case 'step_done': {
       const title = (stepTitle ?? '').trim();
@@ -68,12 +88,25 @@ export function buildPushBody(
     case 'custom_step_added':
       return `${first} added a new step to your escrow.`;
     case 'close_date_changed': {
-      const d = (newCloseDate ?? '').trim();
+      const d = dateFor(newCloseDate);
       if (!d) return null;
       return `Your closing date is now ${formatPushDate(d)}.`;
     }
-    case 'key_dates_changed':
-      return `${first} updated your key dates.`;
+    case 'inspection_deadline_changed': {
+      const d = dateFor(null);
+      if (!d) return null;
+      return `Your inspection contingency deadline is now ${formatPushDate(d)}.`;
+    }
+    case 'appraisal_deadline_changed': {
+      const d = dateFor(null);
+      if (!d) return null;
+      return `Your appraisal deadline is now ${formatPushDate(d)}.`;
+    }
+    case 'loan_approval_date_changed': {
+      const d = dateFor(null);
+      if (!d) return null;
+      return `Your loan approval date is now ${formatPushDate(d)}.`;
+    }
     case 'key_dates_changed':
       return `${first} updated your key dates.`;
   }
@@ -89,6 +122,9 @@ export function parseTriggerPayload(raw: unknown): TriggerPayload | null {
     (event !== 'step_done' &&
       event !== 'custom_step_added' &&
       event !== 'close_date_changed' &&
+      event !== 'inspection_deadline_changed' &&
+      event !== 'appraisal_deadline_changed' &&
+      event !== 'loan_approval_date_changed' &&
       event !== 'key_dates_changed') ||
     typeof escrowId !== 'string' ||
     !escrowId
@@ -102,6 +138,7 @@ export function parseTriggerPayload(raw: unknown): TriggerPayload | null {
     escrow_id: escrowId,
     step_title: strOrNull(p['step_title']),
     new_close_date: strOrNull(p['new_close_date']),
+    new_date: strOrNull(p['new_date']),
   };
 }
 

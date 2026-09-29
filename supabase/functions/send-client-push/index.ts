@@ -72,6 +72,7 @@ async function handle(req: Request, env: Record<string, string | undefined>): Pr
     (profile as { name?: string } | null)?.name ?? null,
     payload.step_title,
     payload.new_close_date,
+    payload.new_date,
   );
   if (!body) {
     // Honest copy impossible (missing title/date) — drop, don't misfire.

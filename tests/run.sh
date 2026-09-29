@@ -243,3 +243,8 @@ python3 "$ROOT/tests/migration_0011_guard.py"
 # Push migration self-check: forward-only trigger guards, kill switch,
 # RPCs, additive-only shape (SQL, not runnable in node).
 python3 "$ROOT/tests/push_migration.py"
+
+# Key-dates push migration self-check (Sept 28, 2026): the 0021 trigger
+# counts changed date fields — one date -> specific event, several together
+# -> generic key_dates_changed (SQL, not runnable in node).
+python3 "$ROOT/tests/key_dates_push_migration.py"

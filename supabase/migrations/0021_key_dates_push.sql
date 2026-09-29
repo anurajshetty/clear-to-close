@@ -1,13 +1,17 @@
 -- Clear to Close — migration 0021: key-date changes fire the client push.
 --
 -- Extends the 0008 push trigger (forward-progress-only, Anuraj's rule):
---   escrows: UPDATE inspection_deadline / appraisal_deadline /
---            loan_approval_date changed  -> key_dates_changed
--- The steps half and close_date_changed are untouched.
+--   escrows: UPDATE close_date / inspection_deadline / appraisal_deadline /
+--            loan_approval_date changed -> specific per-date event (one date)
+--            or key_dates_changed (several dates together).
 --
--- One event per write: when the close date AND a key date change in the
--- same update, close_date_changed takes precedence (the single-event
--- shape predates this migration).
+-- Anuraj's approved copy rule (Sept 28, 2026):
+--   One date changed:   specific copy, e.g. "Your closing date is now Nov 15, 2026."
+--   Several dates together: "{First} updated your key dates."
+--
+-- The trigger counts changed date fields: exactly one -> the specific event
+-- for that field (with new_date); two or more -> key_dates_changed.
+-- The steps half is untouched.
 --
 -- DEPLOY ORDER: apply AFTER 0019 (the key-date columns) and 0020. Then
 -- redeploy the `send-client-push` Edge Function with the matching
@@ -36,6 +40,9 @@ declare
   v_escrow_id uuid;
   v_step_title text := null;
   v_new_close_date date := null;
+  v_new_date date := null;
+  v_changed_count int := 0;
+  v_changed_field text := null;
 begin
   select value into v_enabled from push_config where key = 'push_enabled';
   if v_enabled is distinct from 'true' then
@@ -54,15 +61,45 @@ begin
   elsif TG_TABLE_NAME = 'escrows' then
     v_escrow_id := new.id;
     if TG_OP = 'UPDATE' then
+      -- Count changed key-date fields (Anuraj Sept 28, 2026: one date ->
+      -- specific copy; several together -> generic "updated your key dates").
+      -- A clear counts: the realtor removed a date the client could see.
       if old.close_date is distinct from new.close_date then
-        v_event := 'close_date_changed';
-        v_new_close_date := new.close_date;
-      elsif old.inspection_deadline is distinct from new.inspection_deadline
-         or old.appraisal_deadline is distinct from new.appraisal_deadline
-         or old.loan_approval_date is distinct from new.loan_approval_date then
-        -- Any key-date add/change is client-visible forward information.
-        -- (A clear counts: the realtor removed a date the client could see.)
-        -- The copy is the neutral "updated your key dates".
+        v_changed_count := v_changed_count + 1;
+        v_changed_field := 'close_date';
+        v_new_date := new.close_date;
+      end if;
+      if old.inspection_deadline is distinct from new.inspection_deadline then
+        v_changed_count := v_changed_count + 1;
+        v_changed_field := 'inspection_deadline';
+        v_new_date := new.inspection_deadline;
+      end if;
+      if old.appraisal_deadline is distinct from new.appraisal_deadline then
+        v_changed_count := v_changed_count + 1;
+        v_changed_field := 'appraisal_deadline';
+        v_new_date := new.appraisal_deadline;
+      end if;
+      if old.loan_approval_date is distinct from new.loan_approval_date then
+        v_changed_count := v_changed_count + 1;
+        v_changed_field := 'loan_approval_date';
+        v_new_date := new.loan_approval_date;
+      end if;
+
+      if v_changed_count = 1 then
+        -- Exactly one date changed: specific event + the new date.
+        case v_changed_field
+          when 'close_date' then
+            v_event := 'close_date_changed';
+            v_new_close_date := v_new_date; -- legacy payload field
+          when 'inspection_deadline' then
+            v_event := 'inspection_deadline_changed';
+          when 'appraisal_deadline' then
+            v_event := 'appraisal_deadline_changed';
+          when 'loan_approval_date' then
+            v_event := 'loan_approval_date_changed';
+        end case;
+      elsif v_changed_count > 1 then
+        -- Several dates changed together: the generic copy.
         v_event := 'key_dates_changed';
       end if;
     end if;
@@ -88,7 +125,8 @@ begin
         'event', v_event,
         'escrow_id', v_escrow_id,
         'step_title', v_step_title,
-        'new_close_date', v_new_close_date
+        'new_close_date', v_new_close_date,
+        'new_date', v_new_date
       )
     );
   end if;

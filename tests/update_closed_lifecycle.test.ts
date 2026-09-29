@@ -80,6 +80,9 @@ async function main(): Promise<void> {
   const { escrow: closed } = await store.closeEscrow(created.id, 'seller');
   assert(closed.status === 'closed', 'setup: escrow closed');
   assert(closed.buyerClosedAt != null, 'setup: buyer close timestamp stamped');
+  // The close revokes the invite (Anuraj, Sept 28, 2026): code invalidated.
+  const inviteAfterClose = await store.getInvite(invite.id);
+  assert(inviteAfterClose?.revokedAt != null, 'setup: close revokes the invite');
 
   // --- ordinary edit on the CLOSED escrow: no reactivation, fields saved ---
   const edited = await store.updateEscrow(closed.id, {
@@ -98,6 +101,24 @@ async function main(): Promise<void> {
   assert(edited.buyerClosedAt != null, 'update/closed: per-side close timestamp untouched');
   assert(edited.inspectionDeadline === d.kd1, 'update/closed: key dates preserved');
   assert(edited.buyerSteps.find((s) => s.id === stepId)!.done, 'update/closed: step state untouched');
+
+  // --- side-change attempt via direct store call: the backstop throws ---
+  // (The form never offers side; this proves no direct call can change it.)
+  let sideThrew = false;
+  try {
+    await store.updateEscrow(closed.id, {
+      address: '1 Matrix Edited St',
+      side: 'buy', // different from the stored 'both'
+      buyerName: 'Both Buyer Edited',
+      openDate: d.openDate,
+      closeDate: d.closeDate,
+    } as UpdateEscrowInput);
+  } catch {
+    sideThrew = true;
+  }
+  assert(sideThrew, 'update/closed: side-change rejected by the store backstop');
+  const afterSideThrow = (await store.getEscrow(closed.id))!;
+  assert(afterSideThrow.side === 'both', 'update/closed: rejected side-change leaves side unchanged');
 
   // --- key-date write on the CLOSED escrow: backstop throws, nothing changes ---
   let threw = false;
@@ -143,6 +164,25 @@ async function main(): Promise<void> {
     invitesAfter.some((i) => i.id === invite.id) && invitesAfter.length === invitesBefore.length,
     'activate: invites carried over untouched',
   );
+  // Reactivation must NOT silently revive revoked access (Anuraj, Sept 28,
+  // 2026 — lifecycle side-effect): the revoked invite stays revoked.
+  const inviteAfterReactivate = await store.getInvite(invite.id);
+  assert(inviteAfterReactivate?.revokedAt != null, 'activate: revoked invite stays revoked (no silent revival)');
+
+  // --- side-change attempt on reactivation: the backstop throws ---
+  let activateSideThrew = false;
+  try {
+    await store.activateEscrow(closed.id, {
+      address: '1 Matrix Reactivated St',
+      side: 'sell', // different from the stored 'both'
+      buyerName: 'Both Buyer Reactivated',
+      openDate: d.openDate,
+      closeDate: d.closeDate,
+    } as UpdateEscrowInput);
+  } catch {
+    activateSideThrew = true;
+  }
+  assert(activateSideThrew, 'activate: side-change rejected by the store backstop');
 
   // --- key dates editable again now that the escrow is open ---
   const editedOpen = await store.updateEscrow(closed.id, {

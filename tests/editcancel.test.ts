@@ -27,7 +27,7 @@ async function main(): Promise<void> {
   const store = createStore(kv);
   const { openDate, closeDate } = dates();
 
-  // --- updateEscrow: all fields editable, incl. side switching ---
+  // --- updateEscrow: all fields editable EXCEPT side (locked, Sept 28, 2026) ---
   const created = await store.createEscrow({
     address: '4187 Oakmont Dr',
     city: 'Valencia, CA 91355',
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   const updated = await store.updateEscrow(created.id, {
     address: '999 New Address Ln',
     city: 'Santa Clarita, CA 91355',
-    side: 'both',
+    side: 'buy', // unchanged: side is locked after creation
     buyerName: 'New Buyer',
     sellerName: 'New Seller',
     openDate,
@@ -47,24 +47,28 @@ async function main(): Promise<void> {
   });
   assert(updated.address === '999 New Address Ln', 'update: address changed');
   assert(updated.city === 'Santa Clarita, CA 91355', 'update: city changed');
-  assert(updated.side === 'both', 'update: side switched buy -> both');
+  assert(updated.side === 'buy', 'update: side preserved (locked)');
   assert(updated.buyerName === 'New Buyer', 'update: buyer name changed');
   assert(updated.sellerName === 'New Seller', 'update: seller name set');
   assert(updated.status === 'open', 'update: status preserved (open)');
   assert(updated.buyerSteps.length === created.buyerSteps.length, 'update: steps untouched');
 
-  // Switching back to a single side clears the other name.
-  const toSell = await store.updateEscrow(created.id, {
-    address: '999 New Address Ln',
-    city: 'Santa Clarita, CA 91355',
-    side: 'sell',
-    sellerName: 'Only Seller',
-    openDate,
-    closeDate,
-  });
-  assert(toSell.side === 'sell', 'update: side switched both -> sell');
-  assert(toSell.buyerName === null, 'update: buyer name cleared on sell-only');
-  assert(toSell.sellerName === 'Only Seller', 'update: seller name kept');
+  // Side-change attempt is rejected by the store backstop (Anuraj, Sept 28,
+  // 2026 — lifecycle side-effect: side remains locked).
+  let sideThrew = false;
+  try {
+    await store.updateEscrow(created.id, {
+      address: '999 New Address Ln',
+      city: 'Santa Clarita, CA 91355',
+      side: 'both', // different from the stored 'buy'
+      buyerName: 'New Buyer',
+      openDate,
+      closeDate,
+    });
+  } catch { sideThrew = true; }
+  assert(sideThrew, 'update: side change rejected');
+  const afterSideThrow = (await store.getEscrow(created.id))!;
+  assert(afterSideThrow.side === 'buy', 'update: rejected side change leaves side unchanged');
 
   // --- updateEscrow: validation mirrors creation ---
   let threw = false;

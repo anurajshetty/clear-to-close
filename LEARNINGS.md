@@ -3,6 +3,42 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Key-dates push copy correction (Sept 29, 2026)
+
+- **The trigger implemented "close date wins" instead of "count the changes".**
+  Migration 0021 first shipped with `if close_date changed then specific`
+  `elsif other dates then generic` — so a single inspection-deadline change
+  sent the generic copy, and a close-date-plus-another-date change sent the
+  specific copy. Both violated Anuraj's approved rule (one date: specific;
+  several together: generic). Practice: when the spec says "count", the
+  implementation must count — a precedence chain is not a count, and the
+  difference is user-visible copy.
+- **Specific copy needs a specific event per field.** The original model had
+  only `close_date_changed` (specific) and `key_dates_changed` (generic).
+  The fix adds `inspection_deadline_changed`, `appraisal_deadline_changed`,
+  and `loan_approval_date_changed`, each carrying the new date in a
+  `new_date` payload field. Practice: event names are the contract between
+  the trigger and the Edge Function — when the copy rule gains cases, the
+  event vocabulary must grow with it.
+- **Side locking needs a store backstop, not just a hidden form field.**
+  `computeUpdateEscrow` and `computeActivateEscrow` assigned
+  `e.side = input.side`, so a direct store call could change the side even
+  though the form never offers it. Both now throw on a side mismatch.
+  Practice: "the UI doesn't offer it" is not a guarantee — lifecycle
+  invariants live in the store, tested by direct calls that bypass the UI.
+- **Reactivation must not revive revoked access.** The lifecycle matrix now
+  pins that a close-revoked invite stays revoked through reactivation —
+  the test asserts `revokedAt` is still set after `activateEscrow`.
+  Practice: every state-changing operation's side-effect matrix must include
+  the access-revocation state, not just the data fields.
+- **Approved renames apply to stored rows, not just new defaults.** The
+  "Escrow open" to "Escrow opened" rename shipped with new defaults using
+  the new title and a key backfill for old rows — but existing rows still
+  displayed the old title. `normalizeStepTitle` now upgrades the visible
+  title on load (idempotent; custom steps untouched). Practice: a copy
+  rename is a data migration, not just a default change — check what the
+  user actually sees on existing records.
+
 ## Key dates lifecycle lock (Sept 28, 2026)
 
 - **Two buttons did the same reactivating thing.** The Update sheet's main

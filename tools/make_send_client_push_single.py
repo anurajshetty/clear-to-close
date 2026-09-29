@@ -27,6 +27,9 @@ REQUIRED_MARKERS = [
     "checked off",                  # approved copy line 1
     "added a new step to your escrow",  # approved copy line 2
     "Your closing date is now",   # approved copy line 3 (Sept 28, 2026)
+    "Your inspection contingency deadline is now",  # Sept 28, 2026 rule
+    "Your appraisal deadline is now",  # Sept 28, 2026 rule
+    "Your loan approval date is now",  # Sept 28, 2026 rule
     "updated your key dates",     # approved copy line 4 (Sept 28, 2026)
 ]
 
