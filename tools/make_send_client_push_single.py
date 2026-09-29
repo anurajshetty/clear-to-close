@@ -26,7 +26,8 @@ REQUIRED_MARKERS = [
     "EXPO_ACCESS_TOKEN",            # read from env, never hardcoded
     "checked off",                  # approved copy line 1
     "added a new step to your escrow",  # approved copy line 2
-    "target close date moved to",   # approved copy line 3
+    "Your closing date is now",   # approved copy line 3 (Sept 28, 2026)
+    "updated your key dates",     # approved copy line 4 (Sept 28, 2026)
 ]
 
 # Strings that must NEVER appear (secret hygiene).

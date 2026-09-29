@@ -17,7 +17,7 @@ import {
   toggleSide,
   type SideSelection,
 } from '../lib/sidePicker';
-import type { CreateEscrowInput, Escrow, Side } from '../lib/types';
+import type { CreateEscrowInput, Escrow, Side, UpdateEscrowInput } from '../lib/types';
 import { confirmSummaryRows } from '../lib/escrowConfirm';
 import { Field, Kicker, PrimaryButton, SecondaryButton, Sheet } from '../components/ui';
 import DateField from './DateField';
@@ -30,6 +30,12 @@ export interface EscrowFormInitial {
   sellerName: string;
   openDate: string;
   closeDate: string;
+  /** Escrow lifecycle status: drives the key-dates lock (Sept 28, 2026). */
+  status: Escrow['status'];
+  /** Key dates (Sept 28, 2026): edit mode only — pre-populated, nullable. */
+  inspectionDeadline: string | null;
+  appraisalDeadline: string | null;
+  loanApprovalDate: string | null;
 }
 
 export function escrowToInitial(e: Escrow): EscrowFormInitial {
@@ -40,6 +46,10 @@ export function escrowToInitial(e: Escrow): EscrowFormInitial {
     sellerName: e.sellerName ?? '',
     openDate: e.openDate,
     closeDate: e.closeDate,
+    status: e.status,
+    inspectionDeadline: e.inspectionDeadline ?? null,
+    appraisalDeadline: e.appraisalDeadline ?? null,
+    loanApprovalDate: e.loanApprovalDate ?? null,
   };
 }
 
@@ -64,6 +74,9 @@ type ErrorKey =
   | 'sellerName'
   | 'openDate'
   | 'closeDate'
+  | 'inspectionDeadline'
+  | 'appraisalDeadline'
+  | 'loanApprovalDate'
   | 'submit';
 type Errors = Partial<Record<ErrorKey, string>>;
 
@@ -114,6 +127,15 @@ interface EscrowFormSheetProps {
    * direct save.
    */
   confirmCreate?: boolean;
+  /**
+   * Reactivation (Sept 28, 2026, lifecycle gate, Anuraj-approved): on
+   * closed/cancelled escrows the locked Key dates section shows a
+   * "Reactivate escrow" button that invokes this — the ONLY path that
+   * reactivates an escrow. The main submit button never reactivates; it
+   * saves ordinary edits via onSubmit (key dates stay locked/preserved).
+   * Absent = the locked section shows no reactivate button.
+   */
+  onReactivate?: (input: CreateEscrowInput) => Promise<Escrow>;
 }
 
 export function EscrowFormSheet({
@@ -130,6 +152,7 @@ export function EscrowFormSheet({
   confirmBody,
   lockSide,
   confirmCreate,
+  onReactivate,
 }: EscrowFormSheetProps) {
   const [sel, setSel] = useState<SideSelection>(DEFAULT_SIDE_SELECTION);
   const [address, setAddress] = useState('');
@@ -137,8 +160,16 @@ export function EscrowFormSheet({
   const [sellerName, setSellerName] = useState('');
   const [openDate, setOpenDate] = useState('');
   const [closeDate, setCloseDate] = useState('');
+  // Key dates (Sept 28, 2026): optional, edit mode only. '' = not set.
+  const [inspectionDeadline, setInspectionDeadline] = useState('');
+  const [appraisalDeadline, setAppraisalDeadline] = useState('');
+  const [loanApprovalDate, setLoanApprovalDate] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  // Key-dates lifecycle lock (Sept 28, 2026, Anuraj): only an open escrow
+  // can have key dates edited. On closed/cancelled escrows the section
+  // renders locked with a "Reactivate escrow" button instead.
+  const keyDatesEditable = !!initial && initial.status === 'open';
   // Two-phase create: the validated input waiting on the confirmation
   // screen. null = form is showing (or the flow skips confirmation).
   const [confirming, setConfirming] = useState<CreateEscrowInput | null>(null);
@@ -160,6 +191,9 @@ export function EscrowFormSheet({
     setSellerName(initial?.sellerName ?? '');
     setOpenDate(initial?.openDate ?? '');
     setCloseDate(initial?.closeDate ?? '');
+    setInspectionDeadline(initial?.inspectionDeadline ?? '');
+    setAppraisalDeadline(initial?.appraisalDeadline ?? '');
+    setLoanApprovalDate(initial?.loanApprovalDate ?? '');
     setErrors({});
     setSaving(false);
     setConfirming(null);
@@ -207,17 +241,47 @@ export function EscrowFormSheet({
       // the escrow open date. Equal is fine.
       e.closeDate = "The target close can't be before the opened date.";
     }
+    // Key dates are optional — blank stays blank; a typed value must be a
+    // real date. No ordering rules (the mockup defines none). Validated
+    // only when the section is editable (open escrows); on closed or
+    // cancelled escrows the section is locked and these stay untouched.
+    if (keyDatesEditable) {
+      if (inspectionDeadline.trim() && !isRealDate(inspectionDeadline)) {
+        e.inspectionDeadline = 'Please use the format YYYY-MM-DD.';
+      }
+      if (appraisalDeadline.trim() && !isRealDate(appraisalDeadline)) {
+        e.appraisalDeadline = 'Please use the format YYYY-MM-DD.';
+      }
+      if (loanApprovalDate.trim() && !isRealDate(loanApprovalDate)) {
+        e.loanApprovalDate = 'Please use the format YYYY-MM-DD.';
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  const buildInput = (): CreateEscrowInput => ({
+  // The input carries the key dates too (Sept 28, 2026): UpdateEscrowInput
+  // is a superset of CreateEscrowInput — the create flow's confirm screen
+  // only reads the create fields, and createEscrow ignores the extras.
+  const buildInput = (): UpdateEscrowInput => ({
     address: address.trim(),
     side,
     buyerName: sel.buy ? buyerName.trim() : undefined,
     sellerName: sel.sell ? sellerName.trim() : undefined,
     openDate,
     closeDate,
+    // Key dates ride the same input (Sept 28, 2026): edit mode on open
+    // escrows only — the create form never shows the section, so these
+    // stay undefined there (undefined = preserve; the create path never
+    // sends key dates). On closed/cancelled escrows the section is locked
+    // and untouched, so the stored values are preserved. Blank = null
+    // (clears a previously set date).
+    inspectionDeadline:
+      keyDatesEditable ? inspectionDeadline.trim() || null : undefined,
+    appraisalDeadline:
+      keyDatesEditable ? appraisalDeadline.trim() || null : undefined,
+    loanApprovalDate:
+      keyDatesEditable ? loanApprovalDate.trim() || null : undefined,
   });
 
   const performSave = async (input: CreateEscrowInput) => {
@@ -250,6 +314,29 @@ export function EscrowFormSheet({
       return;
     }
     await performSave(input);
+  };
+
+  // Reactivation (Sept 28, 2026, lifecycle gate): the locked Key dates
+  // section's "Reactivate escrow" button. Validates the form, then invokes
+  // onReactivate — the ONLY path that reactivates a closed/cancelled
+  // escrow. The main submit button never takes this path.
+  const reactivate = async () => {
+    if (saving || !validate() || !onReactivate) return;
+    const input = buildInput();
+    setSaving(true);
+    try {
+      const done = await onReactivate(input);
+      onDone(done);
+    } catch (err) {
+      console.warn('escrow reactivate failed', err);
+      setErrors((prev) => ({
+        ...prev,
+        submit:
+          err instanceof Error && err.message ? err.message : 'Could not reactivate. Try again.',
+      }));
+    } finally {
+      setSaving(false);
+    }
   };
 
   // The confirmation screen's "Create escrow" button: performs the held
@@ -426,6 +513,107 @@ export function EscrowFormSheet({
         />
       </FieldWrap>
 
+      {/* Key dates (Sept 28, 2026, Anuraj-approved): optional section on the
+          "Update escrow" sheet only — the New escrow sheet stays minimum
+          input (initial == null in create mode). These feed the client
+          KEY DATES card; the save is the same synchronous confirmed write
+          as the rest of the sheet (server first, plain-language error on
+          failure, local unchanged). On closed/cancelled escrows the section
+          is LOCKED (lifecycle gate): the dates show read-only and a
+          "Reactivate escrow" button stands in for the fields — only an open
+          escrow can have key dates edited, and key-date edits never
+          reactivate anything (the store throws as a backstop). */}
+      {initial ? (
+        keyDatesEditable ? (
+          <>
+            <Text style={styles.keyDatesLabel}>
+              Key dates <Text style={styles.keyDatesOptional}>(optional)</Text>
+            </Text>
+            <Text style={styles.keyDatesSub}>These show on the client&apos;s Key dates card.</Text>
+
+            <FieldWrap error={errors.inspectionDeadline}>
+              <DateField
+                label="Inspection contingency deadline"
+                value={inspectionDeadline}
+                onChange={(v) => {
+                  setInspectionDeadline(v);
+                  clear('inspectionDeadline');
+                }}
+                testID="escrow-inspection-deadline"
+              />
+            </FieldWrap>
+
+            <FieldWrap error={errors.appraisalDeadline}>
+              <DateField
+                label="Appraisal deadline"
+                value={appraisalDeadline}
+                onChange={(v) => {
+                  setAppraisalDeadline(v);
+                  clear('appraisalDeadline');
+                }}
+                testID="escrow-appraisal-deadline"
+              />
+            </FieldWrap>
+
+            <FieldWrap error={errors.loanApprovalDate}>
+              <DateField
+                label="Loan approval date"
+                value={loanApprovalDate}
+                onChange={(v) => {
+                  setLoanApprovalDate(v);
+                  clear('loanApprovalDate');
+                }}
+                testID="escrow-loan-approval-date"
+              />
+            </FieldWrap>
+          </>
+        ) : (
+          <>
+            <Text style={styles.keyDatesLabel}>
+              Key dates <Text style={styles.keyDatesOptional}>(locked)</Text>
+            </Text>
+            <Text style={styles.keyDatesSub}>
+              Key dates can only be changed on an open escrow.
+            </Text>
+            <View style={styles.keyDatesLocked} testID="key-dates-locked">
+              <View style={styles.keyDatesLockedRow}>
+                <Text style={styles.keyDatesLockedLabel}>Closing date</Text>
+                <Text style={styles.keyDatesLockedValue}>
+                  {closeDate.trim() || 'Not set'}
+                </Text>
+              </View>
+              <View style={styles.keyDatesLockedRow}>
+                <Text style={styles.keyDatesLockedLabel}>Inspection contingency deadline</Text>
+                <Text style={styles.keyDatesLockedValue}>
+                  {inspectionDeadline.trim() || 'Not set'}
+                </Text>
+              </View>
+              <View style={styles.keyDatesLockedRow}>
+                <Text style={styles.keyDatesLockedLabel}>Appraisal deadline</Text>
+                <Text style={styles.keyDatesLockedValue}>
+                  {appraisalDeadline.trim() || 'Not set'}
+                </Text>
+              </View>
+              <View style={styles.keyDatesLockedRow}>
+                <Text style={styles.keyDatesLockedLabel}>Loan approval date</Text>
+                <Text style={styles.keyDatesLockedValue}>
+                  {loanApprovalDate.trim() || 'Not set'}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.keyDatesLockedAction}>
+              {onReactivate ? (
+                <SecondaryButton
+                  title={saving ? savingLabel : 'Reactivate escrow'}
+                  onPress={reactivate}
+                  disabled={saving}
+                />
+              ) : null}
+            </View>
+          </>
+        )
+      ) : null}
+
       {errors.submit ? <Text style={styles.submitError}>{errors.submit}</Text> : null}
 
       <View style={styles.submit}>
@@ -512,6 +700,56 @@ const styles = StyleSheet.create({
     color: colors.body,
     marginTop: 16,
     marginBottom: 8,
+  },
+  // Key dates section header (mockup 01 · device ①): "Key dates (optional)"
+  // label + quiet sub-line, sitting above the three date inputs.
+  keyDatesLabel: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: colors.ink,
+    marginTop: 20,
+    marginBottom: 2,
+  },
+  keyDatesOptional: {
+    fontWeight: '400',
+    color: colors.muted,
+  },
+  keyDatesSub: {
+    fontSize: 13,
+    color: colors.muted,
+    marginBottom: 4,
+  },
+  // Locked key-dates section (closed/cancelled escrows, Sept 28, 2026):
+  // read-only rows + the "Reactivate escrow" action.
+  keyDatesLocked: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 10,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+  },
+  keyDatesLockedRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  keyDatesLockedLabel: {
+    fontSize: 14,
+    color: colors.muted,
+    flexShrink: 1,
+    paddingRight: 12,
+  },
+  keyDatesLockedValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.ink,
+  },
+  keyDatesLockedAction: {
+    marginTop: 12,
   },
   sideRow: {
     flexDirection: 'row',

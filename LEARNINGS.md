@@ -3,6 +3,28 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Key dates lifecycle lock (Sept 28, 2026)
+
+- **Two buttons did the same reactivating thing.** The Update sheet's main
+  "Activate escrow" button and the locked Key dates section's new "Reactivate
+  escrow" button both routed through `activateEscrow` — and worse, an
+  ordinary edit (fixing an address on a closed escrow) silently reactivated
+  it. Practice: a destructive/state-changing action gets exactly ONE explicit
+  entry point; every other path must be provably incapable of triggering it.
+  The main button now saves via `updateEscrow` (never reactivates); only the
+  locked section's button calls `activateEscrow`.
+- **The store must backstop the UI's promises.** The sheet hides key-date
+  fields on closed escrows, but a future caller could still pass them —
+  so `computeUpdateEscrow` throws when key dates are touched on a
+  non-open escrow. Practice: lifecycle gates live in the store, not just
+  the form; the UI is the friendly face, the store is the lock.
+- **Reactivation preserves, it doesn't write.** `activateEscrow` flips
+  status and clears per-side close timestamps but never touches key dates,
+  steps, invites, or links — verified field-by-field in
+  `tests/update_closed_lifecycle.test.ts`. Practice: every state-changing
+  operation ships with an explicit per-field matrix (what changes, what is
+  preserved, what is rejected), tested, not just documented.
+
 ## Synchronous writes (the rebuild, Sept 28, 2026)
 
 - **The local redeem fallback minted access the server never authorized.**

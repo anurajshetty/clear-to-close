@@ -40,8 +40,17 @@ async function main(): Promise<void> {
   );
   assert(
     buildPushBody('close_date_changed', 'Maya Sharma', null, '2026-11-24') ===
-      'Your target close date moved to Nov 24, 2026.',
+      'Your closing date is now Nov 24, 2026.',
     'close_date_changed copy is exact',
+  );
+  assert(
+    buildPushBody('key_dates_changed', 'Maya Sharma', null, null) ===
+      'Maya updated your key dates.',
+    'key_dates_changed copy is exact',
+  );
+  assert(
+    buildPushBody('key_dates_changed', '', null, null) === 'Your realtor updated your key dates.',
+    'key_dates_changed falls back to "Your realtor"',
   );
 
   // ---- first-name extraction ----
@@ -77,6 +86,10 @@ async function main(): Promise<void> {
     'valid trigger payload parses',
   );
   assert(parseTriggerPayload({ event: 'step_done' }) === null, 'missing escrow_id rejected');
+  assert(
+    parseTriggerPayload({ event: 'key_dates_changed', escrow_id: 'esc-1' }) !== null,
+    'key_dates_changed payload accepted',
+  );
   assert(
     parseTriggerPayload({ event: 'uncheck_happened', escrow_id: 'esc-1' }) === null,
     'unknown event rejected',

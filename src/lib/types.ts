@@ -13,6 +13,22 @@ export interface StepT {
   custom: boolean;
   order: number;
   completedAt: string | null;
+  /**
+   * Step explainer (Sept 28, 2026, Anuraj-approved): the realtor's optional
+   * one-line "What does this step mean?" on custom steps, shown when the
+   * client taps the row. Default steps resolve their one-liner from the
+   * bundled inventory (src/lib/stepExplainers.ts) via templateKey below;
+   * null/blank means the row does not expand. Cloud-synced (migration 0019).
+   */
+  explainer?: string | null;
+  /**
+   * Permanent template key (Sept 28, 2026, Anuraj): stamped from
+   * StepTemplate.key at creation for default steps; null for custom steps.
+   * The ONLY thing explainer resolution trusts — titles are realtor-editable
+   * and are never used for lookup. Older steps backfill it by title match
+   * (src/lib/steps.ts backfillTemplateKey). Cloud-synced (migration 0020).
+   */
+  templateKey?: string | null;
 }
 
 /**
@@ -27,6 +43,17 @@ export interface ChecklistDraftStep {
   done: boolean;
   custom: boolean;
   completedAt?: string | null;
+  /**
+   * Realtor-written explainer for a new custom step (the add-custom form's
+   * optional "What does this step mean?"). Committed with the checklist
+   * save; preserved from the previous step when the draft omits it.
+   */
+  explainer?: string | null;
+  /**
+   * Template key passthrough: preserved from the previous step when a draft
+   * edits a default step, so a rename in edit mode keeps its explainer.
+   */
+  templateKey?: string | null;
 }
 
 /**
@@ -74,6 +101,18 @@ export interface Escrow {
    */
   buyerClosedAt: string | null;
   sellerClosedAt: string | null;
+  /**
+   * Key dates (Sept 28, 2026, Anuraj-approved): realtor-entered on the
+   * "Update escrow" sheet, shown read-only on the client KEY DATES card.
+   * Local 'YYYY-MM-DD', null until the realtor sets one. Escrow-level
+   * (not per side): both sides of a dual-agency escrow share them.
+   * Cloud-synced (migration 0019). Optional on the type so snapshots and
+   * fixtures written before this release still compile; createEscrow
+   * always initializes them to null.
+   */
+  inspectionDeadline?: string | null;
+  appraisalDeadline?: string | null;
+  loanApprovalDate?: string | null;
   createdAt: string;
   /**
    * The most recent realtor check/uncheck on this escrow (see
@@ -113,6 +152,14 @@ export interface UpdateEscrowInput {
   sellerName?: string;
   openDate: string;
   closeDate: string;
+  /**
+   * Key dates (Sept 28, 2026): optional; when omitted the stored values are
+   * preserved. Explicit null clears a previously set date. The New-escrow
+   * form never sends these (minimum input) — edit flow only.
+   */
+  inspectionDeadline?: string | null;
+  appraisalDeadline?: string | null;
+  loanApprovalDate?: string | null;
 }
 
 export interface RealtorProfile {
@@ -249,6 +296,15 @@ export interface ClientView {
    */
   openDate?: string;
   closeDate?: string;
+  /**
+   * Key dates (Sept 28, 2026, Anuraj-approved): feeds the client home's
+   * read-only "KEY DATES" card. Carried by get_client_view (the RPC
+   * serializes the escrow row, migration 0019). Optional: older cached
+   * cloud views may omit them; the card then shows its empty state.
+   */
+  inspectionDeadline?: string | null;
+  appraisalDeadline?: string | null;
+  loanApprovalDate?: string | null;
   /**
    * The realtor's id (auth user id) behind this escrow — feeds the public
    * profile URL in "Share {Name}'s profile". Present on cloud-linked views

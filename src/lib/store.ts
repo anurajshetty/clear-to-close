@@ -6,7 +6,7 @@
 // single-threaded execution that makes concurrent redeems resolve to exactly
 // one winner.
 
-import { BUY_STEPS, SELL_STEPS, type StepTemplate } from './steps';
+import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, type StepTemplate } from './steps';
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import type {
@@ -156,7 +156,7 @@ export interface Store {
    */
   cancelEscrow(escrowId: string): Promise<CancelEscrowResult>;
   toggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Escrow>;
-  addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow>;
+  addCustomStep(escrowId: string, role: ClientRole, title: string, explainer?: string): Promise<Escrow>;
   reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow>;
   /**
    * Bulk checklist apply for edit mode (Sept 28, 2026): the draft is the
@@ -275,7 +275,7 @@ export interface Store {
   previewSaveProfile(p: RealtorProfile): Promise<Preview<void>>;
   previewCreateEscrow(input: CreateEscrowInput): Promise<Preview<Escrow>>;
   previewToggleStep(escrowId: string, role: ClientRole, stepId: string): Promise<Preview<Escrow>>;
-  previewAddCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Preview<Escrow>>;
+  previewAddCustomStep(escrowId: string, role: ClientRole, title: string, explainer?: string): Promise<Preview<Escrow>>;
   previewReorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Preview<Escrow>>;
   /**
    * Bulk checklist apply for edit mode (Sept 28, 2026): replace one side's
@@ -377,7 +377,18 @@ function buildSteps(templates: StepTemplate[]): StepT[] {
     custom: false,
     order: i,
     completedAt: null,
+    // Permanent template key: the ONLY thing explainer resolution trusts.
+    templateKey: tpl.key,
   }));
+}
+
+/**
+ * Normalize a realtor-written step explainer: trim, cap at 140 chars,
+ * blank becomes null so the client row does not expand.
+ */
+function normalizeExplainer(explainer: string | null | undefined): string | null {
+  const note = (explainer ?? '').trim().slice(0, 140);
+  return note ? note : null;
 }
 
 function randomCode(): string {
@@ -462,6 +473,15 @@ export function createStore(kv: KV): Store {
     for (const esc of data.escrows) {
       if (typeof esc.buyerClosedAt !== 'string') esc.buyerClosedAt = null;
       if (typeof esc.sellerClosedAt !== 'string') esc.sellerClosedAt = null;
+      // One-time template-key backfill (Sept 28, 2026, Anuraj): steps built
+      // before keys existed recover theirs by title match. Idempotent —
+      // steps that already have a key keep it; custom steps never get one.
+      for (const s of esc.buyerSteps) {
+        if (!s.custom && !s.templateKey) s.templateKey = backfillTemplateKey('buyer', s);
+      }
+      for (const s of esc.sellerSteps) {
+        if (!s.custom && !s.templateKey) s.templateKey = backfillTemplateKey('seller', s);
+      }
     }
     data.invites = i ? (JSON.parse(i) as Invite[]) : [];
     // Backfill for links saved before 0002 device linking.
@@ -554,6 +574,10 @@ export function createStore(kv: KV): Store {
       myReviewId: null,
       openDate: e.openDate,
       closeDate: e.closeDate,
+      // Key dates (Sept 28, 2026): escrow-level, shared by both sides.
+      inspectionDeadline: e.inspectionDeadline,
+      appraisalDeadline: e.appraisalDeadline,
+      loanApprovalDate: e.loanApprovalDate,
       lastAction: e.lastAction ?? null,
       openedAt: e.createdAt,
       // Escrow lifecycle status (Sept 2026, Anuraj's rule): feeds the review
@@ -634,6 +658,11 @@ export function createStore(kv: KV): Store {
       status: 'open',
       buyerClosedAt: null,
       sellerClosedAt: null,
+      // Key dates (Sept 28, 2026): the new-escrow form never asks for them
+      // (minimum input) — they are set later via the "Update escrow" sheet.
+      inspectionDeadline: null,
+      appraisalDeadline: null,
+      loanApprovalDate: null,
       createdAt: new Date().toISOString(),
     };
     h.escrows.push(escrow);
@@ -668,10 +697,15 @@ export function createStore(kv: KV): Store {
   }
 
   /** Compute a custom-step add against the holder (no load, no persist). */
-  function computeAddCustomStep(h: Holder, escrowId: string, role: ClientRole, title: string): Escrow {
+  function computeAddCustomStep(h: Holder, escrowId: string, role: ClientRole, title: string, explainer?: string): Escrow {
     const e = cloneEscrow(findEscrowIn(h, escrowId));
     const steps = roleSteps(e, role);
     const maxOrder = steps.reduce((m, s) => Math.max(m, s.order), -1);
+    // The explainer is the realtor's optional one-line "What does this step
+    // mean?" (Sept 28, 2026, Anuraj-approved), max 140 chars enforced by
+    // the form. Blank stays null so the client row does not expand.
+    // Custom steps never carry a templateKey: they must never resolve a
+    // default explainer, even when titled like a default step.
     steps.push({
       id: uid(),
       title: title.trim(),
@@ -680,6 +714,8 @@ export function createStore(kv: KV): Store {
       custom: true,
       order: maxOrder + 1,
       completedAt: null,
+      explainer: normalizeExplainer(explainer),
+      templateKey: null,
     });
     return replaceEscrowIn(h, e);
   }
@@ -732,6 +768,15 @@ export function createStore(kv: KV): Store {
         custom: d.custom,
         order: index,
         completedAt: d.done ? (d.completedAt ?? prev?.completedAt ?? nowISO) : null,
+        // The templateKey is the explainer's identity, not the title: a
+        // default step renamed in edit mode keeps its key (and explainer).
+        // The draft may carry it for brand-new steps; otherwise the previous
+        // step's key survives. Custom steps keep templateKey null.
+        templateKey: d.custom ? null : (d.templateKey ?? prev?.templateKey ?? null),
+        // The realtor-written explainer rides the same confirmed save: the
+        // draft carries it for new custom steps, otherwise the previous
+        // step's line survives the edit.
+        explainer: normalizeExplainer(d.explainer ?? prev?.explainer),
       };
     });
     if (role === 'buyer') e.buyerSteps = next;
@@ -823,6 +868,34 @@ export function createStore(kv: KV): Store {
     e.sellerName = trimName(input.sellerName);
     e.openDate = input.openDate;
     e.closeDate = input.closeDate;
+    // Key dates (Sept 28, 2026): optional on the edit form. Omitted =
+    // preserve the stored value; explicit null = clear it. LOCKED on
+    // closed/cancelled escrows (Anuraj, Sept 28, 2026 — lifecycle gate):
+    // only active escrows can have key dates edited, and key-date edits
+    // never reactivate anything. The sheet shows the section locked with
+    // a "Reactivate escrow" button on those states; this is the backstop
+    // so no path can sneak a key-date edit onto a closed escrow.
+    const keyDateTouched =
+      input.inspectionDeadline !== undefined ||
+      input.appraisalDeadline !== undefined ||
+      input.loanApprovalDate !== undefined;
+    if (keyDateTouched && e.status !== 'open') {
+      throw new Error(
+        'updateEscrow: key dates can only be changed on an open escrow, reactivate the escrow first',
+      );
+    }
+    if (input.inspectionDeadline !== undefined) {
+      if (input.inspectionDeadline !== null) assertDate(input.inspectionDeadline, 'inspectionDeadline');
+      e.inspectionDeadline = input.inspectionDeadline;
+    }
+    if (input.appraisalDeadline !== undefined) {
+      if (input.appraisalDeadline !== null) assertDate(input.appraisalDeadline, 'appraisalDeadline');
+      e.appraisalDeadline = input.appraisalDeadline;
+    }
+    if (input.loanApprovalDate !== undefined) {
+      if (input.loanApprovalDate !== null) assertDate(input.loanApprovalDate, 'loanApprovalDate');
+      e.loanApprovalDate = input.loanApprovalDate;
+    }
     // Status and steps are never touched by an update: editing a closed
     // or cancelled escrow keeps it closed/cancelled with its steps intact.
     return replaceEscrowIn(h, e);
@@ -1125,9 +1198,9 @@ export function createStore(kv: KV): Store {
       return previewFor((h) => computeToggleStep(h, escrowId, role, stepId));
     },
 
-    async addCustomStep(escrowId: string, role: ClientRole, title: string): Promise<Escrow> {
+    async addCustomStep(escrowId: string, role: ClientRole, title: string, explainer?: string): Promise<Escrow> {
       await ensureLoaded();
-      const next = computeAddCustomStep(data, escrowId, role, title);
+      const next = computeAddCustomStep(data, escrowId, role, title, explainer);
       await persist();
       return next;
     },
@@ -1136,8 +1209,9 @@ export function createStore(kv: KV): Store {
       escrowId: string,
       role: ClientRole,
       title: string,
+      explainer?: string,
     ): Promise<Preview<Escrow>> {
-      return previewFor((h) => computeAddCustomStep(h, escrowId, role, title));
+      return previewFor((h) => computeAddCustomStep(h, escrowId, role, title, explainer));
     },
 
     async reorderSteps(escrowId: string, role: ClientRole, orderedIds: string[]): Promise<Escrow> {

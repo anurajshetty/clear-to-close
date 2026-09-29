@@ -20,6 +20,7 @@ import React, { ReactNode, useRef, useState } from 'react';
 import { Pressable, Text, View, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '../theme';
+import { formatCompletedDate } from '../lib/keyDates';
 import { Grip } from './ui';
 
 type StepRowBase = {
@@ -31,6 +32,19 @@ type StepRowBase = {
   sideTag?: 'Buyer' | 'Seller';
   /** "Up next" tag on the first remaining step — both variants. */
   upNext?: boolean;
+  /**
+   * Step explainer (Sept 28, 2026, Anuraj-approved): client views only.
+   * When present the read-only row becomes tappable — tap reveals this
+   * one-line plain-language explainer below the title, tap again collapses.
+   * Null means the row has nothing to expand and stays non-interactive.
+   */
+  explainer?: string | null;
+  /**
+   * Server checkoff timestamp (Sept 28, 2026): checked steps on client
+   * views carry a quiet muted "Completed Sep 18, 2026" line — the year is
+   * always shown. Rendered once, never ticking. Unchecking clears it.
+   */
+  completedAt?: string | null;
 };
 
 type StepRowProps = StepRowBase &
@@ -65,6 +79,11 @@ const X_PATH =
 export function StepRow(props: StepRowProps) {
   const { title, subtitle, done } = props;
   const interactive = props.interactive !== false;
+  // Step explainer (client views only): rows WITH an explainer toggle it
+  // open/closed on tap; rows without one stay a plain non-interactive View
+  // exactly as before.
+  const [explainerOpen, setExplainerOpen] = useState(false);
+  const hasExplainer = !!props.explainer && !interactive;
 
   const node = (
     <View style={[styles.node, done && styles.nodeDone]}>
@@ -99,7 +118,15 @@ export function StepRow(props: StepRowProps) {
   const body = (
     <View style={[styles.body, styles.bodyNoGrip]}>
       {titleText}
+      {hasExplainer && explainerOpen ? (
+        <Text style={styles.explainer}>{props.explainer}</Text>
+      ) : null}
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
+      {!interactive && done && props.completedAt ? (
+        <Text style={styles.completedAt}>
+          Completed {formatCompletedDate(props.completedAt)}
+        </Text>
+      ) : null}
       {props.upNext && !done ? (
         <View style={styles.upNextWrap}>
           <Text style={styles.upNextTag}>Up next</Text>
@@ -111,11 +138,29 @@ export function StepRow(props: StepRowProps) {
   if (!interactive) {
     // Read-only client rows: a plain View — no onPress, no grip, no Custom tag.
     // data-testid is for the automated "no interactivity" render check.
+    // EXCEPTION (Sept 28, 2026): rows WITH a step explainer are tappable —
+    // tap reveals the one-line explainer, tap again collapses. Rows keep
+    // their 44pt+ tap targets (minHeight 64 on the row style).
+    if (!hasExplainer) {
+      return (
+        <View style={styles.row} testID="client-step-row">
+          {node}
+          {body}
+        </View>
+      );
+    }
     return (
-      <View style={styles.row} testID="client-step-row">
+      <Pressable
+        style={styles.row}
+        testID="client-step-row-expandable"
+        accessibilityRole="button"
+        accessibilityLabel={`${title}. ${explainerOpen ? 'Hide explanation.' : 'Show explanation.'}`}
+        accessibilityState={{ expanded: explainerOpen }}
+        onPress={() => setExplainerOpen((v) => !v)}
+      >
         {node}
         {body}
-      </View>
+      </Pressable>
     );
   }
 
@@ -272,6 +317,12 @@ const styles = StyleSheet.create({
   title: { fontSize: 15.5, fontWeight: '600', color: colors.ink },
   titleDone: { color: colors.body },
   subtitle: { fontSize: 13, color: colors.muted, marginTop: 3, lineHeight: 18.5 },
+  // Step explainer (client views, Sept 28, 2026): the revealed one-line
+  // plain-language explanation — mockup .xpl (13px muted, line-height 1.5).
+  explainer: { fontSize: 13, color: colors.muted, marginTop: 5, lineHeight: 19.5 },
+  // Per-step completed date (Sept 28, 2026): checked steps only, quiet 12px
+  // muted, year always shown — mockup .cdate.
+  completedAt: { fontSize: 12, color: colors.muted, marginTop: 3, lineHeight: 18 },
   sideTag: {
     fontSize: 10,
     fontWeight: '800',

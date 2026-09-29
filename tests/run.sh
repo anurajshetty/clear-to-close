@@ -28,6 +28,8 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/sidePicker.ts" \
   "$ROOT/src/lib/escrowConfirm.ts" \
   "$ROOT/src/lib/dates.ts" \
+  "$ROOT/src/lib/keyDates.ts" \
+  "$ROOT/src/lib/stepExplainers.ts" \
   "$ROOT/src/lib/pace.ts" \
   "$ROOT/src/lib/topCard.ts" \
   "$ROOT/src/lib/shareCopy.ts" \
@@ -121,6 +123,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/revoke_links_server_authoritative.test.ts" \
   "$ROOT/tests/outbox_concurrency.test.ts" \
   "$ROOT/tests/checklist_bulk_apply.test.ts" \
+  "$ROOT/tests/key_dates.test.ts" \
+  "$ROOT/tests/update_closed_lifecycle.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -213,6 +217,8 @@ node "$OUT/tests/revoke_invite_kills_link.test.js"
 node "$OUT/tests/revoke_links_server_authoritative.test.js"
 node "$OUT/tests/outbox_concurrency.test.js"
 node "$OUT/tests/checklist_bulk_apply.test.js"
+node "$OUT/tests/key_dates.test.js"
+node "$OUT/tests/update_closed_lifecycle.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows

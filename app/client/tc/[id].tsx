@@ -15,6 +15,7 @@ import type { ClientView, RealtorProfile, TcView } from '../../../src/lib/types'
 import { Kicker, SecondaryButton } from '../../../src/components/ui';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
+import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { mostRecentAction } from '../../../src/lib/latest';
 import { colors } from '../../../src/theme';
@@ -26,7 +27,7 @@ function SideSection({ title, view }: { title: string; view: ClientView }) {
       <Text style={styles.sectionCap} testID={`tc-${view.role}-caption`}>
         {`${view.done} of ${view.total} steps`}
       </Text>
-      <ReadOnlyChecklist steps={view.steps} />
+      <ReadOnlyChecklist steps={view.steps} role={view.role} />
     </View>
   );
 }
@@ -41,6 +42,8 @@ export default function TcView() {
   const [view, setView] = useState<TcView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [partyName, setPartyName] = useState('');
+  // "KEY DATES" sheet (Sept 28, 2026 amendment): entry point opens it.
+  const [keyDatesOpen, setKeyDatesOpen] = useState(false);
   // Data load, shared by focus and foreground (Sept 2026
   // foreground-refresh fix): the focus effect does not fire on foreground
   // return, so the link gate invokes this to converge the view and the
@@ -101,6 +104,16 @@ export default function TcView() {
   // back to "{Name} opened your escrow".
   const tcLastAction = view ? mostRecentAction([view.buyer?.lastAction, view.seller?.lastAction]) : null;
   const tcSteps = view ? [...(view.buyer?.steps ?? []), ...(view.seller?.steps ?? [])] : [];
+  // Step-explainer voicing (Sept 28, 2026): the LATEST FROM card's step
+  // name reveals the same one-liner as the checklist row — resolve it with
+  // the winning side's voicing, mirroring mostRecentAction's precedence
+  // (buyer wins ties). Irrelevant when there is no action (fallback card
+  // has no step title), where the default is harmless.
+  const tcExplainerRole: 'buyer' | 'seller' =
+    view?.seller?.lastAction &&
+    (!view?.buyer?.lastAction || view.seller.lastAction.at > view.buyer.lastAction.at)
+      ? 'seller'
+      : 'buyer';
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={[styles.content, { paddingTop: insets.top + 10 }]}>
@@ -146,6 +159,25 @@ export default function TcView() {
             realtorName={profile?.name ?? ''}
             openedAt={view.buyer?.openedAt ?? view.seller?.openedAt}
             openDate={view.buyer?.openDate ?? view.seller?.openDate}
+            role={tcExplainerRole}
+          />
+
+          {/* "KEY DATES" (Sept 28, 2026, FINAL: entry point + sheet, not an
+              inline card): escrow-level, directly below LATEST FROM. */}
+          <KeyDatesEntryPoint
+            onPress={() => setKeyDatesOpen(true)}
+            closeDate={(view.buyer ?? view.seller)?.closeDate ?? ''}
+            inspectionDeadline={(view.buyer ?? view.seller)?.inspectionDeadline}
+            appraisalDeadline={(view.buyer ?? view.seller)?.appraisalDeadline}
+            loanApprovalDate={(view.buyer ?? view.seller)?.loanApprovalDate}
+          />
+          <KeyDatesSheet
+            visible={keyDatesOpen}
+            onClose={() => setKeyDatesOpen(false)}
+            closeDate={(view.buyer ?? view.seller)?.closeDate ?? ''}
+            inspectionDeadline={(view.buyer ?? view.seller)?.inspectionDeadline}
+            appraisalDeadline={(view.buyer ?? view.seller)?.appraisalDeadline}
+            loanApprovalDate={(view.buyer ?? view.seller)?.loanApprovalDate}
           />
 
           {view.buyer ? <SideSection title="Buyer checklist" view={view.buyer} /> : null}

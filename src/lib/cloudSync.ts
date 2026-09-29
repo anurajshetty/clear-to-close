@@ -42,6 +42,7 @@ import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
 import { applyDerivedStatus } from './lifecycle';
 import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMedia, type MediaKind } from './mediaUpload';
+import { backfillTemplateKey } from './steps';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -114,6 +115,12 @@ export function toEscrowRow(userId: string, e: Escrow): Record<string, unknown> 
     // "LATEST FROM" card (migration 0009): the most recent realtor
     // check/uncheck as JSONB. Null until the first toggle.
     last_action: e.lastAction ?? null,
+    // Key dates (migration 0019): realtor-entered on the "Update escrow"
+    // sheet; null until set. Missing-column fallback below (see
+    // pushEscrowNow) keeps the push landing on pre-0019 databases.
+    inspection_deadline: e.inspectionDeadline,
+    appraisal_deadline: e.appraisalDeadline,
+    loan_approval_date: e.loanApprovalDate,
     created_at: e.createdAt,
   };
 }
@@ -131,6 +138,19 @@ export function toStepRows(escrowId: string, role: ClientRole, steps: StepT[]): 
     custom: s.custom,
     position: s.order,
     completed_at: s.completedAt,
+    // Step explainer (migration 0019): the realtor's one-line custom-step
+    // note. The key ships only when a note exists — a pre-0019 database
+    // then upserts explainer-less steps fine, while a step carrying a note
+    // fails the push loudly (confirmed-write contract: the realtor's note
+    // is never silently dropped; the write errors until 0019 is applied).
+    ...(s.explainer ? { explainer: s.explainer } : null),
+    // Template key (migration 0020): the permanent default-step identity
+    // the explainer lookup trusts. Ships only when set — custom steps and
+    // very old rows omit it, and a pre-0020 database then upserts those
+    // steps fine, while a default step carrying a key fails the push
+    // loudly (confirmed-write contract: the key is never silently dropped;
+    // the write errors until 0020 is applied).
+    ...(s.templateKey ? { template_key: s.templateKey } : null),
   }));
 }
 
@@ -338,6 +358,13 @@ export function fromEscrowRow(row: Record<string, unknown>): Escrow {
     sellerClosedAt,
     createdAt: String(row.created_at ?? new Date().toISOString()),
   };
+  // Key dates (migration 0019): local 'YYYY-MM-DD' or null. Absent on
+  // pre-0019 rows; null until the realtor sets one.
+  const keyDate = (v: unknown): string | null =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  e.inspectionDeadline = keyDate(row.inspection_deadline);
+  e.appraisalDeadline = keyDate(row.appraisal_deadline);
+  e.loanApprovalDate = keyDate(row.loan_approval_date);
   // Prefer the derived per-side status; a legacy 'closed' row from before
   // the per-side-close migration keeps its status (the UI renders it
   // without a date).
@@ -351,14 +378,23 @@ export function fromEscrowRow(row: Record<string, unknown>): Escrow {
 
 /** Map one steps row to the local StepT shape. */
 export function fromStepRow(row: Record<string, unknown>): StepT {
+  const custom = row.custom === true;
+  const role = row.role === 'seller' ? 'seller' : 'buyer';
+  const rawKey = typeof row.template_key === 'string' && row.template_key ? row.template_key : null;
   return {
     id: String(row.id ?? ''),
     title: String(row.title ?? ''),
     subtitle: String(row.subtitle ?? ''),
     done: row.done === true,
-    custom: row.custom === true,
+    custom,
     order: Number(row.position ?? 0),
     completedAt: (row.completed_at as string) ?? null,
+    explainer: (row.explainer as string) ?? null,
+    // Template key (migration 0020). Rows written before keys existed
+    // backfill it by title match here, same as the local upgrade path —
+    // titles are intact on pre-rename-UI databases. Custom steps never
+    // receive a key.
+    templateKey: rawKey ?? backfillTemplateKey(role, { custom, title: String(row.title ?? '') }),
   };
 }
 
@@ -509,15 +545,24 @@ export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } 
   return { ok: false, error: valid.includes(err as (typeof valid)[number]) ? (err as (typeof valid)[number]) : 'invalid' };
 }
 
-function mapRpcStep(s: Record<string, unknown>): StepT {
+function mapRpcStep(s: Record<string, unknown>, role: ClientRole): StepT {
+  const custom = s.custom === true;
+  const rawKey = typeof s.template_key === 'string' && s.template_key ? s.template_key : null;
   return {
     id: String(s.id),
     title: String(s.title ?? ''),
     subtitle: String(s.subtitle ?? ''),
     done: s.done === true,
-    custom: s.custom === true,
+    custom,
     order: Number(s.position ?? 0),
     completedAt: s.completed_at ? String(s.completed_at) : null,
+    // Custom-step explainer (migration 0019): rides the step JSON via
+    // to_jsonb(s) in get_client_view. Absent on older rows.
+    explainer: typeof s.explainer === 'string' && s.explainer ? s.explainer : null,
+    // Template key (migration 0020): rides the same JSON. Pre-key rows
+    // backfill by title match — the same safe match as the local upgrade
+    // path; custom steps never receive a key.
+    templateKey: rawKey ?? backfillTemplateKey(role, { custom, title: String(s.title ?? '') }),
   };
 }
 
@@ -554,7 +599,7 @@ function buildRpcClientView(
   closeDate: string,
   myReviewId: string | null,
 ): ClientView {
-  const steps = rawSteps.map(mapRpcStep).sort((a, b) => a.order - b.order);
+  const steps = rawSteps.map((s) => mapRpcStep(s, role)).sort((a, b) => a.order - b.order);
   const done = steps.filter((s) => s.done).length;
   return {
     escrowId: String(e.id),
@@ -569,6 +614,15 @@ function buildRpcClientView(
     myReviewId,
     openDate: typeof e.open_date === 'string' ? e.open_date : undefined,
     closeDate: typeof e.close_date === 'string' ? e.close_date : undefined,
+    // Key dates (migration 0019): get_client_view serializes the escrow
+    // row via to_jsonb(e), so the new columns ride along automatically.
+    // Absent on pre-0019 payloads; the card then shows its empty state.
+    inspectionDeadline:
+      typeof e.inspection_deadline === 'string' ? e.inspection_deadline : null,
+    appraisalDeadline:
+      typeof e.appraisal_deadline === 'string' ? e.appraisal_deadline : null,
+    loanApprovalDate:
+      typeof e.loan_approval_date === 'string' ? e.loan_approval_date : null,
     // The escrow row's user_id is the realtor behind this escrow — the
     // <realtor-id> in the public profile URL contract.
     realtorId: typeof e.user_id === 'string' ? e.user_id : undefined,
@@ -885,10 +939,16 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     // Migration 0007/0008 not applied yet on this database: retry without
     // the newer columns so the push still lands (per-side close dates and
     // the last-action stamp stay local-only until the migration is applied).
+    // Same for migration 0019 (key dates + step explainers): a pre-0019
+    // database keeps the write working, the new fields just stay local
+    // until the migration lands.
     const legacy = { ...row };
     delete legacy.buyer_closed_at;
     delete legacy.seller_closed_at;
     delete legacy.last_action;
+    delete legacy.inspection_deadline;
+    delete legacy.appraisal_deadline;
+    delete legacy.loan_approval_date;
     await upsertAll(client, 'escrows', [legacy], 'id');
   }
   const steps = [

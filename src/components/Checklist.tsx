@@ -29,7 +29,8 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import DraggableFlatList from 'react-native-draggable-flatlist';
 import { Card, Grip } from './ui';
 import { StepRow } from './StepRow';
-import type { StepT } from '../lib/types';
+import type { ClientRole, StepT } from '../lib/types';
+import { stepExplainer } from '../lib/stepExplainers';
 import { colors } from '../theme';
 
 // Circle geometry (must match StepRow): row paddingHorizontal 4 + node
@@ -277,23 +278,35 @@ export function EditableChecklist({
  * place, UP NEXT on the first remaining step — but rows are plain Views (no
  * tap targets), no drag grips, and custom steps render exactly like default
  * steps. No recency markers (removed per Anuraj's review, Sept 26).
+ *
+ * Step explainers (Sept 28, 2026, Anuraj-approved): rows WITH an explainer
+ * (default inventory per role, or the realtor's stored line on custom steps)
+ * are tappable — tap reveals the one-liner, tap again collapses. Rows
+ * without one stay non-interactive. The quiet hint sits under the list.
+ * Checked steps carry a quiet muted "Completed {Mon} {D}, {YYYY}" line
+ * (server checkoff timestamp, rendered once, year always shown).
  */
-export function ReadOnlyChecklist({ steps }: { steps: StepT[] }) {
+export function ReadOnlyChecklist({ steps, role }: { steps: StepT[]; role: ClientRole }) {
   const upNextId = steps.find((s) => !s.done)?.id;
   return (
-    <Card style={styles.listCard}>
-      {steps.map((s, i) => (
-        <ChecklistRow key={s.id} index={i} count={steps.length}>
-          <StepRow
-            interactive={false}
-            title={s.title}
-            subtitle={s.subtitle}
-            done={s.done}
-            upNext={s.id === upNextId}
-          />
-        </ChecklistRow>
-      ))}
-    </Card>
+    <>
+      <Card style={styles.listCard}>
+        {steps.map((s, i) => (
+          <ChecklistRow key={s.id} index={i} count={steps.length}>
+            <StepRow
+              interactive={false}
+              title={s.title}
+              subtitle={s.subtitle}
+              done={s.done}
+              upNext={s.id === upNextId}
+              explainer={stepExplainer(role, s)}
+              completedAt={s.completedAt}
+            />
+          </ChecklistRow>
+        ))}
+      </Card>
+      <Text style={styles.explainerHint}>Tap any step to learn what it means.</Text>
+    </>
   );
 }
 
@@ -331,6 +344,15 @@ const styles = StyleSheet.create({
   listCard: {
     paddingVertical: 6,
     paddingHorizontal: 16,
+  },
+  // Step-explainer hint (Sept 28, 2026): the quiet line under the client
+  // checklist — mockup 01 · ④/⑤/⑪/⑭ footer note.
+  explainerHint: {
+    fontSize: 12.5,
+    color: colors.muted,
+    textAlign: 'center',
+    lineHeight: 18.75,
+    marginTop: 14,
   },
   // touch-action:none is scoped to the drag grip ONLY: a touch-drag starting
   // on the grip reorders instead of scrolling, while the list container keeps

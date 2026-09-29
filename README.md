@@ -278,6 +278,40 @@ central user; the buyers and sellers they represent are the other parties.
     every toggle (`Escrow.lastAction`, additive migration
     `supabase/migrations/0009_escrow_last_action.sql`); escrows that predate
     the stamp derive the latest checkoff from `completedAt`.
+  - **"KEY DATES" entry + sheet** (Sept 28, 2026, Anuraj-approved) —
+    directly below LATEST FROM on the buyer, seller, and TC homes: a
+    calendar glyph + "Key dates" + the most urgent date as a quiet hint
+    ("Inspection contingency · in 3 days") + chevron. Tapping opens a bottom
+    sheet with the four rows (Closing date, Inspection contingency deadline,
+    Appraisal deadline, Loan approval date): each row shows "Oct 30" (no
+    year) plus "today" / "tomorrow" / "in N days" / "overdue by N days" —
+    amber when within 7 days, red when overdue, muted otherwise. Dates are
+    set by the realtor on the Update escrow sheet (optional fields, open
+    escrows only); unset dates show "Not set". Migrations
+    `supabase/migrations/0019_key_dates.sql` (columns),
+    `0020_step_template_key.sql` (permanent template keys + explainers),
+    `0021_key_dates_push.sql` (key-date changes fire the client push:
+    "Your closing date is now Nov 15, 2026." for a single changed date,
+    "{First} updated your key dates." for several changed together).
+  - **Step explainers** (Sept 28, 2026, Anuraj-approved) — client checklist
+    rows with an explainer are tappable: tap reveals a one-line
+    plain-language explanation below the title, tap again collapses; rows
+    without one stay non-interactive. Default steps resolve by permanent
+    template key (never by title — a renamed step keeps its explainer, a
+    custom step titled like a default never inherits one); custom steps show
+    only the realtor's optional "What does this mean?" line (140 chars max,
+    set when the step is added). A quiet "Tap any step to learn what it
+    means." sits under the list. Checked steps carry a muted
+    "Completed Sep 18, 2026" line (year always shown, from the server
+    checkoff timestamp; cleared on uncheck). The LATEST FROM card's step
+    name taps to reveal the same one-liner.
+  - **Key-date lifecycle lock** (Sept 28, 2026, Anuraj-approved) — key dates
+    are editable only on open escrows. On closed/cancelled escrows the
+    Update escrow sheet shows the Key dates section locked (current values
+    read-only) with a **"Reactivate escrow"** button — the ONLY path that
+    reactivates. The main "Update escrow" button saves ordinary edits
+    (address, names, open/close dates) without reactivating; the store
+    backstop rejects any key-date write on a non-open escrow.
   - **100%** — the top card stays the same card: the status tag flips to
     "Completed" and the unified confetti **burst** pops up from below the
     card (the shared `ConfettiBurst`, reduced-motion aware). There is no

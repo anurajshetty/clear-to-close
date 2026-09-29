@@ -21,8 +21,7 @@ import { ReadOnlyChecklist } from './Checklist';
 import { firstNameOf } from '../lib/pace';
 import { profileUrlFor } from '../lib/shareCopy';
 import { shareRealtorProfile } from '../lib/share';
-import type { RealtorProfile } from '../lib/types';
-import type { StepT } from '../lib/types';
+import type { RealtorProfile, StepT, ClientRole } from '../lib/types';
 import { colors } from '../theme';
 
 const GOLD_FROM = '#E8A93D';
@@ -97,7 +96,7 @@ function GhostButton({
  * The 100% checklist: one tappable row that expands inline to the full
  * read-only list. Collapsed by default.
  */
-export function CollapsibleChecklist({ steps }: { steps: StepT[] }) {
+export function CollapsibleChecklist({ steps, role }: { steps: StepT[]; role: ClientRole }) {
   const [expanded, setExpanded] = useState(false);
   const n = steps.length;
   return (
@@ -123,7 +122,7 @@ export function CollapsibleChecklist({ steps }: { steps: StepT[] }) {
       </Card>
       {expanded ? (
         <View style={styles.expandedList} testID="triumph-checklist-expanded">
-          <ReadOnlyChecklist steps={steps} />
+          <ReadOnlyChecklist steps={steps} role={role} />
         </View>
       ) : null}
     </View>
@@ -133,6 +132,8 @@ export function CollapsibleChecklist({ steps }: { steps: StepT[] }) {
 export type ClientTriumphSectionProps = {
   steps: StepT[];
   profile: RealtorProfile | null;
+  /** Client role — drives step-explainer copy in the collapsed checklist. */
+  role: ClientRole;
   /** The client's name (from this device's link) — signs the share email. */
   clientName: string;
   /** Days from today to the target close date — feeds "N days early". */
@@ -149,6 +150,7 @@ export type ClientTriumphSectionProps = {
 export function ClientTriumphSection({
   steps,
   profile,
+  role,
   clientName,
   daysToClose,
   realtorId,
@@ -179,7 +181,7 @@ export function ClientTriumphSection({
 
   return (
     <View testID="triumph-section">
-      <CollapsibleChecklist steps={steps} />
+      <CollapsibleChecklist steps={steps} role={role} />
 
       <View style={styles.btnWrap}>
         <GoldButton

@@ -482,13 +482,13 @@ export default function TransactionDetail() {
     const listSteps: StepT[] =
       isEditing && draft
         ? draft.map((d, index) => ({
-            id: d.id,
+            id: d.id ?? `draft-${index}`,
             title: d.title,
-            subtitle: d.subtitle,
+            subtitle: d.subtitle ?? '',
             done: d.done,
             custom: d.custom,
             order: index,
-            completedAt: d.completedAt,
+            completedAt: d.completedAt ?? null,
           }))
         : steps;
     return (
@@ -628,13 +628,13 @@ export default function TransactionDetail() {
             steps={
               editingRole === role && draft
                 ? draft.map((d, index) => ({
-                    id: d.id,
+                    id: d.id ?? `draft-${index}`,
                     title: d.title,
-                    subtitle: d.subtitle,
+                    subtitle: d.subtitle ?? '',
                     done: d.done,
                     custom: d.custom,
                     order: index,
-                    completedAt: d.completedAt,
+                    completedAt: d.completedAt ?? null,
                   }))
                 : singleSteps
             }

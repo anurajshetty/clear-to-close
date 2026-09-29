@@ -791,7 +791,8 @@ export function createSyncedStore(
     previewSaveProfile: (p) => local.previewSaveProfile(p),
     previewCreateEscrow: (input) => local.previewCreateEscrow(input),
     previewToggleStep: (escrowId, role, stepId) => local.previewToggleStep(escrowId, role, stepId),
-    previewAddCustomStep: (escrowId, role, title) => local.previewAddCustomStep(escrowId, role, title),
+    previewAddCustomStep: (escrowId, role, title, explainer) =>
+      local.previewAddCustomStep(escrowId, role, title, explainer),
     previewReorderSteps: (escrowId, role, orderedIds) =>
       local.previewReorderSteps(escrowId, role, orderedIds),
     previewApplyChecklist: (escrowId, role, steps) =>
@@ -1024,10 +1025,10 @@ export function createSyncedStore(
       );
     },
 
-    addCustomStep: async (escrowId, role, title): Promise<Escrow> => {
+    addCustomStep: async (escrowId, role, title, explainer): Promise<Escrow> => {
       return confirmedWrite<Escrow>(
         `escrow:${escrowId}`,
-        () => local.previewAddCustomStep(escrowId, role, title),
+        () => local.previewAddCustomStep(escrowId, role, title, explainer),
         async ({ c, uid }, escrow) => {
           await pushEscrowNow(c, uid, escrow);
         },

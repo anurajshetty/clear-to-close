@@ -27,6 +27,7 @@ import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { SecondaryButton } from '../../../src/components/ui';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
+import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
 import { canLeaveReview, REVIEWS_ENABLED } from '../../../src/lib/clientView';
 import { ReviewSheet } from '../../../src/components/ReviewSheet';
@@ -43,6 +44,8 @@ export default function BuyerView() {
   const [view, setView] = useState<ClientView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [partyName, setPartyName] = useState('');
+  // "KEY DATES" sheet (Sept 28, 2026 amendment): entry point opens it.
+  const [keyDatesOpen, setKeyDatesOpen] = useState(false);
   // Data load, shared by focus and foreground (Sept 2026
   // foreground-refresh fix): the focus effect does not fire on foreground
   // return, so the link gate invokes this to converge the view and the
@@ -150,11 +153,33 @@ export default function BuyerView() {
             realtorName={profile?.name ?? ''}
             openedAt={view.openedAt}
             openDate={view.openDate}
+            role="buyer"
+          />
+
+          {/* "KEY DATES" (Sept 28, 2026, FINAL: entry point + sheet, not an
+              inline card): calendar glyph + "Key dates" + the most urgent
+              date as a quiet hint + chevron, directly below LATEST FROM.
+              Tapping opens the sheet with the four rows. */}
+          <KeyDatesEntryPoint
+            onPress={() => setKeyDatesOpen(true)}
+            closeDate={view.closeDate ?? ''}
+            inspectionDeadline={view.inspectionDeadline}
+            appraisalDeadline={view.appraisalDeadline}
+            loanApprovalDate={view.loanApprovalDate}
+          />
+          <KeyDatesSheet
+            visible={keyDatesOpen}
+            onClose={() => setKeyDatesOpen(false)}
+            closeDate={view.closeDate ?? ''}
+            inspectionDeadline={view.inspectionDeadline}
+            appraisalDeadline={view.appraisalDeadline}
+            loanApprovalDate={view.loanApprovalDate}
           />
 
           {showTriumphActions && REVIEWS_ENABLED ? (
             <ClientTriumphSection
               steps={view.steps}
+              role="buyer"
               profile={profile}
               clientName={partyName}
               daysToClose={view.daysToClose}
@@ -163,7 +188,7 @@ export default function BuyerView() {
             />
           ) : (
             <>
-              <ReadOnlyChecklist steps={view.steps} />
+              <ReadOnlyChecklist steps={view.steps} role="buyer" />
 
               <Text style={styles.note}>
                 Updated by your realtor.{'\n'}This view is read-only.

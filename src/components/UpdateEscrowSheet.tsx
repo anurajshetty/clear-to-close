@@ -9,11 +9,13 @@
 // toast and stays on the list. The sheet also carries the "Cancel this
 // escrow" danger action (open escrows only — closed cards show the pencil
 // only, and cancelled escrows have no X).
-// Activate escrow (Sept 2026): the same sheet edits closed/cancelled
-// escrows. On those, the submit button reads "Activate escrow" and saving
-// flips the status back to open (the escrow moves to the Active list with
-// its steps, invites, and client links carried over). There is no plain
-// "save without reactivating" — the label makes the action explicit.
+// Reactivation (Sept 28, 2026, lifecycle gate, Anuraj-approved): on
+// closed/cancelled escrows the locked Key dates section shows a
+// "Reactivate escrow" button — the ONLY path that reactivates. The main
+// submit button ("Update escrow") saves ordinary edits via updateEscrow
+// and never reactivates: key dates stay locked/preserved, status and
+// per-side close timestamps untouched, steps/invites/client links carried
+// over. There is no silent reactivation.
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { store } from '../lib/store-instance';
@@ -30,7 +32,7 @@ interface UpdateEscrowSheetProps {
 
 export default function UpdateEscrowSheet({ escrow, onClose, onSaved }: UpdateEscrowSheetProps) {
   const [confirmingCancel, setConfirmingCancel] = useState(false);
-  const activating = !!escrow && escrow.status !== 'open';
+  const closed = !!escrow && escrow.status !== 'open';
 
   // The confirmation renders INSIDE this sheet's already-open Modal (via
   // confirmBody), never as a second stacked Sheet: iOS silently drops a
@@ -44,15 +46,15 @@ export default function UpdateEscrowSheet({ escrow, onClose, onSaved }: UpdateEs
       onClose={confirmingCancel ? () => setConfirmingCancel(false) : onClose}
       kicker="Edit escrow"
       title="Update escrow"
-      submitLabel={activating ? "Activate escrow" : "Update escrow"}
-      savingLabel={activating ? "Activating…" : "Saving…"}
+      submitLabel="Update escrow"
+      savingLabel="Saving…"
       initial={escrow ? escrowToInitial(escrow) : null}
       lockSide
-      onSubmit={(input) =>
-        activating
-          ? store.activateEscrow(escrow!.id, input)
-          : store.updateEscrow(escrow!.id, input)
-      }
+      onSubmit={(input) => store.updateEscrow(escrow!.id, input)}
+      // The locked Key dates section's "Reactivate escrow" button (closed/
+      // cancelled escrows only): the ONLY path that reactivates. Ordinary
+      // edits via onSubmit never reactivate.
+      onReactivate={closed ? (input) => store.activateEscrow(escrow!.id, input) : undefined}
       onDone={onSaved}
       confirmBody={
         confirmingCancel && escrow ? (

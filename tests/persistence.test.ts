@@ -48,10 +48,10 @@ async function main(): Promise<void> {
     'completedAt timestamp persists across reload',
   );
 
-  // Progress survives too: 1 of 13.
+  // Progress survives too: 1 of 14.
   const view = await s2.getBuyerView(escrow.id);
   assert(view.done === 1, 'REGRESSION: progress count (1) survives reload');
-  assert(view.total === 13, 'progress total (13) survives reload');
+  assert(view.total === 14, 'progress total (14) survives reload');
 
   // Un-checking persists as well.
   await s2.toggleStep(escrow.id, 'buyer', stepId);
@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     withCustom!.buyerSteps.some((s) => s.custom && s.title === 'Termite inspection report'),
     'REGRESSION: added custom step persists across reload',
   );
-  assert((await s4.getBuyerView(escrow.id)).total === 14, 'progress total recalculates to 14');
+  assert((await s4.getBuyerView(escrow.id)).total === 15, 'progress total recalculates to 15');
 
   summary('persistence');
 }

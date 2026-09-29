@@ -6,11 +6,12 @@
 // backward ("Reopened {step}", neutral icon, neutral wording, no blame) —
 // or the "{Name} opened your escrow" fallback when no step has been checked
 // off yet. Old timestamps render as calendar dates, never hidden.
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Card } from './ui';
 import { latestModel } from '../lib/latest';
-import type { RealtorAction, StepT } from '../lib/types';
+import { stepExplainerFor } from '../lib/stepExplainers';
+import type { ClientRole, RealtorAction, StepT } from '../lib/types';
 import { colors } from '../theme';
 
 export function LatestFromCard({
@@ -19,15 +20,27 @@ export function LatestFromCard({
   realtorName,
   openedAt,
   openDate,
+  role,
 }: {
   lastAction?: RealtorAction | null;
   steps: StepT[];
   realtorName: string;
   openedAt?: string | null;
   openDate?: string | null;
+  /** Client role — drives the step explainer's voicing. */
+  role: ClientRole;
 }) {
   const m = latestModel({ lastAction, steps, realtorName, openedAt, openDate });
   const reopened = m.icon === 'reopen';
+  // Step explainers (Sept 28, 2026, canonical step-explainers.md): the step
+  // name taps to reveal the same one-liner the checklist row shows — one
+  // content source, two surfaces. Collapses when the latest action changes.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    setOpen(false);
+  }, [m.stepTitle]);
+  const step = m.stepTitle ? steps.find((s) => s.title === m.stepTitle) : undefined;
+  const explainer = step ? stepExplainerFor(role, step) : null;
   return (
     <Card style={styles.card} testID="latest-from-card">
       <Text style={styles.kicker} testID="latest-from-kicker">
@@ -44,7 +57,21 @@ export function LatestFromCard({
         <Text style={styles.body} testID="latest-from-body">
           {m.stepTitle ? (
             <>
-              {m.lead} <Text style={styles.step}>{m.stepTitle}</Text>{' '}
+              {m.lead}{' '}
+              {explainer ? (
+                <Text
+                  style={styles.step}
+                  onPress={() => setOpen((v) => !v)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`What ${m.stepTitle} means`}
+                  accessibilityState={{ expanded: open }}
+                  testID="latest-from-step-toggle"
+                >
+                  {m.stepTitle}
+                </Text>
+              ) : (
+                <Text style={styles.step}>{m.stepTitle}</Text>
+              )}{' '}
               <Text style={styles.time}>· {m.time}</Text>
             </>
           ) : (
@@ -54,6 +81,11 @@ export function LatestFromCard({
           )}
         </Text>
       </View>
+      {open && explainer ? (
+        <Text style={styles.explainer} testID="latest-from-explainer">
+          {explainer}
+        </Text>
+      ) : null}
     </Card>
   );
 }
@@ -107,5 +139,14 @@ const styles = StyleSheet.create({
   },
   time: {
     color: colors.muted,
+  },
+  // The tapped step name's one-liner — same source as the checklist row
+  // explainer. Aligned with the body text (icon 26 + gap 12).
+  explainer: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: colors.muted,
+    marginTop: 6,
+    marginLeft: 38,
   },
 });

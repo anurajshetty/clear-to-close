@@ -2,14 +2,16 @@
 // Kept import-free so the same file ships inside the dashboard-paste single
 // file AND compiles under node for unit tests.
 //
-// Push copy (all three lines FINAL, Anuraj Sept 26 2026):
+// Push copy (step_done / custom_step_added FINAL, Anuraj Sept 26 2026;
+// close_date_changed + key_dates_changed FINAL, Anuraj Sept 28 2026):
 //   step_done:          "{First} checked off {step} in your escrow."
 //   custom_step_added:  "{First} added a new step to your escrow."
-//   close_date_changed: "Your target close date moved to {date}."
+//   close_date_changed: "Your closing date is now {date}."
+//   key_dates_changed:  "{First} updated your key dates."
 // Forward progress only: unchecks never produce an event (the DB trigger
 // matches transitions, never state).
 
-export type PushEvent = 'step_done' | 'custom_step_added' | 'close_date_changed';
+export type PushEvent = 'step_done' | 'custom_step_added' | 'close_date_changed' | 'key_dates_changed';
 
 export interface TriggerPayload {
   event: PushEvent;
@@ -68,8 +70,12 @@ export function buildPushBody(
     case 'close_date_changed': {
       const d = (newCloseDate ?? '').trim();
       if (!d) return null;
-      return `Your target close date moved to ${formatPushDate(d)}.`;
+      return `Your closing date is now ${formatPushDate(d)}.`;
     }
+    case 'key_dates_changed':
+      return `${first} updated your key dates.`;
+    case 'key_dates_changed':
+      return `${first} updated your key dates.`;
   }
 }
 
@@ -80,7 +86,10 @@ export function parseTriggerPayload(raw: unknown): TriggerPayload | null {
   const event = p['event'];
   const escrowId = p['escrow_id'];
   if (
-    (event !== 'step_done' && event !== 'custom_step_added' && event !== 'close_date_changed') ||
+    (event !== 'step_done' &&
+      event !== 'custom_step_added' &&
+      event !== 'close_date_changed' &&
+      event !== 'key_dates_changed') ||
     typeof escrowId !== 'string' ||
     !escrowId
   ) {
