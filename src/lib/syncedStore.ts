@@ -26,7 +26,7 @@
 // session / RLS blocking) the app behaves exactly as the local-only v1 —
 // sync stays dormant.
 
-import { createStore, type CancelEscrowResult, type CloseEscrowResult, type KV, type LocalSnapshot, type Preview, type RevokedClientLink, type Store, type TcIntakeRow } from './store';
+import { createStore, readPendingStepDeletions, clearPendingStepDeletions, type CancelEscrowResult, type CloseEscrowResult, type KV, type LocalSnapshot, type Preview, type RevokedClientLink, type Store, type TcIntakeRow } from './store';
 import type {
   ApplyChecklistResult,
   ChecklistDraftStep,
@@ -608,6 +608,21 @@ export function createSyncedStore(
       } catch {
         // Outbox drain is best-effort; the retired marker stays unset so
         // ops and flags stay queued for the next boot.
+      }
+      // One-time template-strip convergence (Sept 30, 2026, Anuraj): steps
+      // removed from a template (pool-equipment-inspection) are stripped
+      // locally on load; their ids wait here for the server-side delete so
+      // client views (get_client_view) converge too. Confirmed-or-loud: a
+      // failed delete stays queued for the next boot; the queue is cleared
+      // only after the server confirms.
+      try {
+        const pending = await readPendingStepDeletions(kv);
+        if (pending.length > 0 && c) {
+          await deleteStepRowsNow(c, pending);
+          await clearPendingStepDeletions(kv);
+        }
+      } catch {
+        // Server delete failed — ids stay queued for the next boot.
       }
       // Deal-list hydration: a realtor logging in on a device/browser whose
       // local KV was never seeded must see the escrows that already exist

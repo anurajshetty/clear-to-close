@@ -365,6 +365,22 @@ const K_ESCROWS = 'ctc:escrows';
 const K_INVITES = 'ctc:invites';
 const K_LINKS = 'ctc:links';
 const K_TC_INTAKES = 'ctc:tc-intakes';
+/** Step ids stripped from the seller template, awaiting server-side delete. */
+const K_PENDING_STEP_DELETIONS = 'ctc:pending-step-deletions';
+
+export async function readPendingStepDeletions(kv: KV): Promise<string[]> {
+  try {
+    const raw = await kv.getItem(K_PENDING_STEP_DELETIONS);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function clearPendingStepDeletions(kv: KV): Promise<void> {
+  await kv.setItem(K_PENDING_STEP_DELETIONS, JSON.stringify([]));
+}
 
 // Invite code alphabet: no 0/O/1/I/L to avoid visual confusion.
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
@@ -518,6 +534,7 @@ export function createStore(kv: KV): Store {
     // Backfill for escrows saved before the per-side close dates existed
     // (escrow lifecycle, Sept 2026). A legacy 'closed' status is preserved
     // as-is — isEscrowClosed treats it as closed.
+    const strippedStepIds: string[] = [];
     for (const esc of data.escrows) {
       if (typeof esc.buyerClosedAt !== 'string') esc.buyerClosedAt = null;
       if (typeof esc.sellerClosedAt !== 'string') esc.sellerClosedAt = null;
@@ -534,6 +551,33 @@ export function createStore(kv: KV): Store {
         if (!s.custom && !s.templateKey) s.templateKey = backfillTemplateKey('seller', s);
         s.title = normalizeStepTitle(s);
       }
+      // One-time strip (Sept 30, 2026, Anuraj): 'pool-equipment-inspection'
+      // was removed from the seller template. Strip it from existing escrows
+      // too, checked or unchecked — keep it clean, no silent history left
+      // behind. Custom steps are never touched (a user-created custom step
+      // with the same title survives). Stripped ids are queued for the
+      // server-side delete (syncedStore boot convergence); the queue is
+      // deduplicated and idempotent — a failed server delete stays queued
+      // for the next boot.
+      const kept: typeof esc.sellerSteps = [];
+      for (const s of esc.sellerSteps) {
+        const isPool =
+          !s.custom &&
+          (s.templateKey === 'pool-equipment-inspection' || s.title === 'Pool equipment inspection');
+        if (isPool) {
+          strippedStepIds.push(s.id);
+        } else {
+          kept.push(s);
+        }
+      }
+      esc.sellerSteps = kept;
+    }
+    if (strippedStepIds.length > 0) {
+      const pending = await readPendingStepDeletions(kv);
+      for (const id of strippedStepIds) {
+        if (!pending.includes(id)) pending.push(id);
+      }
+      await kv.setItem(K_PENDING_STEP_DELETIONS, JSON.stringify(pending));
     }
     data.invites = i ? (JSON.parse(i) as Invite[]) : [];
     // Backfill for links saved before 0002 device linking.

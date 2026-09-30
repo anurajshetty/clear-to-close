@@ -44,9 +44,6 @@ export const SELL_STEPS: StepTemplate[] = [
   { t: 'Property inspection scheduled', s: '', key: 'property-inspection-scheduled' },
   { t: 'Appraisal scheduled', s: '', key: 'appraisal-scheduled' },
   { t: 'Seller disclosure due', s: '', key: 'seller-disclosure-due' },
-  // Added Sept 28, 2026: the approved mockups list 13 seller steps; the app
-  // shipped 12. Order per the mockup (after disclosure due, before warranty).
-  { t: 'Pool equipment inspection', s: '', key: 'pool-equipment-inspection' },
   { t: 'Order home warranty', s: '', key: 'order-home-warranty' },
   { t: 'Contingency release', s: '', key: 'contingency-release' },
   { t: 'Signed closing docs', s: '', key: 'signed-closing-docs' },

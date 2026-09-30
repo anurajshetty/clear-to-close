@@ -19,7 +19,7 @@ async function main(): Promise<void> {
     closeDate: '2026-10-15',
   });
   assert(escrow.buyerSteps.length === 14, `both-side escrow builds 14 buyer steps (got ${escrow.buyerSteps.length})`);
-  assert(escrow.sellerSteps.length === 13, `both-side escrow builds 13 seller steps (got ${escrow.sellerSteps.length})`);
+  assert(escrow.sellerSteps.length === 12, `both-side escrow builds 12 seller steps (got ${escrow.sellerSteps.length})`);
 
   // Toggle the 3rd buyer step.
   const third = escrow.buyerSteps[2];
@@ -37,7 +37,7 @@ async function main(): Promise<void> {
 
   let sv = await store.getSellerView(escrow.id);
   assert(sv.done === 0, `seller view unchanged after buyer toggle (got ${sv.done})`);
-  assert(sv.total === 13, `seller view total still 13 (got ${sv.total})`);
+  assert(sv.total === 12, `seller view total still 12 (got ${sv.total})`);
 
   // Uncheck -> reverts.
   await store.toggleStep(escrow.id, 'buyer', third.id);
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   bv = await store.getBuyerView(escrow.id);
   assert(bv.total === 15, `buyer view total+1 after custom step (got ${bv.total})`);
   sv = await store.getSellerView(escrow.id);
-  assert(sv.total === 13, 'seller view total unchanged after buyer custom step');
+  assert(sv.total === 12, 'seller view total unchanged after buyer custom step');
 
   // Reorder buyer steps; seller unaffected.
   const ids = afterAdd.buyerSteps.map((s) => s.id).reverse();
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   assert(JSON.stringify(bv.steps.map((s) => s.id)) === JSON.stringify(ids), 'buyer view order matches reorder');
   sv = await store.getSellerView(escrow.id);
   const sellerIds = sv.steps.map((s) => s.id);
-  assert(sellerIds.length === 13, 'seller view still has 13 steps after buyer reorder');
+  assert(sellerIds.length === 12, 'seller view still has 12 steps after buyer reorder');
 
   // reorderSteps with wrong id set throws.
   let threw = false;

@@ -61,8 +61,6 @@ const SELLER_EXPLAINERS: Record<string, string> = {
     "The buyer's lender orders a valuation to confirm the home covers the loan.",
   'seller-disclosure-due':
     'Your written history of the property. California requires it before closing.',
-  'pool-equipment-inspection':
-    'The buyer is checking that the pool and its equipment are in working order.',
   'order-home-warranty':
     'A warranty plan for the buyer, covering major systems and appliances after closing.',
   'contingency-release': 'The buyer removes their inspection and appraisal protections.',

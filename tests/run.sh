@@ -136,6 +136,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/toast_dismiss.test.ts" \
   "$ROOT/tests/share_screen.test.ts" \
   "$ROOT/tests/tc_intake_decimal.test.ts" \
+  "$ROOT/tests/pool_strip.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -286,3 +287,4 @@ python3 "$ROOT/tests/client_realtime_migration.py"
 node "$OUT/tests/toast_dismiss.test.js"
 node "$OUT/tests/share_screen.test.js"
 node "$OUT/tests/tc_intake_decimal.test.js"
+node "$OUT/tests/pool_strip.test.js"

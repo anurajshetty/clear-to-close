@@ -7,7 +7,7 @@
 //      muted otherwise; date label "Oct 30" (no year).
 //   2. formatCompletedDate: "Completed Sep 18, 2026" — year ALWAYS shown.
 //   3. Every default buyer/seller template KEY ships a one-line explainer
-//      (14 buyer + 13 seller); 'escrow-open' and 'close-escrow' differ per
+//      (14 buyer + 12 seller); 'escrow-open' and 'close-escrow' differ per
 //      role. Resolution is key-based and fail-closed: a renamed default
 //      step still resolves, an unknown/missing key never expands, and a
 //      custom step titled identically to a default step NEVER shows the
@@ -247,9 +247,10 @@ async function main() {
 
   // --- 3. Explainer inventory (key-based, fail closed) ---------------------
   {
-    // Template counts match the approved mockups (14 buyer + 13 seller).
+    // Template counts match the approved mockups (14 buyer + 12 seller;
+    // pool-equipment-inspection removed Sept 30, 2026).
     assert(BUY_STEPS.length === 14, `buyer templates = 14 (got ${BUY_STEPS.length})`);
-    assert(SELL_STEPS.length === 13, `seller templates = 13 (got ${SELL_STEPS.length})`);
+    assert(SELL_STEPS.length === 12, `seller templates = 12 (got ${SELL_STEPS.length})`);
     const termiteIdx = BUY_STEPS.findIndex((s) => s.key === 'termite-inspection-report');
     assert(
       termiteIdx !== -1 && BUY_STEPS[termiteIdx].t === 'Termite inspection report',
@@ -260,19 +261,18 @@ async function main() {
         BUY_STEPS[termiteIdx + 1].key === 'signed-loan-docs',
       'Termite inspection report sits after disclosures, before loan docs (mockup order)',
     );
-    const poolIdx = SELL_STEPS.findIndex((s) => s.key === 'pool-equipment-inspection');
+    const disclosureIdx = SELL_STEPS.findIndex((s) => s.key === 'seller-disclosure-due');
     assert(
-      poolIdx !== -1 && SELL_STEPS[poolIdx].t === 'Pool equipment inspection',
-      'seller templates include Pool equipment inspection',
+      disclosureIdx !== -1 && SELL_STEPS[disclosureIdx + 1].key === 'order-home-warranty',
+      'pool-equipment-inspection removed: disclosure due is followed by warranty (Sept 30, 2026)',
     );
     assert(
-      poolIdx > 0 && SELL_STEPS[poolIdx - 1].key === 'seller-disclosure-due' &&
-        SELL_STEPS[poolIdx + 1].key === 'order-home-warranty',
-      'Pool equipment inspection sits after disclosure due, before warranty (mockup order)',
+      SELL_STEPS.findIndex((s) => s.key === 'pool-equipment-inspection') === -1,
+      'pool-equipment-inspection absent from seller template',
     );
     // Keys are unique per role.
     assert(new Set(BUY_STEPS.map((s) => s.key)).size === 14, 'buyer template keys unique');
-    assert(new Set(SELL_STEPS.map((s) => s.key)).size === 13, 'seller template keys unique');
+    assert(new Set(SELL_STEPS.map((s) => s.key)).size === 12, 'seller template keys unique');
 
     const missingBuyer = explainerCoverage('buyer', BUY_STEPS.map((s) => s.key));
     assert(missingBuyer.length === 0, `every buyer template key has an explainer (${missingBuyer.join(', ')})`);
@@ -317,9 +317,8 @@ async function main() {
       'pre-key default step recovers its key by title',
     );
     assert(
-      backfillTemplateKey('seller', { custom: false, title: 'Pool equipment inspection' }) ===
-        'pool-equipment-inspection',
-      'new mockup-order templates backfill too',
+      backfillTemplateKey('seller', { custom: false, title: 'Pool equipment inspection' }) === null,
+      'removed template titles no longer backfill (pool-equipment-inspection, Sept 30, 2026)',
     );
     assert(
       backfillTemplateKey('buyer', { custom: false, title: 'Earnest money wired', templateKey: 'earnest-money-wired' }) ===
