@@ -1252,3 +1252,17 @@ check-off copy; `tests/run.sh` wires both.
   only — the `trustDate` type field, empty default, normalize, and tx() count
   stay untouched, and no migration runs. Existing saved data keeps working;
   the column simply stops being collected or displayed.
+- **Template-step removal = template + local strip + server delete, all three.**
+  Removing "Pool equipment inspection" (Anuraj, Sept 30, 2026) taught the full
+  checklist for deleting a template step: (1) the template line in steps.ts,
+  (2) the explainer entry, (3) a load-time strip of existing rows in store.ts
+  (checked or unchecked, custom steps untouched, matched by templateKey with a
+  title fallback for pre-key rows), and (4) a boot-time server delete of the
+  stripped ids via the existing deleteStepRowsNow — because client views read
+  the server via get_client_view, and because pushEscrowNow upserts ALL local
+  steps, a server-only delete would be resurrected by the next user write.
+  The stripped ids queue in KV (deduplicated, idempotent) and clear only after
+  the server confirms; a failed delete retries next boot. Side effect flagged
+  but NOT changed per the change-scope rule: a LATEST FROM card whose last
+  action was on the removed step keeps showing its title (history, not state).
+  Regression test: tests/pool_strip.test.ts.
