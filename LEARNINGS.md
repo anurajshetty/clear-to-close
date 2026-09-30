@@ -1285,3 +1285,9 @@ check-off copy; `tests/run.sh` wires both.
   date shows in view mode only — a natural consequence of the existing draft
   plumbing, not a design call; carrying templateKey through drafts would be
   a separate brief.
+- **Draft types already carry templateKey (Sept 30, 2026):** the
+  ChecklistDraftStep interface already declared `templateKey` for the
+  explainer save path, so the edit-mode key-date follow-up only needed
+  three wiring lines (startEditing + two render mappings) — no type or
+  store change. Lesson: check the existing type before adding a "new"
+  field; the duplicate-identifier tsc error caught it in seconds.
