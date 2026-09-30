@@ -189,6 +189,9 @@ export default function TransactionDetail() {
         done: s.done,
         custom: s.custom,
         completedAt: s.completedAt,
+        // (Sept 30, 2026): carry the template identity so key dates show
+        // on matching steps while editing, not just after save.
+        templateKey: s.templateKey,
       })),
     );
     setSaveError(null);
@@ -506,6 +509,7 @@ export default function TransactionDetail() {
             custom: d.custom,
             order: index,
             completedAt: d.completedAt ?? null,
+            templateKey: d.templateKey,
           }))
         : steps;
     return (
@@ -658,6 +662,7 @@ export default function TransactionDetail() {
                     custom: d.custom,
                     order: index,
                     completedAt: d.completedAt ?? null,
+                    templateKey: d.templateKey,
                   }))
                 : singleSteps
             }

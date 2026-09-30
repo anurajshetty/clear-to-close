@@ -7,9 +7,12 @@
 // ("Appraisal deadline · overdue by 4 days": red when overdue, amber at 7
 // days or fewer, muted otherwise) + chevron. A real 48px button target.
 //
+// Inspection contingency deadline -> Release contingency deadline (Anuraj,
+// Sept 30, 2026): the user-facing label was renamed; the internal field
+// stays `inspectionDeadline`.
 // Tap opens the bottom sheet (the app's sheet pattern: grabber, ×, title)
 // with the four rows — Closing date (= the existing target close),
-// Inspection contingency deadline, Appraisal deadline, Loan approval date —
+// Release contingency deadline, Appraisal deadline, Loan approval date —
 // each with date + relative line computed at render, never ticking: muted
 // for future dates, amber within 7 days (including today), red date + red
 // line when overdue. A cleared date shows the neutral "Not set" row

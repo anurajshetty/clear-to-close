@@ -128,4 +128,41 @@ assert(
   'KeyDates has no old label outside comments',
 );
 
+// ---- 3. Edit-mode drafts carry templateKey (Sept 30, 2026 follow-up) ----
+// Key dates must show while editing, not just after save. The draft is
+// created in startEditing and mapped back to list steps in two render
+// paths; all three must carry templateKey. The save path
+// (computeApplyChecklist) already reads d.templateKey with a prev-step
+// fallback, so no store change was needed.
+const DETAIL = fs.readFileSync(
+  path.join(ROOT, 'app', 'escrow', '[id].tsx'),
+  'utf8',
+);
+const TYPES = fs.readFileSync(
+  path.join(ROOT, 'src', 'lib', 'types.ts'),
+  'utf8',
+);
+assert(
+  /templateKey\?: string \| null;/.test(TYPES),
+  'ChecklistDraftStep declares templateKey',
+);
+assert(
+  DETAIL.includes('templateKey: s.templateKey,'),
+  'startEditing carries templateKey into the draft',
+);
+const draftMappings = (DETAIL.match(/templateKey: d\.templateKey,/g) ?? []).length;
+assert(
+  draftMappings === 2,
+  `both draft->list render mappings carry templateKey, found ${draftMappings}`,
+);
+// Custom steps added in edit mode get no key -> no date (addToDraft).
+const addLine = DETAIL.split('\n').find((l: string) =>
+  l.includes('custom: true, completedAt: null'),
+);
+assert(addLine !== undefined, 'addToDraft line exists');
+assert(
+  !addLine!.includes('templateKey'),
+  'addToDraft custom steps carry no templateKey (no date on custom steps)',
+);
+
 summary('step_key_dates');

@@ -52,6 +52,7 @@ export interface ChecklistDraftStep {
   /**
    * Template key passthrough: preserved from the previous step when a draft
    * edits a default step, so a rename in edit mode keeps its explainer.
+   * (Sept 30, 2026: also drives key dates on steps while editing.)
    */
   templateKey?: string | null;
 }
