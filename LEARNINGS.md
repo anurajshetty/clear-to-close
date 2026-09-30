@@ -1247,3 +1247,8 @@ check-off copy; `tests/run.sh` wires both.
   background poll's exit code for the suite — read the log file and count
   `^ok` vs `FAIL` (the real run: 3,072 ok, 0 FAIL). (Sept 29, 2026 — caught
   from the delayed completion notification after incorrectly reporting green.)
+- **Dormant-field removal = UI-only.** Removing "Trust date" (Anuraj,
+  Sept 29, 2026) meant deleting the form DateField and the details-view row
+  only — the `trustDate` type field, empty default, normalize, and tx() count
+  stay untouched, and no migration runs. Existing saved data keeps working;
+  the column simply stops being collected or displayed.
