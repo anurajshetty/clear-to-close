@@ -168,7 +168,7 @@ async function main(): Promise<void> {
     const prop = sections[0];
     assert(prop.title === 'Property · 26207 Benito Ct', 'property section carries the address');
     const trustDate = prop.rows.find((r) => r.label === 'Trust date');
-    assert(trustDate?.value === 'Jan 12, 2020', 'trust date renders "Jan 12, 2020"');
+    assert(trustDate === undefined, 'trust date row removed (Anuraj, Sept 29, 2026)');
     const comm = sections[3];
     const fee = comm.rows.find((r) => r.label === 'TC / Broker fee');
     assert(fee?.value === '$500 + $995', 'fees join as "$500 + $995"');

@@ -356,7 +356,6 @@ export function buildTcIntakeSections(
   if (data.inTrust === 'yes') {
     propertyRows.push(
       row('Trust name', data.trustName),
-      row('Trust date', formatTcIntakeDate(data.trustDate)),
       row('Trustees', data.trusteeNames),
       row('Trustee emails', data.trusteeEmails),
     );

@@ -218,13 +218,6 @@ export default function TcIntakeScreen() {
             {form.inTrust === 'yes' && (
               <>
                 <Field label="Trust name" value={form.trustName} onChangeText={(t) => update({ trustName: t })} testID="tc-trust-name" />
-                <DateField
-                  label="Trust date"
-                  value={form.trustDate}
-                  onChange={(d) => update({ trustDate: d })}
-                  onClear={() => update({ trustDate: '' })}
-                  testID="tc-trust-date"
-                />
                 <Field
                   label="Trustee names (comma separated)"
                   value={form.trusteeNames}
