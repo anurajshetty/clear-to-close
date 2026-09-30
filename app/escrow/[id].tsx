@@ -543,6 +543,12 @@ export default function TransactionDetail() {
           <EditableChecklist
             steps={listSteps}
             sideTag={r === 'buyer' ? 'Buyer' : 'Seller'}
+            role={r}
+            keyDates={{
+              inspectionDeadline: escrow?.inspectionDeadline ?? null,
+              appraisalDeadline: escrow?.appraisalDeadline ?? null,
+              loanApprovalDate: escrow?.loanApprovalDate ?? null,
+            }}
             editing={isEditing}
             onToggle={(id) => toggle(r, id)}
             onReorder={reorderDraft}
@@ -655,6 +661,12 @@ export default function TransactionDetail() {
                   }))
                 : singleSteps
             }
+            role={role}
+            keyDates={{
+              inspectionDeadline: escrow?.inspectionDeadline ?? null,
+              appraisalDeadline: escrow?.appraisalDeadline ?? null,
+              loanApprovalDate: escrow?.loanApprovalDate ?? null,
+            }}
             editing={editingRole === role}
             onToggle={(id) => toggle(role, id)}
             onReorder={reorderDraft}

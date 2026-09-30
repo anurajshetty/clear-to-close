@@ -45,6 +45,14 @@ type StepRowBase = {
    * always shown. Rendered once, never ticking. Unchecking clears it.
    */
   completedAt?: string | null;
+  /**
+   * Key date label (Sept 30, 2026, Anuraj-approved sample 06): when set, the
+   * realtor checklist shows it muted in parentheses on the same line as the
+   * matching step title — e.g. "Release contingencies (Oct 30)" — whether or
+   * not the step is checked off. Null/undefined renders nothing. Client
+   * read-only views never pass this (out of scope).
+   */
+  keyDateLabel?: string | null;
 };
 
 type StepRowProps = StepRowBase &
@@ -105,6 +113,9 @@ export function StepRow(props: StepRowProps) {
   const titleText = (
     <Text style={[styles.title, done && styles.titleDone]}>
       {title}
+      {props.keyDateLabel ? (
+        <Text style={styles.keyDate}> ({props.keyDateLabel})</Text>
+      ) : null}
       {props.sideTag ? (
         <Text style={[styles.sideTag, props.sideTag === 'Seller' && styles.sideTagSeller]}>
           {'  '}
@@ -315,6 +326,9 @@ const styles = StyleSheet.create({
   // icon-to-text gap.
   bodyNoGrip: { marginLeft: 14 },
   title: { fontSize: 15.5, fontWeight: '600', color: colors.ink },
+  // Key date on the title line (Sept 30, 2026): muted and lighter than the
+  // title so the title stays dominant — mockup 06.
+  keyDate: { fontSize: 13, fontWeight: '400', color: colors.muted },
   titleDone: { color: colors.body },
   subtitle: { fontSize: 13, color: colors.muted, marginTop: 3, lineHeight: 18.5 },
   // Step explainer (client views, Sept 28, 2026): the revealed one-line

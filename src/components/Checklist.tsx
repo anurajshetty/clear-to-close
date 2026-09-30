@@ -31,6 +31,8 @@ import { Card, Grip } from './ui';
 import { StepRow } from './StepRow';
 import type { ClientRole, StepT } from '../lib/types';
 import { stepExplainer } from '../lib/stepExplainers';
+import { formatShortDate, stepKeyDateISO } from '../lib/keyDates';
+import type { StepKeyDates } from '../lib/keyDates';
 import { colors } from '../theme';
 
 // Circle geometry (must match StepRow): row paddingHorizontal 4 + node
@@ -99,6 +101,17 @@ export type EditableChecklistProps = {
   /** Ref to the underlying list (Sept 28, 2026: the transaction detail
    * screen scrolls the custom-step footer into view above the keyboard). */
   listRef?: React.Ref<any>;
+  /**
+   * The role whose checklist this is (Sept 30, 2026: needed for the
+   * loan-docs key-date rule — buyer only). Undefined means no key dates.
+   */
+  role?: ClientRole;
+  /**
+   * Escrow key dates (Sept 30, 2026, Anuraj-approved sample 06): when set,
+   * the matching step title carries the date muted in parentheses.
+   * Undefined renders no dates. Never passed for client read-only views.
+   */
+  keyDates?: StepKeyDates;
 };
 
 /**
@@ -120,8 +133,17 @@ export function EditableChecklist({
   ListHeaderComponent,
   ListFooterComponent,
   listRef,
+  role,
+  keyDates,
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
+
+  /** "Oct 30" for a step's key date, or null (Sept 30, 2026, sample 06). */
+  function keyDateLabelFor(step: StepT): string | null {
+    if (!role || !keyDates) return null;
+    const iso = stepKeyDateISO(role, step.templateKey, keyDates);
+    return iso ? formatShortDate(iso) : null;
+  }
 
   // Web: the draggable list's autoscroll holds stale Reanimated state after a
   // drag (Sept 2026 — an up-drag followed by a down-drag never autoscrolls;
@@ -250,6 +272,7 @@ export function EditableChecklist({
             onRemove={editing ? () => onRemoveStep?.(item.id) : undefined}
             onDragStart={drag}
             dragHandle={editing ? renderGrip(item.title, drag) : undefined}
+            keyDateLabel={keyDateLabelFor(item)}
           />
         </ChecklistRow>
       )}

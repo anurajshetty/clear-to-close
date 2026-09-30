@@ -42,7 +42,7 @@ export interface KeyDates {
 
 const ROW_LABELS = {
   close: 'Closing date',
-  inspection: 'Inspection contingency deadline',
+  inspection: 'Release contingency deadline',
   appraisal: 'Appraisal deadline',
   loan: 'Loan approval date',
 } as const;

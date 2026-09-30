@@ -533,7 +533,7 @@ export function EscrowFormSheet({
 
             <FieldWrap error={errors.inspectionDeadline}>
               <DateField
-                label="Inspection contingency deadline"
+                label="Release contingency deadline"
                 value={inspectionDeadline}
                 onChange={(v) => {
                   setInspectionDeadline(v);
@@ -598,7 +598,7 @@ export function EscrowFormSheet({
                 </Text>
               </View>
               <View style={styles.keyDatesLockedRow}>
-                <Text style={styles.keyDatesLockedLabel}>Inspection contingency deadline</Text>
+                <Text style={styles.keyDatesLockedLabel}>Release contingency deadline</Text>
                 <Text style={styles.keyDatesLockedValue}>
                   {inspectionDeadline.trim() || 'Not set'}
                 </Text>

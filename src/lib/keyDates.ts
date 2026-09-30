@@ -10,6 +10,8 @@
 //
 // Pure helpers — no React, no store — so the unit suite can pin the rules.
 
+import type { ClientRole } from './types';
+
 const MONTHS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
@@ -47,6 +49,39 @@ export function daysBetween(date: string, today: string): number {
 export function formatShortDate(v: string): string {
   const dt = parseLocalDay(v);
   return `${MONTHS[dt.getMonth()]} ${dt.getDate()}`;
+}
+
+/** The escrow key dates that can appear on checklist steps (ISO 'YYYY-MM-DD'). */
+export interface StepKeyDates {
+  inspectionDeadline?: string | null;
+  appraisalDeadline?: string | null;
+  loanApprovalDate?: string | null;
+}
+
+/**
+ * The key date (ISO string) for a checklist step, or null.
+ * (Anuraj, Sept 30, 2026 — sample 06: key dates show in parentheses on the
+ * matching step title, muted, whether or not the step is checked off.)
+ * Matched by templateKey so a realtor-renamed step still carries its date.
+ * 'close-escrow' is excluded per Anuraj's explicit call (the time-tracker
+ * card already shows start/end); custom steps never match.
+ */
+export function stepKeyDateISO(
+  role: ClientRole,
+  templateKey: string | null | undefined,
+  dates: StepKeyDates,
+): string | null {
+  switch (templateKey) {
+    case 'release-contingencies': // buyer
+    case 'contingency-release': // seller
+      return dates.inspectionDeadline ?? null;
+    case 'appraisal-scheduled': // both roles
+      return dates.appraisalDeadline ?? null;
+    case 'signed-loan-docs': // buyer only — no seller step
+      return role === 'buyer' ? dates.loanApprovalDate ?? null : null;
+    default:
+      return null;
+  }
 }
 
 export type KeyDateTone = 'muted' | 'soon' | 'over';
