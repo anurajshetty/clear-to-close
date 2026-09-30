@@ -1229,3 +1229,12 @@ check-off copy; `tests/run.sh` wires both.
   `npx tsc --noEmit` tried to check them all and got OOM-killed. The
   shipping bar's typecheck must exclude `wt` (release-check config),
   matching what the unit suite already does with explicit file lists.
+- **Shared component prop types gate platform keyboards.** The TC intake
+  % fields needed `keyboardType="decimal-pad"` (mockup 04 already specified
+  `inputmode="decimal"`), but the shared `Field` component's prop type only
+  allowed `'default' | 'email-address' | 'phone-pad' | 'numeric'` — tsc
+  rejected the fix until the union was widened. Lesson: when a mockup
+  specifies an input mode the shared component doesn't offer, widen the
+  shared prop (once, for everyone) rather than working around it per screen.
+  Regression test: `tests/tc_intake_decimal.test.ts` pins both % fields to
+  `decimal-pad` (Anuraj, Sept 29, 2026 — 2.5% was untypeable on iOS).

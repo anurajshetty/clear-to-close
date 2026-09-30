@@ -296,8 +296,8 @@ export default function TcIntakeScreen() {
 
             {/* 4 · Commission */}
             <Kicker>Commission</Kicker>
-            <Field label="Realtor total %" value={form.totalPct} onChangeText={(t) => update({ totalPct: t })} keyboardType="numeric" testID="tc-total-pct" />
-            <Field label="Buyer's-agent offer %" value={form.buyerPct} onChangeText={(t) => update({ buyerPct: t })} keyboardType="numeric" testID="tc-buyer-pct" />
+            <Field label="Realtor total %" value={form.totalPct} onChangeText={(t) => update({ totalPct: t })} keyboardType="decimal-pad" testID="tc-total-pct" />
+            <Field label="Buyer's-agent offer %" value={form.buyerPct} onChangeText={(t) => update({ buyerPct: t })} keyboardType="decimal-pad" testID="tc-buyer-pct" />
             <Field label="TC fee" value={form.tcFee} onChangeText={(t) => update({ tcFee: t })} keyboardType="numeric" testID="tc-tc-fee" />
             <Field label="Broker fee" value={form.brokerFee} onChangeText={(t) => update({ brokerFee: t })} keyboardType="numeric" testID="tc-broker-fee" />
 

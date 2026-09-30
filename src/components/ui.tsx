@@ -208,7 +208,7 @@ export function Field({
   label: string; value: string; onChangeText: (t: string) => void;
   placeholder?: string; multiline?: boolean; testID?: string;
   secureTextEntry?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric' | 'decimal-pad';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   autoCorrect?: boolean;
   /** Called when the field is focused (Sept 28, 2026: the transaction detail
