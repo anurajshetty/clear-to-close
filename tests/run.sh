@@ -135,6 +135,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/toast.ts" \
   "$ROOT/tests/toast_dismiss.test.ts" \
   "$ROOT/tests/share_screen.test.ts" \
+  "$ROOT/tests/tc_intake_decimal.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
