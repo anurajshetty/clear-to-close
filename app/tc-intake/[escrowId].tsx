@@ -266,7 +266,7 @@ export default function TcIntakeScreen() {
 
             {/* 3 · Listing terms */}
             <Kicker>Listing terms</Kicker>
-            <Field label="List price" value={form.listPrice} onChangeText={(t) => update({ listPrice: t })} keyboardType="numeric" testID="tc-list-price" />
+            <Field label="List price" value={form.listPrice} onChangeText={(t) => update({ listPrice: t })} keyboardType="decimal-pad" testID="tc-list-price" />
             <DateField label="Beginning contract date" value={form.contractBegin} onChange={(d) => update({ contractBegin: d })} onClear={() => update({ contractBegin: '' })} testID="tc-contract-begin" />
             <DateField label="Expiration date" value={form.contractEnd} onChange={(d) => update({ contractEnd: d })} onClear={() => update({ contractEnd: '' })} testID="tc-contract-end" />
             <DateField label="Active on MLS date" value={form.mlsDate} onChange={(d) => update({ mlsDate: d })} onClear={() => update({ mlsDate: '' })} testID="tc-mls-date" />
@@ -291,21 +291,21 @@ export default function TcIntakeScreen() {
             <Kicker>Commission</Kicker>
             <Field label="Realtor total %" value={form.totalPct} onChangeText={(t) => update({ totalPct: t })} keyboardType="decimal-pad" testID="tc-total-pct" />
             <Field label="Buyer's-agent offer %" value={form.buyerPct} onChangeText={(t) => update({ buyerPct: t })} keyboardType="decimal-pad" testID="tc-buyer-pct" />
-            <Field label="TC fee" value={form.tcFee} onChangeText={(t) => update({ tcFee: t })} keyboardType="numeric" testID="tc-tc-fee" />
-            <Field label="Broker fee" value={form.brokerFee} onChangeText={(t) => update({ brokerFee: t })} keyboardType="numeric" testID="tc-broker-fee" />
+            <Field label="TC fee" value={form.tcFee} onChangeText={(t) => update({ tcFee: t })} keyboardType="decimal-pad" testID="tc-tc-fee" />
+            <Field label="Broker fee" value={form.brokerFee} onChangeText={(t) => update({ brokerFee: t })} keyboardType="decimal-pad" testID="tc-broker-fee" />
 
             {/* 5 · Property details */}
             <Kicker>Property details</Kicker>
             <Field label="Personal property included/excluded" value={form.personalProperty} onChangeText={(t) => update({ personalProperty: t })} testID="tc-personal-property" />
             <YesNoSeg label="HOA?" value={form.hoa} onChange={(v) => update({ hoa: v as TcYesNo })} options={YES_NO} testID="tc-hoa" />
             {form.hoa === 'yes' && (
-              <Field label="HOA monthly amount" value={form.hoaAmount} onChangeText={(t) => update({ hoaAmount: t })} keyboardType="numeric" testID="tc-hoa-amount" />
+              <Field label="HOA monthly amount" value={form.hoaAmount} onChangeText={(t) => update({ hoaAmount: t })} keyboardType="decimal-pad" testID="tc-hoa-amount" />
             )}
             <YesNoSeg label="Solar?" value={form.solar} onChange={(v) => update({ solar: v as TcYesNo })} options={YES_NO} testID="tc-solar" />
             {form.solar === 'yes' && (
               <>
                 <YesNoSeg label="Leased or owned?" value={form.solarLeasedOwned} onChange={(v) => update({ solarLeasedOwned: v as '' | 'leased' | 'owned' })} options={LEASED_OWNED} testID="tc-solar-lo" />
-                <Field label="Solar amount" value={form.solarAmount} onChangeText={(t) => update({ solarAmount: t })} keyboardType="numeric" testID="tc-solar-amount" />
+                <Field label="Solar amount" value={form.solarAmount} onChangeText={(t) => update({ solarAmount: t })} keyboardType="decimal-pad" testID="tc-solar-amount" />
                 <Field label="Solar company" value={form.solarCompany} onChangeText={(t) => update({ solarCompany: t })} testID="tc-solar-company" />
               </>
             )}
@@ -317,7 +317,7 @@ export default function TcIntakeScreen() {
             <Field label="Title company" value={form.titleCompany} onChangeText={(t) => update({ titleCompany: t })} testID="tc-title-company" />
             <Field label="NHD company" value={form.nhdCompany} onChangeText={(t) => update({ nhdCompany: t })} testID="tc-nhd-company" />
             <Field label="Home warranty company" value={form.warrantyCompany} onChangeText={(t) => update({ warrantyCompany: t })} testID="tc-warranty-company" />
-            <Field label="Warranty amount" value={form.warrantyAmount} onChangeText={(t) => update({ warrantyAmount: t })} keyboardType="numeric" testID="tc-warranty-amount" />
+            <Field label="Warranty amount" value={form.warrantyAmount} onChangeText={(t) => update({ warrantyAmount: t })} keyboardType="decimal-pad" testID="tc-warranty-amount" />
           </>
         )}
       </ScrollView>
