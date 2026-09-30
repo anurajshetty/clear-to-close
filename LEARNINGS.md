@@ -1238,3 +1238,12 @@ check-off copy; `tests/run.sh` wires both.
   shared prop (once, for everyone) rather than working around it per screen.
   Regression test: `tests/tc_intake_decimal.test.ts` pins both % fields to
   `decimal-pad` (Anuraj, Sept 29, 2026 — 2.5% was untypeable on iOS).
+- **run.sh lists test files twice — the compile list AND the node list.**
+  Adding `tests/tc_intake_decimal.test.ts` got only the `node` invocation;
+  the tsc compile section lists every test file explicitly, so the new test
+  was never compiled and the suite aborted with "Cannot find module" — while
+  a poll of the background session misleadingly reported exit 0. Two rules:
+  (1) when adding a test, add it to BOTH lists in run.sh; (2) never trust a
+  background poll's exit code for the suite — read the log file and count
+  `^ok` vs `FAIL` (the real run: 3,072 ok, 0 FAIL). (Sept 29, 2026 — caught
+  from the delayed completion notification after incorrectly reporting green.)
