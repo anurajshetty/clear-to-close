@@ -1266,3 +1266,13 @@ check-off copy; `tests/run.sh` wires both.
   but NOT changed per the change-scope rule: a LATEST FROM card whose last
   action was on the removed step keeps showing its title (history, not state).
   Regression test: tests/pool_strip.test.ts.
+- **Source-text regression tests must split precisely.** The tc_intake_decimal
+  test read the .tsx as text and used `SRC.split('\n').find(l =>
+  l.includes(testID))` — but the original Sept 29 version had `'\\n'` (escaped
+  backslash), so split never split and every assertion ran against the whole
+  file: it passed while only checking that *some* field used decimal-pad.
+  Extending it to eight fields (Sept 30, 2026) exposed the weakness — fixed to
+  a real newline split and verified per-field by reverting one field to
+  "numeric" and watching exactly its 2 assertions fail. Lesson: a text-scraping
+  test that can't fail per-item is a false guard; always prove it fails without
+  the fix on a single item before trusting it.
