@@ -1276,3 +1276,12 @@ check-off copy; `tests/run.sh` wires both.
   "numeric" and watching exactly its 2 assertions fail. Lesson: a text-scraping
   test that can't fail per-item is a false guard; always prove it fails without
   the fix on a single item before trusting it.
+- **Key dates on checklist steps (Sept 30, 2026, sample 06):** the mapping
+  lives in `stepKeyDateISO` (src/lib/keyDates.ts), matched by templateKey —
+  not title — so a realtor-renamed step still carries its date, and custom
+  steps never match. The `role` gate on 'signed-loan-docs' (buyer only) is
+  enforced in the helper, not the component, so the unit suite pins it.
+  Note: checklist *draft* steps (edit mode) don't carry templateKey, so the
+  date shows in view mode only — a natural consequence of the existing draft
+  plumbing, not a design call; carrying templateKey through drafts would be
+  a separate brief.
