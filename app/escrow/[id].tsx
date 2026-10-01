@@ -21,6 +21,7 @@ import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
 import type { ChecklistDraftStep, ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { uid } from '../../src/lib/store';
+import { hasClientInvites, shareButtonTitle } from '../../src/lib/invites';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard } from '../../src/components/TcIntakeEntry';
@@ -144,6 +145,9 @@ export default function TransactionDetail() {
   // Share flow (Anuraj's final decision, Sept 29, 2026): the single
   // "Share this escrow" button below pushes the full-screen Share route.
   // Per-side invite state now lives on that screen, not here.
+  // Label (Anuraj, Oct 2026): once a buyer/seller client invite exists the
+  // button reads "View clients" instead of "Share this escrow".
+  const [hasClients, setHasClients] = useState(false);
 
   const both = escrow?.side === 'both';
   const role: ClientRole = both ? tab : escrow?.side === 'sell' ? 'seller' : 'buyer';
@@ -156,6 +160,15 @@ export default function TransactionDetail() {
       console.warn('getEscrow failed', err);
     } finally {
       setLoaded(true);
+    }
+    // The share button label (Anuraj, Oct 2026): "View clients" once a
+    // buyer/seller invite exists. Loaded on every focus so returning from
+    // the share screen re-evaluates the label. A failed invite load must
+    // never break the escrow load above.
+    try {
+      setHasClients(hasClientInvites(await store.listInvites(escrowId)));
+    } catch (err) {
+      console.warn('listInvites failed', err);
     }
   }, [escrowId]);
 
@@ -362,13 +375,15 @@ export default function TransactionDetail() {
   // per-side/TC "Invite client"/"View clients"/"Invite TC"/"View TC"
   // buttons. It pushes the full-screen Share route for this escrow and
   // stays visible on open, closed, and cancelled escrows alike — the
-  // Share screen itself gates invite creation on dead escrows.
+  // Share screen itself gates invite creation on dead escrows. The label
+  // reads "View clients" once a buyer/seller client invite exists
+  // (Anuraj, Oct 2026); the destination never changes.
   const renderShareButton = () => {
     if (!escrow) return null;
     return (
       <View style={styles.inviteBtnWrap}>
         <SecondaryButton
-          title="Share this escrow"
+          title={shareButtonTitle(hasClients)}
           onPress={() => router.push(`/share/${escrow.id}`)}
         />
       </View>

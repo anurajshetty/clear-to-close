@@ -84,6 +84,67 @@ export function stepKeyDateISO(
   }
 }
 
+/** The four key dates, tagged so the hint can map each to its checklist step. */
+export type KeyDateKey = 'close' | 'inspection' | 'appraisal' | 'loan';
+
+/** A key date candidate carrying its date key for step mapping. */
+export interface KeyDateCandidate {
+  key: KeyDateKey;
+  label: string;
+  date: string | null | undefined;
+}
+
+/** The template identity + completion state of a checklist step. */
+export interface StepDoneState {
+  templateKey: string | null | undefined;
+  done: boolean;
+}
+
+/**
+ * The templateKey of the checklist step mapped to a key date, or null when
+ * the date has no mapped step (Oct 2026, Anuraj: the Key dates entry-row
+ * alert hint appears only when the mapped step is NOT checked off).
+ * Mirrors the mapping in stepKeyDateISO.
+ */
+export function keyDateTemplateKey(
+  dateKey: 'inspection' | 'appraisal' | 'loan',
+  role: ClientRole,
+): string | null {
+  switch (dateKey) {
+    case 'inspection':
+      return role === 'buyer' ? 'release-contingencies' : 'contingency-release';
+    case 'appraisal':
+      return 'appraisal-scheduled';
+    case 'loan':
+      return role === 'buyer' ? 'signed-loan-docs' : null;
+  }
+}
+
+/**
+ * Filter key-date candidates to those eligible for the entry-row alert
+ * hint (Oct 2026, Anuraj): a date whose mapped checklist step is checked
+ * off is excluded — the hint must appear only when the mapped step is NOT
+ * checked off. Closing date has no mapping (always eligible). Without a
+ * role or steps, or when the mapped step is absent (legacy/custom steps),
+ * the old behavior applies (eligible) — a hint is never hidden without
+ * proof the step is complete. Matched by templateKey, never by title.
+ */
+export function eligibleKeyDateCandidates(
+  candidates: KeyDateCandidate[],
+  role?: ClientRole | null,
+  steps?: StepDoneState[] | null,
+): KeyDateEntry[] {
+  return candidates
+    .filter((c) => {
+      if (c.key === 'close' || !role || !steps) return true;
+      const tk = keyDateTemplateKey(c.key, role);
+      if (!tk) return true;
+      const step = steps.find((s) => s.templateKey === tk);
+      return !step || !step.done;
+    })
+    .map((c) => ({ label: c.label, date: c.date }));
+}
+
 export type KeyDateTone = 'muted' | 'soon' | 'over';
 
 export interface KeyDateLine {

@@ -13,7 +13,8 @@ import Svg, { Circle, Path } from 'react-native-svg';
 import * as ImagePicker from 'expo-image-picker';
 import { deleteLegacyPhotoFile, saveManagedBanner, saveManagedPhoto } from '../lib/photoFile';
 import { bannerSizeHint } from '../lib/bannerSize';
-import { Field } from './ui';
+import { isValidReviewLink } from '../lib/reviewLinks';
+import { Field, Kicker } from './ui';
 import { initialsOf } from './ui';
 import { PhotoCropper, type CropKind } from './PhotoCropper';
 import { colors } from '../theme';
@@ -32,6 +33,15 @@ export interface ProfileDraft {
   areasServed: string;
   phone: string;
   dreLicense: string;
+  /**
+   * Optional Google review link (Oct 2026) — set only on the profile-update
+   * screen (showReviewLinks). Empty when unset.
+   */
+  googleReviewLink: string;
+  /**
+   * Optional realtor.com review link (Oct 2026) — same as googleReviewLink.
+   */
+  realtorComReviewLink: string;
 }
 
 export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
@@ -45,6 +55,8 @@ export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
   areasServed: '',
   phone: '',
   dreLicense: '',
+  googleReviewLink: '',
+  realtorComReviewLink: '',
 };
 
 interface ProfileFormProps {
@@ -52,6 +64,22 @@ interface ProfileFormProps {
   onChange: (patch: Partial<ProfileDraft>) => void;
   /** Inline error shown under the Full name field (㉕ "Required" state). */
   nameError?: string | null;
+  /**
+   * Review links section (Oct 2026) — appended to the form. Only the
+   * profile-update screen passes this; profile-setup/onboarding are
+   * unaffected.
+   */
+  showReviewLinks?: boolean;
+  /**
+   * Reports whether the review-link fields are currently valid (true when
+   * both are empty or valid links). The parent blocks save while false.
+   */
+  onReviewLinksValidityChange?: (valid: boolean) => void;
+  /**
+   * Set by the parent on a save attempt with invalid links — forces the
+   * inline errors visible even before blur.
+   */
+  submitAttempted?: boolean;
 }
 
 function CameraIcon() {
@@ -113,7 +141,7 @@ interface CropJob {
   kind: CropKind;
 }
 
-export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
+export function ProfileForm({ value, onChange, nameError, showReviewLinks, onReviewLinksValidityChange, submitAttempted }: ProfileFormProps) {
   // A saved photo URI can go stale (e.g. a dead file/blob URI). Fall back
   // to initials rather than rendering a broken image; resets per URI.
   const [photoBroken, setPhotoBroken] = useState(false);
@@ -205,6 +233,21 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
   };
 
   const set = (key: keyof ProfileDraft) => (text: string) => onChange({ [key]: text } as Partial<ProfileDraft>);
+
+  // Review links (Oct 2026): per-field touched state drives the inline
+  // error. Validity is reported up so the parent can block save.
+  const [googleTouched, setGoogleTouched] = useState(false);
+  const [rdcTouched, setRdcTouched] = useState(false);
+  const googleLinkError = (googleTouched || submitAttempted) && !isValidReviewLink(value.googleReviewLink)
+    ? 'Enter a valid link, starting with https://'
+    : null;
+  const rdcLinkError = (rdcTouched || submitAttempted) && !isValidReviewLink(value.realtorComReviewLink)
+    ? 'Enter a valid link, starting with https://'
+    : null;
+  const reviewLinksValid = googleLinkError === null && rdcLinkError === null;
+  useEffect(() => {
+    onReviewLinksValidityChange?.(reviewLinksValid);
+  }, [reviewLinksValid, onReviewLinksValidityChange]);
 
   return (
     <View>
@@ -347,6 +390,47 @@ export function ProfileForm({ value, onChange, nameError }: ProfileFormProps) {
         onChangeText={set('dreLicense')}
         placeholder="e.g. 01992736"
       />
+      {/* 11. Review links (Oct 2026) — profile-update screen only. */}
+      {showReviewLinks ? (
+        <View style={styles.reviewLinks}>
+          <Kicker>Review links</Kicker>
+          <Text style={styles.reviewSub}>
+            After closing, clients see these so they can leave you a review. Both optional.
+          </Text>
+          <Field
+            label="Google review link · optional"
+            value={value.googleReviewLink}
+            onChangeText={(t) => {
+              set('googleReviewLink')(t);
+              // Re-validate live once the error is showing.
+              if (googleTouched) setGoogleTouched(true);
+            }}
+            onBlur={() => setGoogleTouched(true)}
+            placeholder="https://g.page/r/…"
+            keyboardType="url"
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="review-link-google"
+            error={googleLinkError}
+            hint="Find yours in your Google Business Profile → Share review form."
+          />
+          <Field
+            label="realtor.com review link · optional"
+            value={value.realtorComReviewLink}
+            onChangeText={(t) => {
+              set('realtorComReviewLink')(t);
+              if (rdcTouched) setRdcTouched(true);
+            }}
+            onBlur={() => setRdcTouched(true)}
+            placeholder="https://www.realtor.com/…"
+            keyboardType="url"
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="review-link-realtor-com"
+            error={rdcLinkError}
+          />
+        </View>
+      ) : null}
       {cropJob ? (
         <PhotoCropper
           visible
@@ -464,6 +548,18 @@ const styles = StyleSheet.create({
     color: '#D44',
     marginTop: 6,
     marginBottom: -10,
+  },
+  // Review links section (Oct 2026): kicker + supporting copy above the two
+  // link fields. The fields themselves are the shared Field component.
+  reviewLinks: {
+    marginTop: 22,
+  },
+  reviewSub: {
+    fontSize: 13.5,
+    color: colors.body,
+    lineHeight: 20,
+    marginTop: 6,
+    marginBottom: -4,
   },
   photoError: {
     fontSize: 13,

@@ -20,6 +20,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
 import { ToastTimer } from '../../src/lib/toast';
+import { visibleInvites } from '../../src/lib/invites';
 import type { ClientRole, Escrow, Invite } from '../../src/lib/types';
 import {
   BackChevron,
@@ -30,27 +31,7 @@ import {
   useKeyboardHeight,
 } from '../../src/components/ui';
 import { colors } from '../../src/theme';
-
-interface SectionMeta {
-  role: ClientRole;
-  plural: string; // "Buyers" | "Sellers" | "Transaction coordinator"
-  buttonNoun: string; // "buyer" | "seller" | "TC" — "Invite the buyer", "Invite the TC"
-  nameLabel: string; // "Buyer's name" | "Seller's name" | "TC's name"
-  cap: number; // 2 | 2 | 1
-}
-
-const SECTIONS: SectionMeta[] = [
-  { role: 'buyer', plural: 'Buyers', buttonNoun: 'buyer', nameLabel: "Buyer's name", cap: 2 },
-  { role: 'seller', plural: 'Sellers', buttonNoun: 'seller', nameLabel: "Seller's name", cap: 2 },
-  { role: 'tc', plural: 'Transaction coordinator', buttonNoun: 'TC', nameLabel: "TC's name", cap: 1 },
-];
-
-/** Non-revoked invites, oldest first — revoked rows disappear from the list. */
-function visibleInvites(invites: Invite[]): Invite[] {
-  return invites
-    .filter((i) => !i.revokedAt)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-}
+import { visibleShareSections, type ShareSectionMeta } from '../../src/lib/shareSections';
 
 export default function ShareEscrow() {
   const router = useRouter();
@@ -341,7 +322,7 @@ export default function ShareEscrow() {
     );
   };
 
-  const renderForm = (s: SectionMeta) => {
+  const renderForm = (s: ShareSectionMeta) => {
     if (formRole !== s.role) return null;
     const nameOk = formName.trim().length > 0;
     return (
@@ -386,7 +367,7 @@ export default function ShareEscrow() {
     );
   };
 
-  const renderSection = (s: SectionMeta) => {
+  const renderSection = (s: ShareSectionMeta) => {
     const rows = forRole(s.role);
     const count = rows.length;
     const formOpen = formRole === s.role;
@@ -437,7 +418,9 @@ export default function ShareEscrow() {
       </View>
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
         <Text style={styles.hintLine}>Invite your clients and your TC. Each person gets a name and a one-time code.</Text>
-        <Card>{SECTIONS.map(renderSection)}</Card>
+        {/* Oct 2026, Anuraj: single-side escrows show only their side's
+            section + TC; legacy 'both' shows all three. */}
+        <Card>{visibleShareSections(escrow.side).map(renderSection)}</Card>
       </ScrollView>
       {toastVisible && toastMsg ? (
         <Pressable

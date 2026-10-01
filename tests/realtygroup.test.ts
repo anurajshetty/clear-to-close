@@ -29,6 +29,8 @@ function fullProfile(): RealtorProfile {
   return {
     name: 'Maya Sharma',
     realty_group: 'Compass Realty',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     photoUri: null,
     photoRemoteUrl: null,
     bannerRemoteUrl: null,
@@ -110,6 +112,8 @@ async function main(): Promise<void> {
       phone: '',
       dre_license: '01998877',
       realty_group: 'Compass Realty',
+      googleReviewLink: '',
+      realtorComReviewLink: '',
       banner_image: 'file:///Documents/profile-banner.jpg',
     },
   });

@@ -77,6 +77,8 @@ export default function ProfileCreate() {
           phone: draft.phone,
           dreLicense: draft.dreLicense,
         realty_group: draft.realty_group,
+          googleReviewLink: '',
+          realtorComReviewLink: '',
           reviews: [],
           rating: null,
         });

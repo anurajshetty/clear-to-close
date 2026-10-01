@@ -77,8 +77,10 @@ check("isComplete ? (" in card and "topcard-confetti-burst" in card,
 check("if (isComplete)" not in card, "top card no longer swaps itself out at 100%")
 check("TriumphCard" not in card, "TriumphCard removed from ClientTopCard")
 
-# 4. "Just closed!" triumph card REMOVED (Anuraj, Sept 2026); review/share
-#    section preserved.
+# 4. "Just closed!" triumph card REMOVED (Anuraj, Sept 2026); the share
+#    section is preserved but the review button + sheet wiring are REMOVED
+#    (Anuraj, Oct 2026 — REPLACE: the external review-links card takes the
+#    in-app review entry's place, pinned in tests/review_links.test.ts).
 for name, src in (("buyer", buyer), ("seller", seller), ("tc", tc)):
     check("<TriumphCard" not in src, name + " screen no longer renders the triumph card")
     check("TriumphCard" not in src, name + " screen no longer imports TriumphCard")
@@ -86,11 +88,14 @@ for name, src in (("buyer", buyer), ("seller", seller), ("tc", tc)):
 check("Just closed!" not in card, "'Just closed!' headline removed")
 check("triumphHeadline" not in card, "triumph headline styles removed")
 check("triumph-confetti" not in card, "triumph confetti layer removed")
-check('testID="triumph-review"' in triumph, "review button preserved")
+check('testID="triumph-review"' not in triumph, "review button removed (review links replace it, Oct 2026)")
 check('testID="triumph-share"' in triumph, "share button preserved")
-check("<ClientTriumphSection" in buyer, "buyer review/share section preserved")
-check("<ClientTriumphSection" in seller, "seller review/share section preserved")
-check("onLeaveReviewPress" in buyer, "buyer review sheet wiring preserved")
+check("<ClientTriumphSection" in buyer, "buyer share section preserved")
+check("<ClientTriumphSection" in seller, "seller share section preserved")
+check("onLeaveReviewPress" not in buyer, "buyer review sheet wiring removed (Oct 2026)")
+check("onLeaveReviewPress" not in seller, "seller review sheet wiring removed (Oct 2026)")
+check("<ReviewLinksCard" in buyer, "buyer renders the review-links card (Oct 2026)")
+check("<ReviewLinksCard" in seller, "seller renders the review-links card (Oct 2026)")
 
 # 5. Approved client-home-card sample (Anuraj, Sept 2026): the banner
 #    header strip is BACK on the top card with the realtor photo on its

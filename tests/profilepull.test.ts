@@ -201,6 +201,8 @@ async function main(): Promise<void> {
       phone: '',
       dreLicense: '',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     banner_image: null,
       reviews: [],
       rating: null,

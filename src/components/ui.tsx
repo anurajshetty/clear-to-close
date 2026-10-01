@@ -203,17 +203,23 @@ export function EyeIcon({ shown }: { shown: boolean }) {
 export function Field({
   label, value, onChangeText, placeholder, multiline,
   secureTextEntry, keyboardType, autoCapitalize, autoCorrect, testID,
-  onFocus,
+  onFocus, onBlur, error, hint,
 }: {
   label: string; value: string; onChangeText: (t: string) => void;
   placeholder?: string; multiline?: boolean; testID?: string;
   secureTextEntry?: boolean;
-  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric' | 'decimal-pad';
+  keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'numeric' | 'decimal-pad' | 'url';
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   autoCorrect?: boolean;
   /** Called when the field is focused (Sept 28, 2026: the transaction detail
    * screen scrolls the custom-step field into view above the keyboard). */
   onFocus?: () => void;
+  /** Called when the field loses focus (Oct 2026: review-link validation). */
+  onBlur?: () => void;
+  /** Inline validation error shown under the field (Oct 2026). */
+  error?: string | null;
+  /** Helper line shown under the field (Oct 2026). */
+  hint?: string | null;
 }) {
   // Show/hide toggle (Sept 2026): every password field gets the approved
   // eye icon inside the field, toggling secureTextEntry. Text fields are
@@ -235,8 +241,9 @@ export function Field({
           autoCapitalize={autoCapitalize ?? 'sentences'}
           autoCorrect={autoCorrect ?? true}
           onFocus={onFocus}
+          onBlur={onBlur}
           testID={testID}
-          style={[styles.fieldInput, multiline && styles.fieldInputMultiline, isPassword && styles.fieldInputPassword]}
+          style={[styles.fieldInput, multiline && styles.fieldInputMultiline, isPassword && styles.fieldInputPassword, !!error && styles.fieldInputError]}
         />
         {isPassword ? (
           <Pressable
@@ -254,6 +261,12 @@ export function Field({
           </Pressable>
         ) : null}
       </View>
+      {error ? (
+        <Text style={styles.fieldError} testID={testID ? `${testID}-error` : undefined}>
+          {error}
+        </Text>
+      ) : null}
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -487,6 +500,9 @@ const styles = StyleSheet.create({
   btnSecondaryText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   fieldWrap: { marginTop: 16 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8 },
+  fieldError: { fontSize: 13, color: colors.red, marginTop: 6, lineHeight: 18 },
+  fieldHint: { fontSize: 12.5, color: colors.muted, marginTop: 6, lineHeight: 17 },
+  fieldInputError: { borderColor: colors.red },
   fieldPwrap: { position: 'relative', justifyContent: 'center' },
   fieldInputPassword: { paddingRight: 54 },
   eyeBtn: {

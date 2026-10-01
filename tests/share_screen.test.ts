@@ -16,16 +16,25 @@ const path = require('path');
 
 const ROOT = path.resolve(process.cwd());
 const SRC = fs.readFileSync(path.join(ROOT, 'app', 'share', '[id].tsx'), 'utf8');
+// Oct 2026: section definitions moved to src/lib/shareSections.ts (side-aware).
+const SECTIONS_SRC = fs.readFileSync(path.join(ROOT, 'src', 'lib', 'shareSections.ts'), 'utf8');
 
 function has(s: string): boolean {
   return SRC.includes(s);
 }
 
+function hasSections(s: string): boolean {
+  return SECTIONS_SRC.includes(s);
+}
+
 // --- Three sections, always shown, with caps ---
-assert(has("plural: 'Buyers'") && has("plural: 'Sellers'") && has("plural: 'Transaction coordinator'"),
+assert(hasSections("plural: 'Buyers'") && hasSections("plural: 'Sellers'") && hasSections("plural: 'Transaction coordinator'"),
   'all three sections defined (Buyers, Sellers, Transaction coordinator)');
-assert(has("{ role: 'buyer'") && has("cap: 2") && has("{ role: 'tc'") && has("cap: 1"),
+assert(hasSections("{ role: 'buyer'") && hasSections("cap: 2") && hasSections("{ role: 'tc'") && hasSections("cap: 1"),
   'caps: 2 per buyer/seller side, 1 TC');
+// Oct 2026: the screen filters sections by escrow side.
+assert(has('visibleShareSections(escrow.side)'),
+  'screen filters sections by escrow side');
 assert(has('{s.plural} · {count} of {s.cap}'),
   'section label renders "Plural · X of cap"');
 

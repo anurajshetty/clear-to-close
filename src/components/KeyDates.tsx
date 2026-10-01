@@ -27,10 +27,13 @@ import Svg, { Line, Rect } from 'react-native-svg';
 import { Sheet } from './ui';
 import {
   describeKeyDate,
+  eligibleKeyDateCandidates,
   mostUrgentKeyDate,
   todayLocal,
   type KeyDateTone,
+  type StepDoneState,
 } from '../lib/keyDates';
+import type { ClientRole } from '../lib/types';
 import { colors } from '../theme';
 
 export interface KeyDates {
@@ -71,16 +74,36 @@ function hintStyle(tone: KeyDateTone) {
  * The tappable entry point: calendar glyph + bold "Key dates" + the most
  * urgent date as a quiet hint + chevron. 48px button target, directly below
  * LATEST FROM on every client view.
+ *
+ * The hint (Oct 2026, Anuraj) appears only when the checklist step mapped
+ * to that date is NOT checked off — pass the view's steps + role so
+ * completed steps suppress their date's hint. Without steps/role the old
+ * behavior applies (most urgent date wins).
  */
-export function KeyDatesEntryPoint({ onPress, ...dates }: KeyDates & { onPress: () => void }) {
+export function KeyDatesEntryPoint({
+  onPress,
+  steps,
+  role,
+  ...dates
+}: KeyDates & {
+  onPress: () => void;
+  steps?: StepDoneState[];
+  role?: ClientRole;
+}) {
   const today = dates.today ?? todayLocal();
+  // Render-driven (no caching): the hint re-evaluates on every render, so
+  // a step checked/unchecked elsewhere is reflected on the next refresh.
   const urgent = mostUrgentKeyDate(
-    [
-      { label: ROW_LABELS.close, date: dates.closeDate },
-      { label: ROW_LABELS.inspection, date: dates.inspectionDeadline },
-      { label: ROW_LABELS.appraisal, date: dates.appraisalDeadline },
-      { label: ROW_LABELS.loan, date: dates.loanApprovalDate },
-    ],
+    eligibleKeyDateCandidates(
+      [
+        { key: 'close' as const, label: ROW_LABELS.close, date: dates.closeDate },
+        { key: 'inspection' as const, label: ROW_LABELS.inspection, date: dates.inspectionDeadline },
+        { key: 'appraisal' as const, label: ROW_LABELS.appraisal, date: dates.appraisalDeadline },
+        { key: 'loan' as const, label: ROW_LABELS.loan, date: dates.loanApprovalDate },
+      ],
+      role,
+      steps,
+    ),
     today,
   );
   return (

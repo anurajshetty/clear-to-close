@@ -4,18 +4,18 @@
 // Below the top card:
 //   - the checklist collapses to one tappable row ("{N} of {N} steps
 //     complete · View") that expands inline to the full read-only list;
-//   - "Leave {Name} a review" (gold) and "Share {Name}'s profile" buttons;
+//   - "Share {Name}'s profile" button;
 //   - the line "Know someone buying or selling? Send them your realtor."
 //
-// REVIEW (wired Sept 2026 branding release): the buyer/seller home screens
-// pass an opener for the profile stream's ReviewSheet as
-// `onLeaveReviewPress`. When absent, the review button stays inert.
+// REVIEW (Oct 2026, Anuraj): the in-app "Leave a review" button is REMOVED —
+// replaced by the external review-links card (Google / realtor.com logos)
+// that sits below the main client card. The in-app ReviewSheet entry is
+// gone; server-side review RPCs and stored reviews stay dormant.
 //
 // Share opens the native share sheet with the message version of the
 // approved share copy (see src/lib/shareCopy.ts + src/lib/share.ts).
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Card } from './ui';
 import { ReadOnlyChecklist } from './Checklist';
 import { firstNameOf } from '../lib/pace';
@@ -23,49 +23,6 @@ import { profileUrlFor } from '../lib/shareCopy';
 import { shareRealtorProfile } from '../lib/share';
 import type { RealtorProfile, StepT, ClientRole } from '../lib/types';
 import { colors } from '../theme';
-
-const GOLD_FROM = '#E8A93D';
-const GOLD_TO = '#D98E2B';
-
-/** Gold gradient button (mockup .btn.gold). */
-function GoldButton({
-  title,
-  onPress,
-  testID,
-  accessibilityLabel,
-}: {
-  title: string;
-  onPress: () => void;
-  testID?: string;
-  accessibilityLabel?: string;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={accessibilityLabel ?? title}
-      onPress={onPress}
-      testID={testID}
-      style={({ pressed }) => [styles.goldBtn, pressed && { opacity: 0.88 }]}
-    >
-      <Svg
-        style={StyleSheet.absoluteFill}
-        width="100%"
-        height="100%"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-      >
-        <Defs>
-          <LinearGradient id="triumphGold" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={GOLD_FROM} />
-            <Stop offset="1" stopColor={GOLD_TO} />
-          </LinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width="100" height="100" fill="url(#triumphGold)" />
-      </Svg>
-      <Text style={styles.goldBtnText}>{title}</Text>
-    </Pressable>
-  );
-}
 
 /** Ghost button (mockup .btn.ghost). */
 function GhostButton({
@@ -140,11 +97,6 @@ export type ClientTriumphSectionProps = {
   daysToClose: number;
   /** The realtor's id — feeds the public profile URL in share copy. */
   realtorId?: string;
-  /**
-   * Opens the profile stream's ReviewSheet (wired by the buyer/seller home
-   * screens). When absent, the review button stays inert.
-   */
-  onLeaveReviewPress?: () => void;
 };
 
 export function ClientTriumphSection({
@@ -154,7 +106,6 @@ export function ClientTriumphSection({
   clientName,
   daysToClose,
   realtorId,
-  onLeaveReviewPress,
 }: ClientTriumphSectionProps) {
   const [shareNote, setShareNote] = useState<string | null>(null);
   const name = (profile?.name ?? '').trim();
@@ -183,16 +134,6 @@ export function ClientTriumphSection({
     <View testID="triumph-section">
       <CollapsibleChecklist steps={steps} role={role} />
 
-      <View style={styles.btnWrap}>
-        <GoldButton
-          title={`Leave ${first} a review`}
-          accessibilityLabel={`Leave ${name} a review`}
-          testID="triumph-review"
-          onPress={() => {
-            onLeaveReviewPress?.();
-          }}
-        />
-      </View>
       <View style={styles.btnWrap}>
         <GhostButton
           title={`Share ${first}'s profile`}
@@ -258,20 +199,6 @@ const styles = StyleSheet.create({
   },
   btnWrap: {
     marginBottom: 12,
-  },
-  goldBtn: {
-    position: 'relative',
-    overflow: 'hidden',
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    minHeight: 52,
-  },
-  goldBtnText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '700',
   },
   ghostBtn: {
     borderRadius: 12,

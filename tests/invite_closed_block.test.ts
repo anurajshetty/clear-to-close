@@ -96,7 +96,17 @@ async function test_storeBlocksClosedAndCancelled() {
 
 async function test_openEscrowUnaffected() {
   const store = createStore(memoryKV());
-  const e = await store.createEscrow(ESCROW_INPUT);
+  // 'both' so all three roles are side-valid; the point is the closed-block
+  // doesn't affect open escrows, not the side rule.
+  const e = await store.createEscrow({
+    address: '77 Closed Ln',
+    city: 'Santa Clarita',
+    side: 'both' as const,
+    buyerName: 'Alice Buyer',
+    sellerName: 'Bob Seller',
+    openDate: '2026-09-01',
+    closeDate: '2026-10-31',
+  } as never);
   for (const role of ROLES) {
     const invite = await store.createInvite(e.id, role, `${role} person`);
     assert(!!invite && !invite.revokedAt, `open escrow: createInvite(${role}) works`);

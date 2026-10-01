@@ -67,7 +67,6 @@ const sheetFiles = [
   ['src/components/EscrowFormSheet.tsx', 'Update escrow sheet'],
   ['src/components/CancelEscrowSheet.tsx', 'Cancel escrow sheet'],
   ['src/components/ChangePasswordSheet.tsx', 'Change password sheet'],
-  ['src/components/ReviewSheet.tsx', 'Review sheet'],
 ];
 for (const [rel, label] of sheetFiles) {
   const s = src(rel);

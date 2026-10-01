@@ -25,7 +25,10 @@ async function main(): Promise<void> {
   const codes = new Set<string>();
   for (let i = 0; i < 5000; i++) {
     const escrowId = escrowIds[i % escrowIds.length];
-    const role = i % 2 === 0 ? 'buyer' : 'seller';
+    // Oct 2026: cross-side invites are rejected — pick a role the escrow's
+    // side allows. Uniqueness is unaffected by the role.
+    const escrow = await store.getEscrow(escrowId);
+    const role = escrow?.side === 'buy' ? 'buyer' : i % 2 === 0 ? 'buyer' : 'seller';
     // The two-per-side cap is active: revoke each invite right after minting
     // so the next one fits under the cap — uniqueness is unaffected.
     const inv = await store.createInvite(escrowId, role, `Party ${i}`);

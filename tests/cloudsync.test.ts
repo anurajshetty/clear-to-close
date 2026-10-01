@@ -178,6 +178,8 @@ async function main(): Promise<void> {
     yearsExperience: '5', email: 'maya@compass.com', areasServed: 'SCV', phone: '555',
     dreLicense: '01998877',
   realty_group: '',
+  googleReviewLink: '',
+  realtorComReviewLink: '',
   banner_image: null,
   reviews: [],
   rating: null,

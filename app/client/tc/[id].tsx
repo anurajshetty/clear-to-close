@@ -112,6 +112,10 @@ export default function TcView() {
   // back to "{Name} opened your escrow".
   const tcLastAction = view ? mostRecentAction([view.buyer?.lastAction, view.seller?.lastAction]) : null;
   const tcSteps = view ? [...(view.buyer?.steps ?? []), ...(view.seller?.steps ?? [])] : [];
+  // Key dates (and their alert-hint step mapping) come from the same side
+  // as the dates: buyer wins when present, else the seller side.
+  const keyDateSide = view?.buyer ?? view?.seller ?? null;
+  const keyDateRole: 'buyer' | 'seller' = view?.buyer ? 'buyer' : 'seller';
   // Step-explainer voicing (Sept 28, 2026): the LATEST FROM card's step
   // name reveals the same one-liner as the checklist row — resolve it with
   // the winning side's voicing, mirroring mostRecentAction's precedence
@@ -196,6 +200,8 @@ export default function TcView() {
             inspectionDeadline={(view.buyer ?? view.seller)?.inspectionDeadline}
             appraisalDeadline={(view.buyer ?? view.seller)?.appraisalDeadline}
             loanApprovalDate={(view.buyer ?? view.seller)?.loanApprovalDate}
+            steps={keyDateSide?.steps ?? []}
+            role={keyDateRole}
           />
           <KeyDatesSheet
             visible={keyDatesOpen}

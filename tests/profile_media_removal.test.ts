@@ -137,6 +137,8 @@ function baseProfile(over: Partial<RealtorProfile> = {}): RealtorProfile {
     phone: '',
     dreLicense: '',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     banner_image: null,
     reviews: [],
     rating: null,

@@ -50,6 +50,8 @@ function profileRow(name: string): Record<string, unknown> {
     phone: '',
     dre_license: '',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
   };
 }
 

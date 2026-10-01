@@ -33,6 +33,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/pace.ts" \
   "$ROOT/src/lib/topCard.ts" \
   "$ROOT/src/lib/shareCopy.ts" \
+  "$ROOT/src/lib/shareSections.ts" \
   "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
@@ -44,6 +45,8 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/profile.ts" \
   "$ROOT/src/lib/push.ts" \
   "$ROOT/src/lib/clientView.ts" \
+  "$ROOT/src/lib/invites.ts" \
+  "$ROOT/src/lib/reviewLinks.ts" \
   "$ROOT/src/lib/escrowList.ts" \
   "$ROOT/src/lib/tcIntake.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
@@ -60,6 +63,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/dates.test.ts" \
   "$ROOT/tests/pace.test.ts" \
   "$ROOT/tests/sharecopy.test.ts" \
+  "$ROOT/tests/share_side.test.ts" \
   "$ROOT/tests/latest.test.ts" \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
@@ -85,6 +89,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/banner_size.test.ts" \
   "$ROOT/tests/topcard_photo.test.ts" \
   "$ROOT/tests/review_gate.test.ts" \
+  "$ROOT/tests/review_links.test.ts" \
   "$ROOT/tests/topcard_status.test.ts" \
   "$ROOT/tests/topcard_colors.test.ts" \
   "$ROOT/tests/topcard_responsive.test.ts" \
@@ -138,6 +143,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/tc_intake_decimal.test.ts" \
   "$ROOT/tests/pool_strip.test.ts" \
   "$ROOT/tests/step_key_dates.test.ts" \
+  "$ROOT/tests/share_button_label.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -164,6 +170,7 @@ node "$OUT/tests/persistence.test.js"
 TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
 node "$OUT/tests/pace.test.js"
 node "$OUT/tests/sharecopy.test.js"
+node "$OUT/tests/share_side.test.js"
 # Pinned TZ so the calendar-day relative-time buckets are deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"
@@ -290,3 +297,4 @@ node "$OUT/tests/share_screen.test.js"
 node "$OUT/tests/tc_intake_decimal.test.js"
 node "$OUT/tests/pool_strip.test.js"
 node "$OUT/tests/step_key_dates.test.js"
+node "$OUT/tests/share_button_label.test.js"

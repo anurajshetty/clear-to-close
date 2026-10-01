@@ -196,6 +196,18 @@ export interface RealtorProfile {
    */
   realty_group: string;
   /**
+   * Optional Google review link (Oct 2026) — saved on the profile-update
+   * screen; shown on the client home review card after the escrow closes.
+   * Empty when unset. Field name is contractual (another agent reads it
+   * by name).
+   */
+  googleReviewLink: string;
+  /**
+   * Optional realtor.com review link (Oct 2026) — same as googleReviewLink.
+   * Empty when unset.
+   */
+  realtorComReviewLink: string;
+  /**
    * Optional banner image (Sept 2026) — wide image shown behind the client
    * home top card. One managed file, overwritten on every pick (same
    * pattern as the profile photo); null when none. Field name is
@@ -238,7 +250,7 @@ export interface Invite {
 
 export type RedeemResult =
   | { ok: true; escrowId: string; role: ClientRole; partyName: string; linkId: string }
-  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' };
+  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'wrong_side' };
 
 /**
  * The inviting realtor's public branding for the branded invite welcome

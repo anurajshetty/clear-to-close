@@ -23,7 +23,6 @@ import { store } from '../../../src/lib/store-instance';
 import { auth } from '../../../src/lib/auth';
 import { useClientLinkGate } from '../../../src/hooks/useClientLinkGate';
 import { useClientRealtime } from '../../../src/hooks/useClientRealtime';
-import { useReviewSheet } from '../../../src/hooks/useReviewSheet';
 import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { SecondaryButton } from '../../../src/components/ui';
 import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/EscrowSwitcher';
@@ -31,8 +30,9 @@ import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
-import { canLeaveReview, REVIEWS_ENABLED } from '../../../src/lib/clientView';
-import { ReviewSheet } from '../../../src/components/ReviewSheet';
+import { ReviewLinksCard } from '../../../src/components/ReviewLinksCard';
+import { shouldShowReviewLinksCard } from '../../../src/lib/reviewLinks';
+import { canLeaveReview } from '../../../src/lib/clientView';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { colors } from '../../../src/theme';
 
@@ -100,19 +100,17 @@ export default function SellerView() {
   // server events re-pull this view; any failure degrades silently to the
   // focus/foreground refetch above.
   useClientRealtime(id, { enabled: gateState === 'valid', onDataChanged: load });
-  // 100% triumph "Leave a review" -> the profile stream's review sheet.
-  const review = useReviewSheet(view, profile, setProfile, setView);
 
   useFocusEffect(load);
 
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
-  // Review gate (Anuraj's rule, Sept 2026): the triumph review/share section
-  // shows only at 100% on a non-cancelled escrow — a cancelled escrow never
-  // shows the review button, even if its checklist is complete. (The top
-  // card computes its own 100% state from done/total.)
-  // The review feature is ON HOLD (Anuraj, Sept 2026): the section is
-  // additionally gated on REVIEWS_ENABLED, so no review/share UI is surfaced
-  // while the flag is false. The gate, the sheet, and the section stay wired.
+  // Review gate (Anuraj's rule, Sept 2026): the triumph section shows only
+  // at 100% on a non-cancelled escrow — a cancelled escrow never shows it,
+  // even if its checklist is complete. (The top card computes its own 100%
+  // state from done/total.)
+  // Oct 2026: the in-app review button was REMOVED (replaced by the external
+  // review-links card). The section now holds the checklist + share-profile
+  // button + referral line, with no review entry.
   const showTriumphActions = view != null && canLeaveReview(view);
 
   return (
@@ -152,6 +150,14 @@ export default function SellerView() {
             }
           />
 
+          {/* Review links card (Oct 2026, mockup 07): after closing, the
+              client taps a logo to leave a review in the external browser.
+              Shown only when the review gate passes AND the realtor set at
+              least one link. Buyer and seller only — never the TC view. */}
+          {shouldShowReviewLinksCard(view, profile) ? (
+            <ReviewLinksCard profile={profile} />
+          ) : null}
+
           {/* "LATEST FROM {NAME}" (mockup screen 7): directly below the top
               card, above the checklist, in every state — always visible. */}
           <LatestFromCard
@@ -173,6 +179,8 @@ export default function SellerView() {
             inspectionDeadline={view.inspectionDeadline}
             appraisalDeadline={view.appraisalDeadline}
             loanApprovalDate={view.loanApprovalDate}
+            steps={view.steps}
+            role="seller"
           />
           <KeyDatesSheet
             visible={keyDatesOpen}
@@ -183,7 +191,7 @@ export default function SellerView() {
             loanApprovalDate={view.loanApprovalDate}
           />
 
-          {showTriumphActions && REVIEWS_ENABLED ? (
+          {showTriumphActions ? (
             <ClientTriumphSection
               steps={view.steps}
               role="seller"
@@ -191,7 +199,6 @@ export default function SellerView() {
               clientName={partyName}
               daysToClose={view.daysToClose}
               realtorId={view.realtorId}
-              onLeaveReviewPress={review.openSheet}
             />
           ) : (
             <>
@@ -205,17 +212,6 @@ export default function SellerView() {
           )}
         </>
       )}
-      <ReviewSheet
-        visible={review.open}
-        realtorName={profile?.name ?? ''}
-        realtorPhotoUri={profile?.photoUri ?? null}
-        existingReview={review.existingReview}
-        busy={review.busy}
-        error={review.error}
-        onSubmit={review.submit}
-        onDelete={review.remove}
-        onClose={review.closeSheet}
-      />
     </ScrollView>
   );
 }

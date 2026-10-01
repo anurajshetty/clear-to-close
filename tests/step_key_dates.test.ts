@@ -165,4 +165,146 @@ assert(
   'addToDraft custom steps carry no templateKey (no date on custom steps)',
 );
 
+// ---- 4. Alert-hint suppression when the mapped step is checked off ----
+// (Anuraj, Oct 2026): the Key dates entry-row hint appears ONLY when the
+// checklist step mapped to that date is NOT checked off. A checked-off
+// mapped step excludes its date from hint candidacy — the next most urgent
+// ELIGIBLE date becomes the hint. Closing date has no mapping (unchanged).
+// Matched by templateKey, never by title; a missing step or missing
+// role/steps falls back to the old behavior (eligible) — a hint is never
+// hidden without proof the step is complete.
+import {
+  keyDateTemplateKey,
+  eligibleKeyDateCandidates,
+  mostUrgentKeyDate as mostUrgent2,
+  type KeyDateCandidate,
+} from '../src/lib/keyDates';
+
+// 4a. keyDateTemplateKey mapping (mirrors stepKeyDateISO).
+assert(
+  keyDateTemplateKey('inspection', 'buyer') === 'release-contingencies',
+  'inspection/buyer -> release-contingencies',
+);
+assert(
+  keyDateTemplateKey('inspection', 'seller') === 'contingency-release',
+  'inspection/seller -> contingency-release',
+);
+assert(
+  keyDateTemplateKey('appraisal', 'buyer') === 'appraisal-scheduled',
+  'appraisal/buyer -> appraisal-scheduled',
+);
+assert(
+  keyDateTemplateKey('appraisal', 'seller') === 'appraisal-scheduled',
+  'appraisal/seller -> appraisal-scheduled',
+);
+assert(
+  keyDateTemplateKey('loan', 'buyer') === 'signed-loan-docs',
+  'loan/buyer -> signed-loan-docs',
+);
+assert(
+  keyDateTemplateKey('loan', 'seller') === null,
+  'loan/seller -> null (buyer only)',
+);
+
+// 4b. Eligibility. Fixed today for deterministic day math.
+const HTODAY = '2026-10-01';
+const HCANDIDATES: KeyDateCandidate[] = [
+  { key: 'close', label: 'Closing date', date: '2026-11-15' },
+  // overdue by 1 day
+  { key: 'inspection', label: 'Release contingency deadline', date: '2026-09-30' },
+  // overdue by 5 days
+  { key: 'appraisal', label: 'Appraisal deadline', date: '2026-09-26' },
+  { key: 'loan', label: 'Loan approval date', date: '2026-10-20' },
+];
+const mkSteps = (doneKeys: string[]) =>
+  ['release-contingencies', 'appraisal-scheduled', 'signed-loan-docs'].map((k) => ({
+    templateKey: k,
+    done: doneKeys.includes(k),
+  }));
+
+// Nothing checked: the most overdue eligible date (appraisal, 5 days) wins.
+let eligible = eligibleKeyDateCandidates(HCANDIDATES, 'buyer', mkSteps([]));
+let urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Appraisal deadline',
+  'unchecked mapped step: appraisal hint wins (most overdue)',
+);
+
+// Appraisal checked: excluded; the next most urgent eligible date
+// (inspection, overdue by 1 day) becomes the hint.
+eligible = eligibleKeyDateCandidates(HCANDIDATES, 'buyer', mkSteps(['appraisal-scheduled']));
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Release contingency deadline',
+  'checked appraisal step: inspection hint wins',
+);
+
+// Appraisal + inspection checked: loan (Oct 20, muted) beats closing (Nov 15).
+eligible = eligibleKeyDateCandidates(
+  HCANDIDATES,
+  'buyer',
+  mkSteps(['appraisal-scheduled', 'release-contingencies']),
+);
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Loan approval date',
+  'two checked steps: loan hint wins over later closing',
+);
+
+// All mapped steps checked and no closing date: no hint at all.
+const NO_CLOSE: KeyDateCandidate[] = HCANDIDATES.map((c) =>
+  c.key === 'close' ? { ...c, date: null } : c,
+);
+eligible = eligibleKeyDateCandidates(
+  NO_CLOSE,
+  'buyer',
+  mkSteps(['appraisal-scheduled', 'release-contingencies', 'signed-loan-docs']),
+);
+urgent = mostUrgent2(eligible, HTODAY);
+assert(urgent === null, 'all mapped steps checked, no closing date -> no hint');
+
+// Closing date is never suppressed: checked everything else, closing stays.
+eligible = eligibleKeyDateCandidates(
+  HCANDIDATES,
+  'buyer',
+  mkSteps(['appraisal-scheduled', 'release-contingencies', 'signed-loan-docs']),
+);
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Closing date',
+  'closing date never suppressed by step state',
+);
+
+// Loan suppression is buyer-only: a done buyer loan step does not suppress
+// the seller loan hint (seller has no loan mapping).
+eligible = eligibleKeyDateCandidates(HCANDIDATES, 'seller', mkSteps(['signed-loan-docs']));
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  eligible.some((c) => c.label === 'Loan approval date'),
+  'seller: loan date stays eligible despite done buyer loan step',
+);
+
+// Missing step (templateKey absent): fail-open, the date stays eligible.
+eligible = eligibleKeyDateCandidates(HCANDIDATES, 'buyer', []);
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Appraisal deadline',
+  'absent steps -> old behavior (appraisal hint)',
+);
+
+// Missing role/steps: old behavior, all four candidates eligible.
+eligible = eligibleKeyDateCandidates(HCANDIDATES, undefined, undefined);
+assert(eligible.length === 4, 'missing role/steps -> all candidates eligible');
+
+// Unchecking restores eligibility: toggling done back to false brings the hint back.
+const toggled = mkSteps(['appraisal-scheduled']).map((s) =>
+  s.templateKey === 'appraisal-scheduled' ? { ...s, done: false } : s,
+);
+eligible = eligibleKeyDateCandidates(HCANDIDATES, 'buyer', toggled);
+urgent = mostUrgent2(eligible, HTODAY);
+assert(
+  urgent !== null && urgent.label === 'Appraisal deadline',
+  'unchecked step restores hint eligibility',
+);
+
 summary('step_key_dates');

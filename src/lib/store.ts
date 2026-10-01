@@ -10,6 +10,7 @@ import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, normalizeStepTitle, type St
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
+import { isInviteRoleAllowedForSide } from './shareSections';
 import type {
   ApplyChecklistResult,
   ChecklistDraftStep,
@@ -1101,6 +1102,16 @@ export function createStore(kv: KV): Store {
         `createInvite: cannot create invites for a ${escrow.status} escrow`,
       );
     }
+    // Cross-side guard (Oct 2026, Anuraj): a single-side escrow accepts
+    // invites only for its own side. The TC role is side-agnostic and
+    // always allowed; legacy 'both' escrows accept both. Lives in the
+    // compute path (like the status gate) so previews and every caller
+    // reject before any server attempt.
+    if (!isInviteRoleAllowedForSide(role, escrow.side)) {
+      throw new Error(
+        `Cannot invite a ${role} to a ${escrow.side === 'buy' ? 'buy-side' : 'sell-side'} escrow.`,
+      );
+    }
     // Per-role cap: two per buyer/seller side, exactly one transaction
     // coordinator per escrow. Revoking frees a slot, so only live invites
     // count. (The DB trigger enforces the same caps authoritatively.)
@@ -1618,6 +1629,13 @@ export function createStore(kv: KV): Store {
       if (inv.redeemedAt) return { ok: false, error: 'already_used' };
       if (inv.partyName.trim().toLowerCase() !== name.trim().toLowerCase()) {
         return { ok: false, error: 'name_mismatch' };
+      }
+      // Cross-side guard (Oct 2026, Anuraj): a legacy invite whose role
+      // does not match the escrow's side cannot be redeemed — the client
+      // would land on a view for a side the escrow does not have. Fails
+      // with a clear error instead of minting a broken link.
+      if (!isInviteRoleAllowedForSide(inv.role, data.escrows.find((e) => e.id === inv.escrowId)?.side ?? 'both')) {
+        return { ok: false, error: 'wrong_side' };
       }
       inv.redeemedAt = new Date().toISOString();
       const link: ClientLink = {

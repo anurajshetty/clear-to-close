@@ -123,6 +123,8 @@ function mockCloud(be: Backend) {
             phone: '',
             dre_license: '',
             realty_group: '',
+            googleReviewLink: '',
+            realtorComReviewLink: '',
           },
           role: 'buyer',
           buyer_steps: [],
@@ -146,6 +148,8 @@ function profileFixture(): RealtorProfile {
     phone: '',
     dreLicense: '',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     reviews: [],
     rating: null,
   };

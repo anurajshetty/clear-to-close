@@ -3,6 +3,28 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Review links replace in-app reviews (Oct 1, 2026)
+
+- **A REPLACE decision rewrites the on-hold tests, not just the code.**
+  The Sept 2026 `review_gate` suite pinned the "review is on hold" state
+  (`REVIEWS_ENABLED = false` gating the triumph section, the ReviewSheet
+  staying mounted). The Oct 2026 REPLACE decision inverted every one of
+  those assertions: the button, the prop, the sheet, and the flag gate are
+  all gone. Practice: when a product decision reverses, the regression
+  tests that pinned the old state must be rewritten to pin the NEW state —
+  a stale guard asserting the old behavior is worse than no guard.
+- **A required type field is a cross-file change.** Adding
+  `googleReviewLink` / `realtorComReviewLink` to `RealtorProfile` broke 13
+  test fixtures and 2 screens that construct full profiles. Practice: when
+  adding a required field to a shared type, run the full suite (not just
+  tsc on the changed files) — the fixtures are constructors too.
+- **The RPC profile payload is an explicit field list.** `get_client_view`
+  builds its profile with `jsonb_build_object`, so new columns do NOT ride
+  along automatically — the migration must re-create the function with the
+  new keys (0033 does this additively, byte-identical to 0031 otherwise).
+  Practice: after adding a server column, grep the RPCs for explicit field
+  lists, not just the table schema.
+
 ## Share screen v1 (Sept 29, 2026)
 
 - **A new screen inherits existing regression guards.** `header_top_gap`
@@ -1291,3 +1313,48 @@ check-off copy; `tests/run.sh` wires both.
   three wiring lines (startEditing + two render mappings) — no type or
   store change. Lesson: check the existing type before adding a "new"
   field; the duplicate-identifier tsc error caught it in seconds.
+- **Key dates alert-hint suppression (Oct 1, 2026, Anuraj):** the entry-row
+  hint shows only when the mapped checklist step is NOT checked off.
+  Implemented as a pure `eligibleKeyDateCandidates` filter in
+  src/lib/keyDates.ts (not in the component): the component stays a thin
+  render of `mostUrgentKeyDate(filtered, today)`, and the unit suite pins
+  the rule without rendering. `keyDateTemplateKey` mirrors the
+  stepKeyDateISO mapping (templateKey, never title); closing date has no
+  mapping and is never suppressed; missing step / missing role+steps falls
+  back to the old behavior (eligible) so a hint is never hidden without
+  proof of completion. The hint is render-driven with no caching, so it
+  re-evaluates whenever the client view refreshes (realtime pull after the
+  realtor checks/unchecks a step). Note: the realtor transaction detail has
+  no Key dates entry/hint — only the three client views render it — so the
+  shared-component fix covers every surface where the hint exists.
+  Regression test: tests/step_key_dates.test.ts (section 4).
+- **Share button label (Oct 2026, Anuraj):** the transaction-detail bottom
+  button reads "View clients" once a non-revoked buyer/seller invite exists,
+  otherwise "Share this escrow". The rule lives in pure helpers in
+  `src/lib/invites.ts` (`visibleInvites`, `hasClientInvites`,
+  `shareButtonTitle`) so the unit suite pins it without rendering. The
+  share screen's local `visibleInvites` was a byte-identical duplicate —
+  promoted to the shared lib and the screen now imports it, so the two
+  surfaces can't drift. TC invites don't count toward the label. The detail
+  screen loads invites inside its existing focus-driven `refresh()` (with
+  its own try/catch so a failed invite read can never break the escrow
+  load), so returning from the share screen re-evaluates the label for
+  free. Tap destination unchanged.
+- **Share screen follows escrow side (Oct 1, 2026):** single-side escrows
+  show only their side's invite section + TC; legacy 'both' shows all three.
+  The section definitions moved from `app/share/[id].tsx` to
+  `src/lib/shareSections.ts` as pure `visibleShareSections(side)` /
+  `isInviteRoleAllowedForSide(role, side)` helpers — testable in node,
+  imported by the screen. The cross-side invite guard lives in
+  `computeCreateInvite` (compute path, like the closed-escrow gate) so
+  previews and all callers reject; the redeem path returns a new
+  `'wrong_side'` error (mapped through `mapRedeemRpc`, with user copy in
+  `app/redeem.tsx`) instead of minting a broken client link. Server parity
+  is written as migration `0032_invite_side_guard.sql` (insert trigger +
+  hardened `redeem_invite`) but NOT applied — needs Anuraj's dashboard.
+  Lesson: when a new domain rule lands, existing tests that predate it
+  (uniqueness, auth, invite_resolve, invite_closed_block, share_screen)
+  break in ways that look like regressions — each was a side-inconsistent
+  fixture, fixed by making the fixture side-valid, not by weakening the
+  rule. The share_screen text-scraping test had to follow the section
+  definitions to their new file.

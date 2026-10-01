@@ -184,6 +184,8 @@ export function toProfileRow(
     phone: p?.phone ?? null,
     dre_license: p?.dreLicense ?? null,
     realty_group: p?.realty_group ?? null,
+    google_review_link: p?.googleReviewLink?.trim() ? p.googleReviewLink.trim() : null,
+    realtor_com_review_link: p?.realtorComReviewLink?.trim() ? p.realtorComReviewLink.trim() : null,
   };
   if (p === null) {
     // Legacy null-profile push: explicit nulls, as before.
@@ -271,6 +273,8 @@ export function fromProfileRow(row: Record<string, unknown>): RealtorProfile {
     phone: s(row.phone),
     dreLicense: s(row.dre_license),
     realty_group: s(row.realty_group),
+    googleReviewLink: s(row.google_review_link),
+    realtorComReviewLink: s(row.realtor_com_review_link),
     reviews,
     rating,
   };
@@ -295,7 +299,7 @@ export async function pullProfileNow(
   userId: string,
 ): Promise<RealtorProfile | null> {
   const COLUMNS =
-    'name, photo_url, about, years_experience, email, areas_served, phone, dre_license, realty_group, banner_image, rating';
+    'name, photo_url, about, years_experience, email, areas_served, phone, dre_license, realty_group, banner_image, rating, google_review_link, realtor_com_review_link';
   const COLUMNS_0008 =
     'name, photo_url, about, years_experience, areas_served, phone, dre_license, realty_group, banner_image';
   const LEGACY_COLUMNS =
@@ -546,7 +550,7 @@ export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } 
   // rejection is gone — redeem_invite returns the existing link for a
   // same-device/same-escrow redeem instead of erroring, and the
   // (device_id, escrow_id) index makes a second escrow's redeem succeed.
-  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network'] as const;
+  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network', 'wrong_side'] as const;
   return { ok: false, error: valid.includes(err as (typeof valid)[number]) ? (err as (typeof valid)[number]) : 'invalid' };
 }
 
@@ -1064,7 +1068,9 @@ export function isMissingColumnError(error: unknown): boolean {
     msg.includes('banner_image') ||
     msg.includes('email') ||
     msg.includes('reviews') ||
-    msg.includes('rating')
+    msg.includes('rating') ||
+    msg.includes('google_review_link') ||
+    msg.includes('realtor_com_review_link')
   );
 }
 
@@ -1079,19 +1085,28 @@ export async function pushProfileNow(
     await upsertAll(client, 'realtor_profiles', [row], 'user_id');
   } catch (e) {
     if (!isMissingColumnError(e)) throw e;
-    // Migration 0016 (email) not applied yet: retry without it
-    // so the push still lands.
+    // Migration 0033 (google_review_link / realtor_com_review_link) not
+    // applied yet: retry without the newest columns first.
     const retry = { ...row } as Record<string, unknown>;
-    delete retry.email;
+    delete retry.google_review_link;
+    delete retry.realtor_com_review_link;
     try {
       await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
     } catch (e2) {
       if (!isMissingColumnError(e2)) throw e2;
-      // Migration 0008 (realty_group / banner_image) not applied yet either:
-      // retry with the pre-migration column set.
-      delete retry.realty_group;
-      delete retry.banner_image;
-      await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
+      // Migration 0016 (email) not applied yet: retry without it
+      // so the push still lands.
+      delete retry.email;
+      try {
+        await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
+      } catch (e3) {
+        if (!isMissingColumnError(e3)) throw e3;
+        // Migration 0008 (realty_group / banner_image) not applied yet either:
+        // retry with the pre-migration column set.
+        delete retry.realty_group;
+        delete retry.banner_image;
+        await upsertAll(client, 'realtor_profiles', [retry], 'user_id');
+      }
     }
   }
 }

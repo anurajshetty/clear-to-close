@@ -173,6 +173,8 @@ function profileFixture(over: Partial<RealtorProfile> = {}): RealtorProfile {
     phone: '555-0100',
     dreLicense: 'DRE-123',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     banner_image: null,
     reviews: [],
     rating: null,

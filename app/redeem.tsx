@@ -35,6 +35,7 @@ const ERROR_COPY: Record<RedeemError, string> = {
   revoked: 'This code is no longer active. Ask your realtor for the new code.',
   name_mismatch: "That name doesn't match this invite. Check the spelling and try again.",
   network: 'Something went wrong on our end. Check your connection and try again.',
+  wrong_side: 'This code is for the other side of the transaction. Ask your realtor for the right code.',
 };
 
 /** "Transaction Coordinator" for TC, "client" for buyer/seller. */

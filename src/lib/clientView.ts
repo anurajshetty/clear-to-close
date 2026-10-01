@@ -17,11 +17,11 @@ export function canLeaveReview(
 }
 
 /**
- * Review feature ON HOLD (Anuraj's call, Sept 2026): the review/share entry
- * points are hidden — the "provide review" button and the review/share
- * section are not surfaced. All review code and gating logic stays intact
- * (canLeaveReview above, the 0015 status wiring, the review sheet); only
- * the UI is not shown. Flip back to true to resurface the feature.
+ * RETIRED (Oct 2026, Anuraj — REPLACE): the in-app review entry was removed
+ * in favor of the external review-links card. This flag is no longer
+ * consulted anywhere; it stays defined (not repurposed, not deleted) so
+ * older references fail loudly instead of silently. New code must not use
+ * it — the live gate is canLeaveReview above.
  */
 export const REVIEWS_ENABLED = false;
 

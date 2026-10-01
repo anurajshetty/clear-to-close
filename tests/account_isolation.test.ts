@@ -75,6 +75,8 @@ async function seedAccountA(kv: KV): Promise<string> {
     phone: '(555) 111-1111',
     dreLicense: 'DRE-A',
     realty_group: 'A Realty',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     banner_image: 'data:image/jpeg;base64,BBB',
     reviews: [],
     rating: null,

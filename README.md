@@ -172,13 +172,19 @@ central user; the buyers and sellers they represent are the other parties.
   (a stale link would boot the device straight back into the client view), as
   is any client link when a realtor session is newly established. Device-level
   state (chosen role, device id, push-asked) is kept.
-- **Share / invites** — one **"Share this escrow"** button at the end of the
+- **Share / invites** — one button at the end of the
   transaction-detail checklist (per side / per dual-agency tab) opens the
   full-screen **Share this escrow** route (`/share/<escrowId>`); it stays
-  visible on open, closed, and cancelled escrows. The screen holds three
-  always-visible sections — **Buyers** and **Sellers** (cap 2 each,
-  independent) and **Transaction coordinator** (cap 1) — each labeled
-  "Plural · X of cap". Tapping an invite button expands an inline form:
+  visible on open, closed, and cancelled escrows. The button reads
+  **"Share this escrow"** until a buyer/seller client is added, then
+  **"View clients"**. The screen holds the invite sections for the
+  escrow's side — a buy-side escrow shows **Buyers** (cap 2) +
+  **Transaction coordinator** (cap 1), a sell-side escrow shows
+  **Sellers** (cap 2) + **Transaction coordinator**, and a legacy
+  both-side escrow shows all three — each labeled "Plural · X of cap".
+  Cross-side invites are rejected in the app (a seller invite on a
+  buy-side escrow throws); the matching server trigger is written and
+  awaits application. Tapping an invite button expands an inline form:
   name → **Create code** → the big six-character code → **Copy** (code
   only) + **Done**. Each code is single-use, 6 characters, globally unique,
   bound to (escrow, role, party name); name and code must both match at
@@ -316,7 +322,10 @@ central user; the buyers and sellers they represent are the other parties.
   - **"KEY DATES" entry + sheet** (Sept 28, 2026, Anuraj-approved) —
     directly below LATEST FROM on the buyer, seller, and TC homes: a
     calendar glyph + "Key dates" + the most urgent date as a quiet hint
-    ("Inspection contingency · in 3 days") + chevron. Tapping opens a bottom
+    ("Inspection contingency · in 3 days") + chevron. The hint appears only
+    when the checklist step mapped to that date is NOT checked off (Oct 2026,
+    Anuraj-approved) — a completed step suppresses its date's hint and the
+    next most urgent eligible date is shown instead. Tapping opens a bottom
     sheet with the four rows (Closing date, Inspection contingency deadline,
     Appraisal deadline, Loan approval date): each row shows "Oct 30" (no
     year) plus "today" / "tomorrow" / "in N days" / "overdue by N days" —
@@ -360,20 +369,27 @@ central user; the buyers and sellers they represent are the other parties.
     card (the shared `ConfettiBurst`, reduced-motion aware). There is no
     separate 100% triumph card (removed, Anuraj, Sept 2026): no
     "Just closed!" card, no pace or completion pill in any state.
-- **Below the top card (100% and not cancelled)** — the review feature
-  is **on hold** (Anuraj, Sept 2026): the review/share entry points are not
-  surfaced. All review code stays intact (the `canLeaveReview` gate, the
-  0015 escrow-status wiring, the review sheet, and the
-  `ClientTriumphSection` below), gated by `REVIEWS_ENABLED = false` in
-  `src/lib/clientView.ts`; flipping it back to true resurfaces the section:
-  the checklist collapses to one
-  tappable row ("{N} of {N} steps complete") that expands inline; a gold
-  **"Leave {FirstName} a review"** button (opens the review sheet; the wiring
-  point is `ClientTriumphSection.onLeaveReviewPress` in
-  `src/components/ClientTriumph.tsx`, connected by the merge lead once the
-  profile branch's review sheet lands), a **"Share {FirstName}'s profile"**
-  button, and the referral line "Know someone buying or selling? Send them
-  your realtor." Sharing uses the native share sheet where available,
+- **Below the top card (100% and not cancelled)** — the **review-links
+  card** (Oct 2026, approved mockup 07): "Leave a review to {FirstName}" on
+  the left, the Google and realtor.com logos side by side on the right.
+  Tapping a logo opens that review page in the **external browser**
+  (`Linking.openURL`, Safari on iOS — never an in-app webview). One link set
+  means one logo, both set means both, no links means no card at all. The
+  card shows only when the `canLeaveReview` gate passes (100% complete, not
+  cancelled — `src/lib/clientView.ts`) AND the realtor saved at least one
+  link (`shouldShowReviewLinksCard` in `src/lib/reviewLinks.ts`), on the
+  buyer and seller homes only (never the TC view). The realtor saves the
+  links once on the profile-update screen's **"Review links"** section
+  (Google review link + realtor.com review link, both optional; invalid
+  links show an inline error and block save). The in-app review button and
+  review sheet were **removed** (Anuraj, Oct 2026 — REPLACE); the review
+  RPCs and stored reviews stay dormant.
+- **Below the checklist (100% and not cancelled)** — the triumph section
+  (`ClientTriumphSection` in `src/components/ClientTriumph.tsx`): the
+  checklist collapses to one tappable row ("{N} of {N} steps complete") that
+  expands inline; a **"Share {FirstName}'s profile"** button, and the
+  referral line "Know someone buying or selling? Send them your realtor."
+  Sharing uses the native share sheet where available,
   `navigator.share` on web, and clipboard copy as the graceful fallback, with
   the approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
   URL `https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id>`.
@@ -413,14 +429,14 @@ central user; the buyers and sellers they represent are the other parties.
   SMS). The profile body is the shared `RealtorProfileView`
   (`src/components/RealtorProfileView.tsx`) in its `inApp` variant, the same
   component the public page uses, so the content cannot drift.
-- **Client reviews** — **on hold** (Anuraj, Sept 2026): the review/share
-  entry points are not surfaced (`REVIEWS_ENABLED = false` in
-  `src/lib/clientView.ts`); all review code and gating stays intact. When
-  re-enabled: after the escrow completes (and only if it was not
-  cancelled), the client can leave a review: a star rating plus one line of
-  text. Reviews are per-realtor and
-  keyed to the client's link, so each client can leave (and later edit or
-  delete) exactly one review. The public profile lists them newest first.
+- **Client reviews** — the in-app review entry was **removed** (Anuraj, Oct
+  2026 — REPLACE, not duplicate): the "Leave a review" button and the review
+  sheet are gone, replaced by the external review-links card above. The
+  server-side review RPCs (`saveReview` / `deleteReview` in
+  `src/lib/cloudSync.ts`), the stored `profile.reviews` data, and the public
+  profile's reviews display stay dormant and untouched — no migration, no
+  data deletion. `REVIEWS_ENABLED` in `src/lib/clientView.ts` is retired
+  (still defined, no longer consulted); the live gate is `canLeaveReview`.
 - **Live updates** — every realtor checkoff updates the client home and
   progress bar. Custom steps render like any other step (no "Custom" tag on
   client views).

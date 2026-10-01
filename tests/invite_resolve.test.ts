@@ -22,6 +22,8 @@ function fullProfile(): RealtorProfile {
   return {
     name: 'Maya Sharma',
     realty_group: 'Compass Realty',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     photoUri: null,
     photoRemoteUrl: null,
     bannerRemoteUrl: null,
@@ -56,7 +58,7 @@ async function main(): Promise<void> {
     const escrow = await store.createEscrow({
       address: '123 Test St',
       city: 'Testville',
-      side: 'buy',
+      side: 'both',
       buyerName: 'Jordan Lee',
       openDate: '2026-09-01',
       closeDate: '2026-11-01',
@@ -107,6 +109,8 @@ async function main(): Promise<void> {
             name: 'Maya Sharma',
             photo_url: 'https://cdn.example/maya.jpg',
             realty_group: 'Compass Realty',
+            googleReviewLink: '',
+            realtorComReviewLink: '',
             dre_license: '01998877',
             realtor_id: 'user-9',
           },

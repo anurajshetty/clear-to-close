@@ -89,6 +89,8 @@ async function main(): Promise<void> {
     areasServed: '',
     dreLicense: '',
     realty_group: 'Compass Realty',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     reviews: [],
     rating: null,
   });

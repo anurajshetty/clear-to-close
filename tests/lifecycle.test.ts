@@ -233,6 +233,8 @@ async function main(): Promise<void> {
       phone: '(555) 234-5678',
       dreLicense: '01998877',
     realty_group: '',
+    googleReviewLink: '',
+    realtorComReviewLink: '',
     banner_image: null,
       reviews: [],
       rating: null,

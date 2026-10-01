@@ -19,6 +19,7 @@ import { store } from '../src/lib/store-instance';
 import { BackChevron, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
+import { isValidReviewLink } from '../src/lib/reviewLinks';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
@@ -47,6 +48,9 @@ export default function ProfileUpdate() {
     banner: false,
   });
   const [nameError, setNameError] = useState<string | null>(null);
+  // Review links (Oct 2026): a save attempt with invalid links forces the
+  // inline errors visible.
+  const [linksSubmitAttempted, setLinksSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile (and its photo/banner) is not confirmed on the server — the
@@ -71,6 +75,9 @@ export default function ProfileUpdate() {
     (p: Partial<ProfileDraft>) => {
       setDraft((d) => ({ ...d, ...p }));
       if (p.name !== undefined) setNameError(null);
+      if (p.googleReviewLink !== undefined || p.realtorComReviewLink !== undefined) {
+        setLinksSubmitAttempted(false);
+      }
       editedRef.current = true;
     },
     [],
@@ -95,6 +102,8 @@ export default function ProfileUpdate() {
           phone: p.phone ?? '',
           dreLicense: p.dreLicense ?? '',
           realty_group: p.realty_group ?? '',
+          googleReviewLink: p.googleReviewLink ?? '',
+          realtorComReviewLink: p.realtorComReviewLink ?? '',
         });
         setKeptReviews(p.reviews ?? []);
         setKeptRating(p.rating ?? null);
@@ -136,6 +145,13 @@ export default function ProfileUpdate() {
       setNameError('Required');
       return;
     }
+    // Review links (Oct 2026): an invalid link blocks save — the inline
+    // errors are forced visible so the realtor sees what to fix.
+    if (!isValidReviewLink(draft.googleReviewLink) || !isValidReviewLink(draft.realtorComReviewLink)) {
+      setLinksSubmitAttempted(true);
+      setSaveError('Enter a valid link, starting with https://');
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -157,6 +173,8 @@ export default function ProfileUpdate() {
         phone: draft.phone,
         dreLicense: draft.dreLicense,
         realty_group: draft.realty_group,
+        googleReviewLink: draft.googleReviewLink.trim(),
+        realtorComReviewLink: draft.realtorComReviewLink.trim(),
         reviews: keptReviews,
         rating: keptRating,
       });
@@ -208,7 +226,13 @@ export default function ProfileUpdate() {
           This is what your clients see. Change anything below and hit Save.
         </Text>
 
-        <ProfileForm value={draft} onChange={patch} nameError={nameError} />
+        <ProfileForm
+          value={draft}
+          onChange={patch}
+          nameError={nameError}
+          showReviewLinks
+          submitAttempted={linksSubmitAttempted}
+        />
 
         {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>

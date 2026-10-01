@@ -64,6 +64,8 @@ export default function ProfileSetup() {
             phone: p.phone ?? '',
             dreLicense: p.dreLicense ?? '',
             realty_group: p.realty_group ?? '',
+            googleReviewLink: p.googleReviewLink ?? '',
+            realtorComReviewLink: p.realtorComReviewLink ?? '',
           });
           setKeptReviews(p.reviews ?? []);
           setKeptRating(p.rating ?? null);
@@ -99,6 +101,8 @@ export default function ProfileSetup() {
         phone: draft.phone,
         dreLicense: draft.dreLicense,
         realty_group: draft.realty_group,
+        googleReviewLink: '',
+        realtorComReviewLink: '',
         reviews: keptReviews,
         rating: keptRating,
       });

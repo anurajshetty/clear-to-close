@@ -545,7 +545,7 @@ async function main(): Promise<void> {
     const escrow = await store.createEscrow({
       address: '4187 Oakmont Dr',
       city: 'Valencia, CA 91355',
-      side: 'buy',
+      side: 'both',
       buyerName: 'Priya Nair',
       openDate: '2026-09-20',
       closeDate: '2026-11-20',

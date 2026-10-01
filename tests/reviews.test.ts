@@ -74,6 +74,16 @@ async function main(): Promise<void> {
   const legacy = fromProfileRow({ name: 'Old' });
   assert(Array.isArray(legacy.reviews) && legacy.reviews.length === 0, 'missing reviews -> []');
   assert(legacy.rating === null, 'missing reviews -> null rating');
+  assert(legacy.googleReviewLink === '' && legacy.realtorComReviewLink === '',
+    'missing review links -> empty strings');
+
+  const withLinks = fromProfileRow({
+    name: 'Maya',
+    google_review_link: 'https://g.page/r/x',
+    realtor_com_review_link: 'https://www.realtor.com/abc',
+  });
+  assert(withLinks.googleReviewLink === 'https://g.page/r/x', 'google review link maps');
+  assert(withLinks.realtorComReviewLink === 'https://www.realtor.com/abc', 'realtor.com review link maps');
 
   const withDeals = fromProfileRow({ name: 'Maya', deals_closed: '99' });
   assert(!('dealsClosed' in withDeals), 'deals_closed never surfaces on the profile');
@@ -84,10 +94,22 @@ async function main(): Promise<void> {
     photoRemoteUrl: null,
     bannerRemoteUrl: null,
     areasServed: '', phone: '', dreLicense: '', realty_group: '', banner_image: null,
+    googleReviewLink: '', realtorComReviewLink: '',
     reviews: [review('a', 5)], rating: 5,
   }) as Record<string, unknown>;
   assert(!('reviews' in row) && !('rating' in row), 'push payload excludes reviews + rating');
   assert(row.email === 'maya@compass.com', 'push payload carries email');
+
+  // 3b. toProfileRow: review links (Oct 2026) ---------------------------------
+  const linkRow = toProfileRow('uid-1', {
+    name: 'Maya', photoUri: null, about: '', yearsExperience: '', email: '',
+    photoRemoteUrl: null, bannerRemoteUrl: null,
+    areasServed: '', phone: '', dreLicense: '', realty_group: '', banner_image: null,
+    googleReviewLink: '  https://g.page/r/x  ', realtorComReviewLink: '',
+    reviews: [], rating: null,
+  }) as Record<string, unknown>;
+  assert(linkRow.google_review_link === 'https://g.page/r/x', 'push payload trims the Google link');
+  assert(linkRow.realtor_com_review_link === null, 'empty realtor.com link pushes as null');
 
   // 4. mapClientViewRpc: reviews + my_review_id --------------------------------
   const cv = mapClientViewRpc({
