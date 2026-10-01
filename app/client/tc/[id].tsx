@@ -21,6 +21,7 @@ import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDa
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
 import { TcEntryCard } from '../../../src/components/TcIntakeEntry';
 import { showTcDetailsForTcView } from '../../../src/lib/tcIntake';
+import { showBuyerDetailsForTcView } from '../../../src/lib/buyerIntake';
 import { mostRecentAction } from '../../../src/lib/latest';
 import { colors } from '../../../src/theme';
 
@@ -178,6 +179,23 @@ export default function TcView() {
               accessibilityLabel="View listing details."
               accessibilityHint="Opens the listing details from your realtor."
               testID="tc-view-listing-details"
+            />
+          )}
+
+          {/* Buyer intake (Oct 1, 2026, mockup 08 device 4): "View buyer
+              details" — directly below the listing-details card, above the
+              checklist, on buyer-side escrows only (seller-only TC views
+              never see it). Read-only; opens the details page. */}
+          {showBuyerDetailsForTcView(view.buyer !== null) && (
+            <TcEntryCard
+              title="View buyer details"
+              caption="Buyer information from your realtor"
+              icon="eye"
+              trailing="chevron"
+              onPress={() => router.push(`/buyer-details/${id}`)}
+              accessibilityLabel="View buyer details."
+              accessibilityHint="Opens the buyer details from your realtor."
+              testID="tc-view-buyer-details"
             />
           )}
 

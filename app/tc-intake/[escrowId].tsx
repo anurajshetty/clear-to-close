@@ -38,57 +38,11 @@ import {
 import { shareText } from '../../src/lib/share';
 import type { Escrow } from '../../src/lib/types';
 import { colors, radius, type } from '../../src/theme';
+import { YesNoSeg, YES_NO } from '../../src/components/YesNoSeg';
 
 function emptySeller(): TcIntakeSeller {
   return { name: '', phone: '', email: '' };
 }
-
-/**
- * The Yes/No segmented control (mockup ②), built once here and reused for
- * every Yes/No field on this screen — no existing component matched the
- * mockup (per the Sept 29 brief, local to this screen file).
- */
-function YesNoSeg({
-  label,
-  value,
-  onChange,
-  options,
-  testID,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { label: string; value: string }[];
-  testID?: string;
-}) {
-  return (
-    <View style={styles.segWrap} testID={testID}>
-      <Text style={styles.segLabel}>{label}</Text>
-      <View style={styles.seg} accessibilityRole="radiogroup" accessibilityLabel={label}>
-        {options.map((o) => {
-          const on = value === o.value;
-          return (
-            <Pressable
-              key={o.value}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: on }}
-              accessibilityLabel={o.label}
-              onPress={() => onChange(o.value)}
-              style={[styles.segBtn, on && styles.segBtnOn]}
-            >
-              <Text style={[styles.segBtnText, on && styles.segBtnTextOn]}>{o.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
-const YES_NO = [
-  { label: 'Yes', value: 'yes' },
-  { label: 'No', value: 'no' },
-];
 const LEASED_OWNED = [
   { label: 'Leased', value: 'leased' },
   { label: 'Owned', value: 'owned' },
@@ -413,45 +367,6 @@ const styles = StyleSheet.create({
     fontSize: type.body,
     fontWeight: '700',
     color: colors.accent,
-  },
-  segWrap: {
-    marginBottom: 10,
-  },
-  segLabel: {
-    fontSize: 13.5,
-    fontWeight: '600',
-    color: colors.body,
-    marginBottom: 6,
-  },
-  seg: {
-    flexDirection: 'row',
-    backgroundColor: colors.tabBg,
-    borderRadius: radius.input,
-    padding: 4,
-    gap: 4,
-  },
-  segBtn: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'transparent',
-  },
-  segBtnOn: {
-    backgroundColor: colors.card,
-    shadowColor: '#1E190F',
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-  },
-  segBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: colors.muted,
-  },
-  segBtnTextOn: {
-    color: colors.ink,
   },
   footer: {
     borderTopWidth: 1,

@@ -10,6 +10,7 @@ import { BUY_STEPS, SELL_STEPS, backfillTemplateKey, normalizeStepTitle, type St
 import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
+import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
 import { isInviteRoleAllowedForSide } from './shareSections';
 import type {
   ApplyChecklistResult,
@@ -77,6 +78,18 @@ export interface TcIntakeRow {
 }
 
 /**
+ * Buyer intake cache row (Oct 1, 2026, mockup 08): one saved intake per
+ * escrow. Same cache semantics as the TC intake — the server
+ * (buyer_intakes table, migration 0034) is the source of truth; this row
+ * only ever lands here after a confirmed server write or a server pull.
+ */
+export interface BuyerIntakeRow {
+  escrowId: string;
+  data: BuyerIntakeData;
+  updatedAt: string;
+}
+
+/**
  * The local collections as one deep-cloned unit (Sept 2026, synchronous
  * server-first writes). A preview computes a mutation against a cloned
  * snapshot — the live in-memory data and the persisted keys are untouched
@@ -89,6 +102,7 @@ export interface LocalSnapshot {
   invites: Invite[];
   links: ClientLink[];
   tcIntakes: Record<string, TcIntakeRow>;
+  buyerIntakes: Record<string, BuyerIntakeRow>;
 }
 
 /** A computed-but-unapplied local mutation: the result plus the snapshot
@@ -179,6 +193,37 @@ export interface Store {
    * pull). Never throws. Implemented by the synced store.
    */
   refreshTcIntake(escrowId: string): Promise<void>;
+  /**
+   * Buyer intake cache read (Oct 1, 2026, mockup 08): the last
+   * server-confirmed intake for this escrow, or null when nothing was
+   * ever saved. Never throws.
+   */
+  getBuyerIntake(escrowId: string): Promise<BuyerIntakeRow | null>;
+  /**
+   * Compute a buyer intake save against a cloned snapshot (no load, no
+   * persist): upserts the intake row for the escrow. The live data is
+   * untouched until the server confirms the write (commitPreview).
+   * Single writer (the realtor) on a single per-escrow row — last write
+   * wins, no conflict rule needed.
+   */
+  previewSaveBuyerIntake(escrowId: string, data: BuyerIntakeData): Promise<Preview<BuyerIntakeRow>>;
+  /**
+   * Converge a server-pulled intake into the local cache (pure pull —
+   * refreshes on open, never overrides the server). Never throws.
+   */
+  setBuyerIntakeCache(row: BuyerIntakeRow): Promise<void>;
+  /**
+   * Buyer intake confirmed write (Oct 1, 2026, mockup 08): server first,
+   * local cache only on confirmation; failures throw plain-language and
+   * leave the previously confirmed snapshot intact. Implemented by the
+   * synced store (src/lib/syncedStore.ts).
+   */
+  saveBuyerIntake(escrowId: string, data: BuyerIntakeData): Promise<BuyerIntakeRow>;
+  /**
+   * Converge the server's confirmed intake into the local cache (pure
+   * pull). Never throws. Implemented by the synced store.
+   */
+  refreshBuyerIntake(escrowId: string): Promise<void>;
   createEscrow(input: CreateEscrowInput): Promise<Escrow>;
   /**
    * Edit an escrow's fields (deal-list edit round, Sept 2026). Validates
@@ -366,6 +411,7 @@ const K_ESCROWS = 'ctc:escrows';
 const K_INVITES = 'ctc:invites';
 const K_LINKS = 'ctc:links';
 const K_TC_INTAKES = 'ctc:tc-intakes';
+const K_BUYER_INTAKES = 'ctc:buyer-intakes';
 /** Step ids stripped from the seller template, awaiting server-side delete. */
 const K_PENDING_STEP_DELETIONS = 'ctc:pending-step-deletions';
 
@@ -472,16 +518,18 @@ export function createStore(kv: KV): Store {
     invites: Invite[];
     links: ClientLink[];
     tcIntakes: Record<string, TcIntakeRow>;
-  } = { loaded: false, profile: null, escrows: [], invites: [], links: [], tcIntakes: {} };
+    buyerIntakes: Record<string, BuyerIntakeRow>;
+  } = { loaded: false, profile: null, escrows: [], invites: [], links: [], tcIntakes: {}, buyerIntakes: {} };
 
   async function ensureLoaded(): Promise<void> {
     if (data.loaded) return;
-    const [p, e, i, l, t] = await Promise.all([
+    const [p, e, i, l, t, b] = await Promise.all([
       kv.getItem(K_PROFILE),
       kv.getItem(K_ESCROWS),
       kv.getItem(K_INVITES),
       kv.getItem(K_LINKS),
       kv.getItem(K_TC_INTAKES),
+      kv.getItem(K_BUYER_INTAKES),
     ]);
     data.profile = p ? (JSON.parse(p) as RealtorProfile) : null;
     if (data.profile) {
@@ -606,6 +654,25 @@ export function createStore(kv: KV): Store {
         data.tcIntakes = {};
       }
     }
+    // Buyer intake cache (Oct 1, 2026): rows are defensively normalized —
+    // a corrupt persisted row renders "Not provided", never crashes.
+    data.buyerIntakes = {};
+    if (b) {
+      try {
+        const parsed = JSON.parse(b) as Record<string, BuyerIntakeRow>;
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v && typeof v.escrowId === 'string') {
+            data.buyerIntakes[k] = {
+              escrowId: v.escrowId,
+              data: normalizeBuyerIntake(v.data),
+              updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '',
+            };
+          }
+        }
+      } catch {
+        data.buyerIntakes = {};
+      }
+    }
     data.loaded = true;
   }
 
@@ -616,6 +683,7 @@ export function createStore(kv: KV): Store {
       kv.setItem(K_INVITES, JSON.stringify(data.invites)),
       kv.setItem(K_LINKS, JSON.stringify(data.links)),
       kv.setItem(K_TC_INTAKES, JSON.stringify(data.tcIntakes)),
+      kv.setItem(K_BUYER_INTAKES, JSON.stringify(data.buyerIntakes)),
     ]);
   }
 
@@ -634,6 +702,7 @@ export function createStore(kv: KV): Store {
         invites: data.invites,
         links: data.links,
         tcIntakes: data.tcIntakes,
+        buyerIntakes: data.buyerIntakes,
       }),
     ) as LocalSnapshot;
   }
@@ -1358,6 +1427,7 @@ export function createStore(kv: KV): Store {
       data.invites = p.snapshot.invites;
       data.links = p.snapshot.links;
       data.tcIntakes = p.snapshot.tcIntakes;
+      data.buyerIntakes = p.snapshot.buyerIntakes;
       await persist();
       return p.result;
     },
@@ -1367,6 +1437,68 @@ export function createStore(kv: KV): Store {
      * store's refreshTcIntake converges the confirmed row into this cache.
      */
     async refreshTcIntake(_escrowId: string): Promise<void> {
+      await ensureLoaded();
+    },
+
+    async getBuyerIntake(escrowId: string): Promise<BuyerIntakeRow | null> {
+      await ensureLoaded();
+      return data.buyerIntakes[escrowId] ?? null;
+    },
+
+    async previewSaveBuyerIntake(escrowId: string, intake: BuyerIntakeData): Promise<Preview<BuyerIntakeRow>> {
+      return previewFor((h) => {
+        const row: BuyerIntakeRow = {
+          escrowId,
+          data: normalizeBuyerIntake(intake),
+          updatedAt: new Date().toISOString(),
+        };
+        h.buyerIntakes[escrowId] = row;
+        return row;
+      });
+    },
+
+    async setBuyerIntakeCache(row: BuyerIntakeRow): Promise<void> {
+      await ensureLoaded();
+      data.buyerIntakes[row.escrowId] = {
+        escrowId: row.escrowId,
+        data: normalizeBuyerIntake(row.data),
+        updatedAt: row.updatedAt,
+      };
+      await persist();
+    },
+
+    /**
+     * Local-only intake write (preview + commit). The synced store's
+     * saveBuyerIntake (server-first, confirmed-or-loud) is what screens
+     * call; this exists so the Store contract is complete for local-only
+     * consumers and tests.
+     */
+    async saveBuyerIntake(escrowId: string, intake: BuyerIntakeData): Promise<BuyerIntakeRow> {
+      const p = await previewFor((h) => {
+        const row: BuyerIntakeRow = {
+          escrowId,
+          data: normalizeBuyerIntake(intake),
+          updatedAt: new Date().toISOString(),
+        };
+        h.buyerIntakes[escrowId] = row;
+        return row;
+      });
+      await ensureLoaded();
+      data.profile = p.snapshot.profile;
+      data.escrows = p.snapshot.escrows;
+      data.invites = p.snapshot.invites;
+      data.links = p.snapshot.links;
+      data.tcIntakes = p.snapshot.tcIntakes;
+      data.buyerIntakes = p.snapshot.buyerIntakes;
+      await persist();
+      return p.result;
+    },
+
+    /**
+     * No-op on the local store: there is no server to pull from. The synced
+     * store's refreshBuyerIntake converges the confirmed row into this cache.
+     */
+    async refreshBuyerIntake(_escrowId: string): Promise<void> {
       await ensureLoaded();
     },
 
@@ -1782,6 +1914,7 @@ export function createStore(kv: KV): Store {
       data.invites = p.snapshot.invites;
       data.links = p.snapshot.links;
       data.tcIntakes = p.snapshot.tcIntakes;
+      data.buyerIntakes = p.snapshot.buyerIntakes;
       await persist();
       return p.result;
     },

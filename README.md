@@ -232,6 +232,25 @@ central user; the buyers and sellers they represent are the other parties.
   The transaction coordinator's listing-side view gets a **"View listing
   details"** card below the top card that opens the saved intake read-only;
   buyer/seller views never see it.
+- **Buyer intake (Oct 2026)** — the full mirror of TC intake for the buy
+  side. On buyer-side escrows a **Buyer intake** row sits below the
+  time-tracker card (buy side always; dual-agency on the buyer tab only;
+  sell side never): a full-screen six-section form (**Agent**, **Buyers**,
+  **Offer terms**, **Dates**, **Contingencies**, **Property details**, in that
+  order) with up to three buyers and conditional fields (contingency days
+  fields revealed on Yes; HOA amount, solar leased/owned + amount). The
+  **offer address is an editable field** (not pulled from the escrow), both
+  dates (close of escrow, possession) are optional with clear controls
+  (never native date inputs), Yes/No segments always start unanswered, and a
+  gentle non-blocking note appears when down payment + loan does not equal
+  the purchase price. Drafts stay local until **Save** waits for server
+  confirmation (`buyer_intakes` table, migration 0034) with the same
+  confirmed-write contract; **Share with TC** copies a plain-text summary.
+  Fields the realtor already knows (agent name/email, buyer 1 name, address,
+  close date) come prefilled with an **"Auto-filled"** pill that disappears
+  once edited. The transaction coordinator's TC-side view gets a **"View
+  buyer details"** card below the listing-details card that opens the saved
+  intake read-only; buyer/seller client views never see it.
 
 **For buyers / sellers (clients)**
 

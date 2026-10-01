@@ -1358,3 +1358,27 @@ check-off copy; `tests/run.sh` wires both.
   fixture, fixed by making the fixture side-valid, not by weakening the
   rule. The share_screen text-scraping test had to follow the section
   definitions to their new file.
+- **Buyer intake mirror (Oct 1, 2026):** built the approved buyer-intake
+  mockup 08 as a full mirror of the TC intake architecture. Pattern that
+  worked: one generic renderer (`IntakeSections` in `TcIntakeEntry.tsx`)
+  shared by both intake entry components, one shared `YesNoSeg` extracted
+  byte-identical from the TC form, and one shared `AutoFilledPill` in
+  `ui.tsx` wired through `autoFilled` props on `Field` and both `DateField`
+  files (iOS/web parity). Pure logic lives in `src/lib/buyerIntake.ts` with
+  the same shape as `tcIntake.ts` (normalize with a 3-buyer cap, visible
+  field counting that skips hidden conditionals, section/share-text
+  builders, a 23-field base +3 per buyer block +1 per revealed days field).
+  Lesson: mirroring at the renderer level (not copy-pasting screens) keeps
+  the two intakes unable to drift — the buyer form screen, entry rows,
+  read-only TC route, store/cache, confirmed-write path, cloud sync, and
+  `get_client_view` tc-branch mapping are all one-for-one with TC intake.
+  The migration (`0034_buyer_intake.sql`) regenerates `get_client_view`
+  programmatically from the 0033 body and is verified byte-identical except
+  the three marked 0034 additions, so the 0031/0033 tc_intake contract
+  can't silently regress. Two catches during verification: (1) the new
+  `autoFilled` prop on the web `DateField` broke the pre-existing
+  keydate_clear structural guard that pinned the exact destructuring — the
+  guard was updated to the new signature with a dated comment, not
+  weakened; (2) `@expo/vector-icons` is not a project dependency, so the
+  add-buyer control mirrors the TC screen's plain-text "+ Add another
+  buyer" instead of an icon.

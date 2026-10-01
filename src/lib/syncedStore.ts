@@ -26,7 +26,7 @@
 // session / RLS blocking) the app behaves exactly as the local-only v1 —
 // sync stays dormant.
 
-import { createStore, readPendingStepDeletions, clearPendingStepDeletions, type CancelEscrowResult, type CloseEscrowResult, type KV, type LocalSnapshot, type Preview, type RevokedClientLink, type Store, type TcIntakeRow } from './store';
+import { createStore, readPendingStepDeletions, clearPendingStepDeletions, type CancelEscrowResult, type CloseEscrowResult, type KV, type LocalSnapshot, type Preview, type RevokedClientLink, type Store, type TcIntakeRow, type BuyerIntakeRow } from './store';
 import type {
   ApplyChecklistResult,
   ChecklistDraftStep,
@@ -72,6 +72,8 @@ import {
   isClosedEscrowRejection,
   pullTcIntake,
   pushTcIntakeNow,
+  pullBuyerIntake,
+  pushBuyerIntakeNow,
   withWriteTimeout,
   WriteTimeoutError,
   type Cloud,
@@ -80,6 +82,7 @@ import {
 } from './cloudSync';
 import type { MediaKind } from './mediaUpload';
 import type { TcIntakeData } from './tcIntake';
+import type { BuyerIntakeData } from './buyerIntake';
 import { deleteMediaAtPath, storagePathFromUrl } from './mediaUpload';
 import {
   classifySyncError,
@@ -1069,6 +1072,55 @@ export function createSyncedStore(
         // a failed pull) and the failure is logged for diagnostics. The
         // transaction screen keeps rendering the last confirmed snapshot.
         console.warn('pullTcIntake failed', err);
+      }
+    },
+
+    /**
+     * Buyer intake (Oct 1, 2026, Anuraj-approved mockup 08): server-first
+     * confirmed write of the buyer details for one escrow. The live
+     * data and the persisted cache stay untouched until the server
+     * confirms the upsert; any failure throws a plain-language error
+     * and leaves the previously confirmed snapshot intact.
+     */
+    saveBuyerIntake: async (escrowId: string, data: BuyerIntakeData): Promise<BuyerIntakeRow> => {
+      return confirmedWrite<BuyerIntakeRow>(
+        `buyer-intake:${escrowId}`,
+        () => local.previewSaveBuyerIntake(escrowId, data),
+        async ({ c, uid }) => {
+          await pushBuyerIntakeNow(c, uid, escrowId, data);
+        },
+      );
+    },
+
+    /** Last confirmed intake from the local cache; null when never saved. */
+    getBuyerIntake: (escrowId: string) => local.getBuyerIntake(escrowId),
+    // Local preview/cache helpers delegate straight through.
+    previewSaveBuyerIntake: (escrowId: string, intake: BuyerIntakeData) => local.previewSaveBuyerIntake(escrowId, intake),
+    setBuyerIntakeCache: (row: BuyerIntakeRow) => local.setBuyerIntakeCache(row),
+
+    /**
+     * Converge the server's confirmed intake into the local cache (pure
+     * pull on open/foreground — never overrides the server). Never
+     * throws: a missing row or a read failure just leaves the cache
+     * as-is.
+     */
+    refreshBuyerIntake: async (escrowId: string): Promise<void> => {
+      const session = await serverSession();
+      if (!session) return;
+      try {
+        const pulled = await pullBuyerIntake(session.c, escrowId);
+        if (pulled) {
+          await local.setBuyerIntakeCache({
+            escrowId,
+            data: pulled,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        // Read failed: the confirmed cache stays as-is (never cleared by
+        // a failed pull) and the failure is logged for diagnostics. The
+        // transaction screen keeps rendering the last confirmed snapshot.
+        console.warn('pullBuyerIntake failed', err);
       }
     },
 

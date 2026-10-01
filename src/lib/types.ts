@@ -377,4 +377,6 @@ export interface TcView {
    * contain it. Null when the realtor has not saved anything yet.
    */
   tcIntake?: import('./tcIntake').TcIntakeData | null;
+  /** Buyer intake (Oct 1, 2026, mockup 08): the tc payload only. */
+  buyerIntake?: import('./buyerIntake').BuyerIntakeData | null;
 }

@@ -44,6 +44,7 @@ import { applyDerivedStatus } from './lifecycle';
 import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMedia, type MediaKind } from './mediaUpload';
 import { backfillTemplateKey } from './steps';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
+import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -679,6 +680,10 @@ function mapTcSteps(
     // Buyer/seller payloads never carry it — enforced in buildRpcClientView
     // by construction (no tcIntake key there at all).
     tcIntake: d.tc_intake ? normalizeTcIntake(d.tc_intake) : null,
+    // Buyer intake (Oct 1, 2026, mockup 08): carried on the tc payload only
+    // (migration 0034 embeds it in the tc branch of get_client_view).
+    // Buyer/seller payloads never carry it.
+    buyerIntake: d.buyer_intake ? normalizeBuyerIntake(d.buyer_intake) : null,
   };
 }
 
@@ -1000,6 +1005,61 @@ export async function pullTcIntake(
   if (error) throw error;
   if (!row) return null;
   return normalizeTcIntake((row as { data?: unknown }).data);
+}
+
+/**
+ * Server-confirmed buyer intake upsert (Oct 1, 2026, mockup 08): one row
+ * per escrow in buyer_intakes (migration 0034). Confirmed-or-loud like
+ * every other write — throws on a missing table or RLS rejection; no
+ * silent legacy fallback.
+ */
+export async function pushBuyerIntakeNow(
+  client: Cloud,
+  userId: string,
+  escrowId: string,
+  data: BuyerIntakeData,
+): Promise<void> {
+  // upsertAll verifies the affected row count (the same confirmed-write
+  // discipline as every other table): an RLS rejection looks like a
+  // success without the RETURNING check.
+  await upsertAll(
+    client,
+    'buyer_intakes',
+    [
+      {
+        escrow_id: escrowId,
+        owner_id: userId,
+        data: normalizeBuyerIntake(data),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+    'escrow_id',
+  );
+}
+
+/**
+ * Get the confirmed buyer intake for a realtor-owned escrow. Returns null
+ * when nothing is saved yet, and when the table does not exist (a fresh
+ * install before migration 0034 runs): a missing intake is a legitimate
+ * state, never an error on the read path.
+ */
+export async function pullBuyerIntake(
+  client: Cloud,
+  escrowId: string,
+): Promise<BuyerIntakeData | null> {
+  const { data: row, error } = await client
+    .from('buyer_intakes')
+    .select('data')
+    .eq('escrow_id', escrowId)
+    .maybeSingle();
+  // A read error (migration 0034 not applied yet, offline, RLS) is a
+  // failure, not "nothing saved" — conflating the two would let a broken
+  // read silently masquerade as an empty intake. The single caller
+  // (refreshBuyerIntake) catches this, keeps the cached snapshot, and logs
+  // the diagnostic; the transaction screen is never blocked.
+  if (error) throw error;
+  if (!row) return null;
+  return normalizeBuyerIntake((row as { data?: unknown }).data);
 }
 
 /** Push one escrow and ALL of its steps (both roles) — idempotent. */

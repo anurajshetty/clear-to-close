@@ -114,19 +114,19 @@ export function TcEntryCard({
 
 
 /**
- * Read-only section renderer (mockup ⑤): all six sections, label + value
- * rows, unfilled values in the muted "Not provided" treatment. Shared by
- * the TC details page and the realtor's LOCKED intake form (closed/
- * cancelled escrows) — one renderer, no divergent copies.
+ * Generic read-only section renderer (Oct 1, 2026, buyer intake mockup 08):
+ * the TcIntakeSections layout factored out so the buyer intake reuses the
+ * exact same renderer — one renderer, no divergent copies. Accepts any
+ * section list with the {title, rows: {label, value, provided}} shape.
  */
-export function TcIntakeSections({
-  data,
-  fullAddress,
+export function IntakeSections({
+  sections,
 }: {
-  data: TcIntakeData;
-  fullAddress: string;
+  sections: {
+    title: string;
+    rows: { label: string; value: string; provided: boolean }[];
+  }[];
 }) {
-  const sections = buildTcIntakeSections(data, fullAddress);
   return (
     <View style={styles.detailsCard}>
       <Kicker>From your realtor</Kicker>
@@ -148,6 +148,22 @@ export function TcIntakeSections({
       ))}
     </View>
   );
+}
+
+/**
+ * Read-only section renderer (mockup ⑤): all six sections, label + value
+ * rows, unfilled values in the muted "Not provided" treatment. Shared by
+ * the TC details page and the realtor's LOCKED intake form (closed/
+ * cancelled escrows) — one renderer, no divergent copies.
+ */
+export function TcIntakeSections({
+  data,
+  fullAddress,
+}: {
+  data: TcIntakeData;
+  fullAddress: string;
+}) {
+  return <IntakeSections sections={buildTcIntakeSections(data, fullAddress)} />;
 }
 
 const styles = StyleSheet.create({

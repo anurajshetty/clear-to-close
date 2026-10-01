@@ -163,9 +163,11 @@ async function main(): Promise<void> {
 
   // ---- 3. the × affordance: web DateField ----
   // (The web file imports DateFieldProps from the native file, so the prop
-  // itself is pinned above; here we pin that web destructures and uses it.)
+  // itself is pinned above; here we pin that web destructures and uses it.
+  // Oct 1, 2026: autoFilled joined the destructuring for the buyer-intake
+  // "Auto-filled" pill — onClear pinning is unchanged.)
   assert(
-    /function DateField\(\{ label, value, onChange, onClear, testID \}/.test(dateFieldWeb),
+    /function DateField\(\{ label, value, onChange, onClear, autoFilled, testID \}/.test(dateFieldWeb),
     'web DateField destructures onClear',
   );
   assert(/!!onClear/.test(dateFieldWeb), 'web × renders only where onClear is passed');

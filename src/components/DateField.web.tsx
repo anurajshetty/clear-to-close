@@ -13,19 +13,27 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius } from '../theme';
+import { AutoFilledPill } from './ui';
 import type { DateFieldProps } from './DateField';
 
 // Same glyph as the native DateField clear control.
 const CLEAR_X_PATH =
   'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
-export default function DateField({ label, value, onChange, onClear, testID }: DateFieldProps) {
+export default function DateField({ label, value, onChange, onClear, autoFilled, testID }: DateFieldProps) {
   // '' is the only unset state on web (the native side additionally guards
   // with parseISODate; the form rejects invalid dates before they land).
   const canClear = !!onClear && !!value.trim();
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+      {autoFilled ? (
+        <View style={styles.labelRow}>
+          <Text style={styles.labelNoMargin}>{label}</Text>
+          <AutoFilledPill />
+        </View>
+      ) : (
+        <Text style={styles.label}>{label}</Text>
+      )}
       <View style={styles.fieldRow}>
         <input
           type="date"
@@ -77,6 +85,14 @@ const styles = StyleSheet.create({
   wrap: { marginTop: 16 },
   label: {
     fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8,
+  },
+  // Label row for the autoFilled pill (Oct 1, 2026, buyer intake): the row
+  // carries the 8px bottom margin the label used to carry alone.
+  labelRow: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: 8,
+  },
+  labelNoMargin: {
+    fontSize: 13, fontWeight: '700', color: colors.body,
   },
   fieldRow: {
     flexDirection: 'row',

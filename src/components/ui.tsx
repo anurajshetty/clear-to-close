@@ -203,7 +203,7 @@ export function EyeIcon({ shown }: { shown: boolean }) {
 export function Field({
   label, value, onChangeText, placeholder, multiline,
   secureTextEntry, keyboardType, autoCapitalize, autoCorrect, testID,
-  onFocus, onBlur, error, hint,
+  onFocus, onBlur, error, hint, autoFilled,
 }: {
   label: string; value: string; onChangeText: (t: string) => void;
   placeholder?: string; multiline?: boolean; testID?: string;
@@ -220,6 +220,12 @@ export function Field({
   error?: string | null;
   /** Helper line shown under the field (Oct 2026). */
   hint?: string | null;
+  /**
+   * "Auto-filled" pill after the label (Oct 1, 2026, buyer intake mockup
+   * 08): marks fields the app pre-filled. Purely additive — existing
+   * callers render byte-identical output.
+   */
+  autoFilled?: boolean;
 }) {
   // Show/hide toggle (Sept 2026): every password field gets the approved
   // eye icon inside the field, toggling secureTextEntry. Text fields are
@@ -228,7 +234,14 @@ export function Field({
   const isPassword = !!secureTextEntry;
   return (
     <View style={styles.fieldWrap}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      {autoFilled ? (
+        <View style={styles.fieldLabelRow}>
+          <Text style={styles.fieldLabelNoMargin}>{label}</Text>
+          <AutoFilledPill />
+        </View>
+      ) : (
+        <Text style={styles.fieldLabel}>{label}</Text>
+      )}
       <View style={isPassword && styles.fieldPwrap}>
         <TextInput
           value={value}
@@ -273,6 +286,20 @@ export function Field({
 
 // Chrome around the sheet's scroll region: grabber + sheet vertical padding.
 const SHEET_CHROME = 80;
+
+/**
+ * "Auto-filled" pill (Oct 1, 2026, buyer intake mockup 08): marks a field
+ * the app pre-filled from the profile or escrow. Rendered inline after the
+ * field label; disappears once the realtor edits the field. Shared by
+ * Field and DateField — one pill, no divergent copies.
+ */
+export function AutoFilledPill() {
+  return (
+    <View style={styles.autoFilledPill} testID="auto-filled-pill" aria-hidden={true}>
+      <Text style={styles.autoFilledPillText}>Auto-filled</Text>
+    </View>
+  );
+}
 
 /**
  * Height of the software keyboard in px, 0 when hidden. Web tracks
@@ -500,6 +527,25 @@ const styles = StyleSheet.create({
   btnSecondaryText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   fieldWrap: { marginTop: 16 },
   fieldLabel: { fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8 },
+  // Label row for the autoFilled pill (Oct 1, 2026, buyer intake): the row
+  // carries the 8px bottom margin the label used to carry alone, so the
+  // pill sits inline without shifting the field.
+  fieldLabelRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  fieldLabelNoMargin: { fontSize: 13, fontWeight: '700', color: colors.body },
+  autoFilledPill: {
+    marginLeft: 7,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 9,
+  },
+  autoFilledPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    color: colors.accent,
+  },
   fieldError: { fontSize: 13, color: colors.red, marginTop: 6, lineHeight: 18 },
   fieldHint: { fontSize: 12.5, color: colors.muted, marginTop: 6, lineHeight: 17 },
   fieldInputError: { borderColor: colors.red },

@@ -13,6 +13,7 @@ import DateTimePicker, {
 } from '@react-native-community/datetimepicker';
 import Svg, { Path } from 'react-native-svg';
 import { colors, radius } from '../theme';
+import { AutoFilledPill } from './ui';
 
 export interface DateFieldProps {
   label: string;
@@ -28,6 +29,11 @@ export interface DateFieldProps {
    * 44pt target, pressed opacity — no new design language.
    */
   onClear?: () => void;
+  /**
+   * "Auto-filled" pill after the label (Oct 1, 2026, buyer intake mockup
+   * 08). Purely additive — existing callers render byte-identical output.
+   */
+  autoFilled?: boolean;
   testID?: string;
 }
 
@@ -56,7 +62,7 @@ function parseISODate(s: string): Date | null {
 const CLEAR_X_PATH =
   'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
 
-export default function DateField({ label, value, onChange, onClear, testID }: DateFieldProps) {
+export default function DateField({ label, value, onChange, onClear, autoFilled, testID }: DateFieldProps) {
   // Collapsed until the user taps the field (Sept 28, 2026: the calendar
   // used to render expanded inline on sheet open, with no way to dismiss).
   const [open, setOpen] = React.useState(false);
@@ -78,7 +84,14 @@ export default function DateField({ label, value, onChange, onClear, testID }: D
   };
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+      {autoFilled ? (
+        <View style={styles.labelRow}>
+          <Text style={styles.labelNoMargin}>{label}</Text>
+          <AutoFilledPill />
+        </View>
+      ) : (
+        <Text style={styles.label}>{label}</Text>
+      )}
       <View style={styles.fieldRow}>
         <Pressable
           style={[styles.box, styles.boxFill]}
@@ -126,6 +139,14 @@ const styles = StyleSheet.create({
   wrap: { marginTop: 16 },
   label: {
     fontSize: 13, fontWeight: '700', color: colors.body, marginBottom: 8,
+  },
+  // Label row for the autoFilled pill (Oct 1, 2026, buyer intake): the row
+  // carries the 8px bottom margin the label used to carry alone.
+  labelRow: {
+    flexDirection: 'row', alignItems: 'center', marginBottom: 8,
+  },
+  labelNoMargin: {
+    fontSize: 13, fontWeight: '700', color: colors.body,
   },
   // The field box and the (optional) clear × sit in a row: the box fills
   // the row exactly as it filled the column before, so fields without a

@@ -26,6 +26,10 @@ import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard } from '../../src/components/TcIntakeEntry';
 import { describeTcIntakeStatus, showTcIntakeForRealtorSide } from '../../src/lib/tcIntake';
+import {
+  describeBuyerIntakeStatus,
+  showBuyerIntakeForRealtorSide,
+} from '../../src/lib/buyerIntake';
 import { EditableChecklist } from '../../src/components/Checklist';
 import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight } from '../../src/components/ui';
 import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
@@ -89,6 +93,57 @@ function TcIntakeEntryRow({
       accessibilityLabel={`TC intake. ${status.text}.`}
       accessibilityHint="Opens the editable TC intake form for the listing."
       testID="tc-intake-entry"
+    />
+  );
+}
+
+/**
+ * Buyer intake entry row (Oct 1, 2026, mockup 08 device ①): the entry point
+ * to the buyer intake form, directly below the time tracker — buyer-side
+ * escrows only (seller-only escrows and the seller tab of dual-agency
+ * never see it). "Not started" + chevron until anything is saved, then
+ * "X of Y filled"/"Complete" + the pencil-once-saved. Tapping always
+ * opens the editable form (read-only on closed/cancelled escrows).
+ * Reuses the TcEntryCard structural component — one card component for
+ * both intake entries.
+ */
+function BuyerIntakeEntryRow({
+  escrowId,
+  side,
+  tab,
+}: {
+  escrowId: string;
+  side: 'buy' | 'sell' | 'both';
+  tab: ClientRole;
+}) {
+  const rowRouter = useRouter();
+  const [status, setStatus] = useState(describeBuyerIntakeStatus(null));
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      (async () => {
+        // Server is the source of truth: pure pull first (never throws),
+        // then read the converged cache for the status line.
+        await store.refreshBuyerIntake(escrowId);
+        const row = await store.getBuyerIntake(escrowId);
+        if (!cancelled) setStatus(describeBuyerIntakeStatus(row ? row.data : null));
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [escrowId]),
+  );
+  if (!showBuyerIntakeForRealtorSide(side, tab === 'seller' ? 'seller' : 'buyer')) return null;
+  return (
+    <TcEntryCard
+      title="Buyer intake"
+      caption={status.text}
+      icon="clipboard"
+      trailing={status.started ? 'pencil' : 'chevron'}
+      onPress={() => rowRouter.push(`/buyer-intake/${escrowId}`)}
+      accessibilityLabel={`Buyer intake. ${status.text}.`}
+      accessibilityHint="Opens the editable buyer intake form."
+      testID="buyer-intake-entry"
     />
   );
 }
@@ -641,6 +696,7 @@ export default function TransactionDetail() {
               closeDate={escrow.closeDate}
             />
             <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
+            <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -698,6 +754,7 @@ export default function TransactionDetail() {
                   closeDate={escrow.closeDate}
                 />
                 <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
+                <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
                 {renderChecklistHead(role)}
                 {renderLifecycle(role)}
               </View>
