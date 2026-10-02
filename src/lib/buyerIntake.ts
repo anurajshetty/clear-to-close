@@ -271,8 +271,56 @@ export function checkBuyerIntakeMath(data: BuyerIntakeData): string | null {
   const down = parse(data.downPayment);
   const loan = parse(data.loanAmount);
   if (price === null || down === null || loan === null) return null;
-  if (Math.abs(price - (down + loan)) < 0.005) return null;
-  return 'Purchase price does not match down payment plus loan amount. Worth a second look.';
+  // The deposit is buyer funds applied to the purchase (RPA structure:
+  // price = deposit + down payment + loan). Empty deposit counts as 0;
+  // the check still requires price/down/loan to be filled.
+  const deposit = parse(data.deposit) ?? 0;
+  if (Math.abs(price - (deposit + down + loan)) < 0.005) return null;
+  return 'Purchase price does not match the deposit, down payment, and loan amount. Worth a second look.';
+}
+
+/**
+ * Conditional required validation (Anuraj, Oct 1, 2026): when a yes/no
+ * toggle is 'yes', its follow-up field is required. Runs in onSave only —
+ * never while typing. Returns a field-key -> error-copy map; empty means
+ * valid. Numeric follow-ups (days, amounts) must also be valid positive
+ * numbers — they feed the client Key Dates, so garbage breaks downstream
+ * computation. An unanswered toggle ('') skips the pair (question not
+ * reached); 'no' clears the follow-ups in the form's onChange handlers.
+ */
+export function validateBuyerIntakeConditional(data: BuyerIntakeData): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const requirePositiveNumber = (
+    key: 'investigationDays' | 'appraisalDays' | 'loanDays' | 'hoaAmount' | 'solarAmount',
+    emptyCopy: string,
+  ) => {
+    const raw = data[key].trim();
+    if (raw === '') {
+      errors[key] = emptyCopy;
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) errors[key] = 'Enter a number.';
+  };
+  if (data.investigation === 'yes') {
+    requirePositiveNumber('investigationDays', 'Enter the investigation period in days.');
+  }
+  if (data.appraisal === 'yes') {
+    requirePositiveNumber('appraisalDays', 'Enter the appraisal period in days.');
+  }
+  if (data.loan === 'yes') {
+    requirePositiveNumber('loanDays', 'Enter the loan period in days.');
+  }
+  if (data.hoa === 'yes') {
+    requirePositiveNumber('hoaAmount', 'Enter the HOA amount per month.');
+  }
+  if (data.solar === 'yes') {
+    if (data.solarLeasedOwned === '') {
+      errors.solarLeasedOwned = 'Say whether the solar is leased or owned.';
+    }
+    requirePositiveNumber('solarAmount', 'Enter the solar amount.');
+  }
+  return errors;
 }
 
 const NOT_PROVIDED = 'Not provided';

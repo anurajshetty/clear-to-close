@@ -1,7 +1,9 @@
 // Clear to Close — realtor sign-up (approved onboarding/auth ⑰).
 // Step 1 of 2. Full name + email + password (8+ chars to enable).
-// Duplicate email → "An account with this email already exists" + login path.
-// Network failure is retry-safe: no local state is written on failure.
+// Duplicate email → "Account already exists. Try logging in." + login path.
+// Email confirmation required → form hides, check-inbox card only (with
+// login / back-to-sign-up / resend actions). Network failure is retry-safe:
+// no local state is written on failure.
 import React, { useState } from 'react';
 import {
   Pressable,
@@ -28,12 +30,42 @@ export default function SignUp() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<SignUpErrorCode | null>(null);
   const [busy, setBusy] = useState(false);
+  // Resend-confirmation state (check-inbox card only). Errors render inline
+  // inside the card; the card itself never leaves the screen for a resend.
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendError, setResendError] = useState<'rate_limited' | 'network' | 'unknown' | null>(null);
 
   const passwordShort = password.length > 0 && password.length < 8;
   const canSubmit =
     name.trim().length > 0 && email.trim().length > 0 && password.length >= 8 && !busy;
 
   const clearError = () => setError(null);
+
+  // "Didn't get the email? Resend" — re-sends the signup confirmation to
+  // the entered address. Rate limiting surfaces the existing rate_limited
+  // copy inline; the inbox card stays put.
+  const onResend = async () => {
+    if (resendBusy) return;
+    setResendBusy(true);
+    setResendError(null);
+    try {
+      const r = await auth.resendConfirmation(email);
+      if (!r.ok) {
+        setResendError(r.code === 'rate_limited' ? 'rate_limited' : r.code === 'network' ? 'network' : 'unknown');
+      }
+      // Success → no error; the card stays as-is.
+    } finally {
+      setResendBusy(false);
+    }
+  };
+
+  // "Back to sign up" — clears the card and restores the form. Name, email
+  // and password live in ephemeral component state only (never persisted,
+  // never logged) so they are intact; they drop on unmount.
+  const onBackToSignUp = () => {
+    setResendError(null);
+    setError(null);
+  };
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -49,6 +81,9 @@ export default function SignUp() {
       await auth.setRole('realtor');
       await auth.setHasAccount(true);
       await auth.setPendingProfileName(name.trim());
+      // Fallback sign-in on an existing account: arm the one-time
+      // "we've signed you in" notice for profile-create.
+      if (res.existingAccount) await auth.setExistingAccountNotice();
       try {
         await initCloudSync();
       } catch {
@@ -66,91 +101,11 @@ export default function SignUp() {
         contentContainerStyle={[styles.content, { paddingBottom: kbHeight }]}
         keyboardShouldPersistTaps="handled"
       >
-        <BackChevron label="Role" onPress={() => router.push('/role')} />
-        <Kicker>Step 1 of 2 · Realtor</Kicker>
-        <Text style={styles.h1}>Create your account</Text>
-        <Text style={styles.sub}>
-          One account runs all your escrows. You stay signed in on this device until you log out.
-        </Text>
-
-        <View style={styles.form}>
-          <Field
-            label="Full name"
-            value={name}
-            onChangeText={(t) => { setName(t); clearError(); }}
-            placeholder="e.g. Maya Chen"
-            autoCapitalize="words"
-          />
-          <Field
-            label="Email"
-            value={email}
-            onChangeText={(t) => { setEmail(t); clearError(); }}
-            placeholder="you@brokerage.com"
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Field
-            label="Password"
-            value={password}
-            onChangeText={(t) => { setPassword(t); clearError(); }}
-            placeholder="8+ characters"
-            secureTextEntry
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {passwordShort ? (
-            <Text style={styles.inlineHint}>Use at least 8 characters.</Text>
-          ) : null}
-          {error === 'weak_password' ? (
-            <Text style={styles.inlineError}>
-              That password doesn&apos;t meet the requirements. Try a longer one.
-            </Text>
-          ) : null}
-        </View>
-
-        <View style={styles.cta}>
-          <PrimaryButton
-            title={busy ? 'Creating account…' : 'Create account'}
-            onPress={onSubmit}
-            disabled={!canSubmit}
-          />
-        </View>
-
-        {error === 'duplicate_email' ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>An account with this email already exists</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => router.push('/login')}
-              style={styles.errorLinkWrap}
-            >
-              <Text style={styles.errorLink}>Log in instead →</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        {error === 'network' ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Couldn&apos;t reach the server</Text>
-            <Text style={styles.errorSub}>Check your connection and try again. Nothing was created.</Text>
-          </View>
-        ) : null}
-        {error === 'unconfigured' ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Sign-up isn&apos;t available right now</Text>
-            <Text style={styles.errorSub}>Please try again later.</Text>
-          </View>
-        ) : null}
-        {error === 'rate_limited' ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Too many sign-up attempts</Text>
-            <Text style={styles.errorSub}>
-              Please wait a few minutes and try again. No account was created.
-            </Text>
-          </View>
-        ) : null}
         {error === 'email_confirmation_required' ? (
-          <View style={styles.errorCard}>
+          // Check-inbox state: the form (and its Create account button)
+          // hides entirely — re-taps would burn the 2/hour resend budget.
+          // Only the card shows, with login / back / resend actions.
+          <View style={styles.errorCard} testID="check-inbox-card">
             <Text style={styles.errorTitle}>Check your inbox</Text>
             <Text style={styles.errorSub}>
               Confirm your email, then log in to continue.
@@ -162,23 +117,143 @@ export default function SignUp() {
             >
               <Text style={styles.errorLink}>Go to login →</Text>
             </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onBackToSignUp}
+              style={styles.errorLinkWrap}
+              testID="back-to-signup"
+            >
+              <Text style={styles.errorLinkSecondary}>Back to sign up</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={onResend}
+              disabled={resendBusy}
+              style={styles.errorLinkWrap}
+              testID="resend-confirmation"
+            >
+              <Text style={styles.errorLinkSecondary}>
+                {resendBusy ? 'Sending…' : "Didn't get the email? Resend"}
+              </Text>
+            </Pressable>
+            {resendError === 'rate_limited' ? (
+              <Text style={styles.inlineError} testID="resend-rate-limited">
+                Too many sign-up attempts. Please wait a few minutes and try again.
+              </Text>
+            ) : null}
+            {resendError === 'network' ? (
+              <Text style={styles.inlineError}>
+                Couldn&apos;t reach the server. Check your connection and try again.
+              </Text>
+            ) : null}
+            {resendError === 'unknown' ? (
+              <Text style={styles.inlineError}>
+                Something went wrong. Please try again.
+              </Text>
+            ) : null}
           </View>
-        ) : null}
-        {error === 'unknown' ? (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorTitle}>Something went wrong</Text>
-            <Text style={styles.errorSub}>Please try again.</Text>
-          </View>
-        ) : null}
+        ) : (
+          <>
+            <BackChevron label="Role" onPress={() => router.push('/role')} />
+            <Kicker>Step 1 of 2 · Realtor</Kicker>
+            <Text style={styles.h1}>Create your account</Text>
+            <Text style={styles.sub}>
+              One account runs all your escrows. You stay signed in on this device until you log out.
+            </Text>
 
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => router.push('/login')}
-          style={styles.loginRow}
-        >
-          <Text style={styles.loginText}>Already have an account? </Text>
-          <Text style={styles.loginLink}>Log in</Text>
-        </Pressable>
+            <View style={styles.form}>
+              <Field
+                label="Full name"
+                value={name}
+                onChangeText={(t) => { setName(t); clearError(); }}
+                placeholder="e.g. Maya Chen"
+                autoCapitalize="words"
+              />
+              <Field
+                label="Email"
+                value={email}
+                onChangeText={(t) => { setEmail(t); clearError(); }}
+                placeholder="you@brokerage.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Field
+                label="Password"
+                value={password}
+                onChangeText={(t) => { setPassword(t); clearError(); }}
+                placeholder="8+ characters"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {passwordShort ? (
+                <Text style={styles.inlineHint}>Use at least 8 characters.</Text>
+              ) : null}
+              {error === 'weak_password' ? (
+                <Text style={styles.inlineError}>
+                  That password doesn&apos;t meet the requirements. Try a longer one.
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={styles.cta}>
+              <PrimaryButton
+                title={busy ? 'Creating account…' : 'Create account'}
+                onPress={onSubmit}
+                disabled={!canSubmit}
+              />
+            </View>
+
+            {error === 'duplicate_email' ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Account already exists. Try logging in.</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => router.push('/login')}
+                  style={styles.errorLinkWrap}
+                >
+                  <Text style={styles.errorLink}>Log in instead →</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {error === 'network' ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Couldn&apos;t reach the server</Text>
+                <Text style={styles.errorSub}>Check your connection and try again. Nothing was created.</Text>
+              </View>
+            ) : null}
+            {error === 'unconfigured' ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Sign-up isn&apos;t available right now</Text>
+                <Text style={styles.errorSub}>Please try again later.</Text>
+              </View>
+            ) : null}
+            {error === 'rate_limited' ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Too many sign-up attempts</Text>
+                <Text style={styles.errorSub}>
+                  Please wait a few minutes and try again. No account was created.
+                </Text>
+              </View>
+            ) : null}
+            {error === 'unknown' ? (
+              <View style={styles.errorCard}>
+                <Text style={styles.errorTitle}>Something went wrong</Text>
+                <Text style={styles.errorSub}>Please try again.</Text>
+              </View>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => router.push('/login')}
+              style={styles.loginRow}
+            >
+              <Text style={styles.loginText}>Already have an account? </Text>
+              <Text style={styles.loginLink}>Log in</Text>
+            </Pressable>
+          </>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -211,6 +286,7 @@ const styles = StyleSheet.create({
   errorSub: { fontSize: 14, color: colors.body, lineHeight: 20, marginTop: 4 },
   errorLinkWrap: { marginTop: 8, alignSelf: 'flex-start' },
   errorLink: { fontSize: 15, fontWeight: '700', color: colors.accent },
+  errorLinkSecondary: { fontSize: 15, fontWeight: '600', color: colors.body },
   loginRow: {
     flexDirection: 'row',
     justifyContent: 'center',

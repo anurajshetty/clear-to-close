@@ -53,9 +53,12 @@ function mockClient(o: {
   signUp?: SignUpFn;
   signIn?: SignInFn;
   reset?: (email: string) => Promise<{ error?: { message?: string } | null }>;
+  resend?: (args: { type: 'signup'; email: string }) => Promise<{ error?: { message?: string; status?: number; code?: string } | null }>;
   session?: { user?: { id?: string; email?: string } } | null;
   updateUser?: (password: string) => Promise<{ error?: { message?: string } | null }>;
   signOutThrows?: boolean;
+  signOutError?: string;
+  signOutCalls?: Array<{ scope?: 'local' | 'global' | 'others' } | undefined>;
   onSignOut?: () => void;
 }): AuthClientLike {
   return {
@@ -63,9 +66,12 @@ function mockClient(o: {
       signUp: o.signUp ?? (async () => ({ data: {}, error: { message: 'not scripted' } })),
       signInWithPassword: o.signIn ?? (async () => ({ data: {}, error: { message: 'not scripted' } })),
       resetPasswordForEmail: o.reset ?? (async () => ({ error: null })),
-      signOut: async () => {
+      resend: o.resend ?? (async () => ({ error: null })),
+      signOut: async (opts?: { scope?: 'local' | 'global' | 'others' }) => {
+        if (o.signOutCalls) o.signOutCalls.push(opts);
         if (o.onSignOut) o.onSignOut();
         if (o.signOutThrows) throw new Error('signout boom');
+        if (o.signOutError) return { error: { message: o.signOutError } };
         return { error: null };
       },
       getSession: async () => ({ data: { session: o.session ?? null } }),
@@ -175,6 +181,84 @@ async function main(): Promise<void> {
       const res = await svc.changePassword('old-secret', 'brand-new-password');
       assert(!res.ok && (res as { code: string }).code === 'unconfigured', 'changepw: unconfigured -> unconfigured');
     }
+  }
+
+  // ------------------------------------------- M6b revoke-other-sessions ---
+  // Oct 2026: after ANY successful password update (change-password or
+  // recovery), every other live session is revoked via
+  // signOut({scope:'others'}) — a stolen refresh token must not survive the
+  // reset. If revocation fails, the password DID already change — the
+  // failure is LOUD ('revoke_failed'), never silent.
+  {
+    // changePassword: revokes others after a successful update.
+    const signOutCalls: Array<{ scope?: 'local' | 'global' | 'others' } | undefined> = [];
+    const svc = serviceFor(
+      mockClient({
+        session: { user: { id: UID, email: 'rita@example.com' } },
+        signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+        updateUser: async () => ({ error: null }),
+        signOutCalls,
+      }),
+    );
+    const res = await svc.changePassword('old-secret', 'brand-new-password');
+    assert(res.ok, 'M6b changepw: success still returns ok');
+    assert(signOutCalls.length === 1 && signOutCalls[0]?.scope === 'others',
+      'M6b changepw: revokes other sessions via signOut({scope:others})');
+  }
+  {
+    // changePassword: revocation returned-error -> revoke_failed (LOUD).
+    let updated = false;
+    const svc = serviceFor(
+      mockClient({
+        session: { user: { id: UID, email: 'rita@example.com' } },
+        signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+        updateUser: async () => { updated = true; return { error: null }; },
+        signOutError: 'revocation refused',
+      }),
+    );
+    const res = await svc.changePassword('old-secret', 'brand-new-password');
+    assert(updated, 'M6b changepw: the password update succeeded before revocation failed');
+    assert(!res.ok && res.code === 'revoke_failed',
+      'M6b changepw: failed revocation surfaces revoke_failed, never silent');
+  }
+  {
+    // changePassword: revocation throws -> revoke_failed (LOUD, not unknown).
+    const svc = serviceFor(
+      mockClient({
+        session: { user: { id: UID, email: 'rita@example.com' } },
+        signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+        updateUser: async () => ({ error: null }),
+        signOutThrows: true,
+      }),
+    );
+    const res = await svc.changePassword('old-secret', 'brand-new-password');
+    assert(!res.ok && res.code === 'revoke_failed', 'M6b changepw: throwing revocation -> revoke_failed');
+  }
+  {
+    // Recovery: revokes others after a successful password reset.
+    const signOutCalls: Array<{ scope?: 'local' | 'global' | 'others' } | undefined> = [];
+    const svc = serviceFor(
+      mockClient({
+        updateUser: async () => ({ error: null }),
+        signOutCalls,
+      }),
+    );
+    const res = await svc.setPasswordFromRecovery('brand-new-password');
+    assert(res.ok, 'M6b recovery: success still returns ok');
+    assert(signOutCalls.length === 1 && signOutCalls[0]?.scope === 'others',
+      'M6b recovery: revokes other sessions via signOut({scope:others})');
+  }
+  {
+    // Recovery: revocation failure -> revoke_failed (LOUD).
+    const svc = serviceFor(
+      mockClient({
+        updateUser: async () => ({ error: null }),
+        signOutThrows: true,
+      }),
+    );
+    const res = await svc.setPasswordFromRecovery('brand-new-password');
+    assert(!res.ok && res.code === 'revoke_failed',
+      'M6b recovery: failed revocation surfaces revoke_failed, never silent');
   }
 
   // ------------------------------------------------- sign-up edge cases ---
@@ -291,9 +375,117 @@ async function main(): Promise<void> {
       'sign-up no-session fallback auth failure -> email_confirmation_required');
   }
   {
+    // Signup fallback disambiguation (Anuraj, Oct 1, 2026): Supabase hides
+    // email enumeration on signup — an existing email returns a fake success
+    // with no session. If the fallback sign-in then fails with "Invalid
+    // login credentials", the account exists and the password was wrong:
+    // surface duplicate_email (the signup screen renders it with a login
+    // path), never the misleading "Check your inbox".
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: null }),
+        signIn: async () => ({ data: {}, error: { message: 'Invalid login credentials' } }),
+      }),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'wrongpassword');
+    assert(!r.ok && r.code === 'duplicate_email',
+      'sign-up fake success + invalid credentials -> duplicate_email (not email_confirmation_required)');
+  }
+  {
+    // Genuinely new unconfirmed signup: "Email not confirmed" still maps to
+    // the inbox nudge.
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: null }),
+        signIn: async () => ({ data: {}, error: { message: 'Email not confirmed' } }),
+      }),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
+    assert(!r.ok && r.code === 'email_confirmation_required',
+      'sign-up fake success + email not confirmed -> email_confirmation_required');
+  }
+  {
+    // Fallback sign-in succeeds (existing email + correct password): ok,
+    // flagged so the UI announces the sign-in instead of staying silent.
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: null }),
+        signIn: async () => ({ data: { user: { id: UID }, session: {} }, error: null }),
+      }),
+      memoryKV(),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'correctpassword');
+    assert(r.ok === true, 'sign-up fake success + fallback sign-in success -> ok');
+    assert(r.ok && r.existingAccount === true, 'fallback sign-in success sets existingAccount flag');
+    // The one-time notice arms and consumes exactly once.
+    await svc.setExistingAccountNotice();
+    assert(await svc.takeExistingAccountNotice() === true, 'notice take 1 -> true');
+    assert(await svc.takeExistingAccountNotice() === false, 'notice take 2 -> false (one-time)');
+  }
+  {
+    // Auditor hardening (Oct 2, 2026): an UNRECOGNIZED fallback error must
+    // fail loud-generic, never "check your inbox" on a guess.
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: null }),
+        signIn: async () => ({ data: {}, error: { message: 'Something unexpected happened' } }),
+      }),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
+    assert(!r.ok && r.code === 'unknown',
+      'sign-up fake success + unrecognized fallback error -> unknown (not email_confirmation_required)');
+  }
+  {
+    // Thrown unrecognized error takes the same generic path.
+    const svc = serviceFor(
+      mockClient({
+        signUp: async () => ({ data: {}, error: null }),
+        signIn: async () => { throw new Error('weird failure'); },
+      }),
+    );
+    const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
+    assert(!r.ok && r.code === 'unknown', 'sign-up fallback thrown unrecognized error -> unknown');
+  }
+  {
     const svc = serviceFor(null);
     const r = await svc.signUp('Rita', 'rita@x.com', 'longenoughpassword');
     assert(!r.ok && r.code === 'unconfigured', 'sign-up without a client -> unconfigured');
+  }
+
+  // --------------------------------------- resend confirmation edge cases ---
+  {
+    const svc = serviceFor(
+      mockClient({ resend: async () => ({ error: null }) }),
+    );
+    const r = await svc.resendConfirmation('rita@x.com');
+    assert(r.ok === true, 'resend confirmation success -> ok (no error)');
+  }
+  {
+    const svc = serviceFor(
+      mockClient({
+        resend: async () => ({
+          error: { message: 'email rate limit exceeded', status: 429, code: 'over_email_send_rate_limit' },
+        }),
+      }),
+    );
+    const r = await svc.resendConfirmation('rita@x.com');
+    assert(!r.ok && r.code === 'rate_limited', 'resend 429 over_email_send_rate_limit -> rate_limited');
+  }
+  {
+    const svc = serviceFor(
+      mockClient({
+        resend: async () => ({ error: { message: 'rate limit exceeded' } }),
+      }),
+    );
+    const r = await svc.resendConfirmation('rita@x.com');
+    assert(!r.ok && r.code === 'rate_limited', 'resend bare "rate limit" message -> rate_limited');
+  }
+  {
+    const svc = serviceFor(
+      mockClient({ resend: async () => { throw new TypeError('fetch failed'); } }),
+    );
+    const r = await svc.resendConfirmation('rita@x.com');
+    assert(!r.ok && r.code === 'network', 'resend network failure -> network');
   }
 
   // ---------------------------------------------------- login edge cases ---
@@ -407,6 +599,22 @@ async function main(): Promise<void> {
     await svc.signOut();
     assert((await kv.getItem('ctc:profileskipped')) === null, 'logout clears the profile-skipped flag');
     assert((await kv.getItem('ctc:pendingname')) === null, 'logout clears the pending profile name');
+  }
+  {
+    // H4 (Oct 2026): logout must clear the live multi-link array key, not
+    // just the legacy single-link key — a stale client link would boot the
+    // next user on this device straight into a client view.
+    const kv = memoryKV();
+    const svc = serviceFor(mockClient({}), kv);
+    await kv.setItem('ctc:clientlink', JSON.stringify({
+      linkId: 'lid-old', escrowId: 'eid-old', role: 'buyer', partyName: 'Priya Nair', deviceId: 'dev-1',
+    }));
+    await kv.setItem('ctc:clientlinks', JSON.stringify([
+      { linkId: 'lid-1', escrowId: 'eid-1', role: 'buyer', partyName: 'Priya Nair', deviceId: 'dev-1' },
+    ]));
+    await svc.signOut();
+    assert((await kv.getItem('ctc:clientlink')) === null, 'H4 logout: legacy clientlink key cleared');
+    assert((await kv.getItem('ctc:clientlinks')) === null, 'H4 logout: clientlinks array key cleared');
   }
 
   // ------------------------------------------------------- device state ----

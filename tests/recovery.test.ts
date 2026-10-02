@@ -40,6 +40,7 @@ function mockClient(o: {
       signUp: async () => ({ data: {}, error: { message: 'not scripted' } }),
       signInWithPassword: async () => ({ data: {}, error: { message: 'not scripted' } }),
       resetPasswordForEmail: o.reset ?? (async () => ({ error: null })),
+      resend: async () => ({ error: null }),
       signOut: async () => ({ error: null }),
       getSession: async () => ({ data: { session: null } }),
       updateUser: async (args: { password: string }) =>
@@ -83,6 +84,28 @@ async function main(): Promise<void> {
     assert(
       parseRecoveryLink('https://x.com/#access_token=AT&refresh_token=RT').kind === 'none',
       'parse: tokens without type=recovery -> none',
+    );
+
+    // L9 (Oct 2026): query-string tokens must NEVER be honored — the fragment
+    // is the only token carrier. Query params would land in server logs.
+    assert(
+      parseRecoveryLink('https://x.com/?access_token=AT&refresh_token=RT&type=recovery').kind === 'none',
+      'parse: query-string recovery tokens ignored -> none',
+    );
+    assert(
+      parseRecoveryLink('https://x.com/?error=access_denied&error_code=otp_expired&error_description=Expired').kind ===
+        'none',
+      'parse: query-string error params ignored -> none',
+    );
+    // A query string alongside a real fragment must not disturb fragment parsing.
+    const mixed = parseRecoveryLink(
+      'https://x.com/?utm_source=email#access_token=AT2&refresh_token=RT2&type=recovery',
+    );
+    assert(
+      mixed.kind === 'recovery' &&
+        (mixed as { accessToken: string }).accessToken === 'AT2' &&
+        (mixed as { refreshToken: string }).refreshToken === 'RT2',
+      'parse: fragment honored when a query string is also present',
     );
   }
 

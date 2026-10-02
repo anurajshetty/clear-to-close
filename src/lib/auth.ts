@@ -80,6 +80,12 @@ export type SignInErrorCode =
   | 'unconfigured'
   | 'unknown';
 
+/** True when a sign-in failure is Supabase's "Email not confirmed" shape. */
+export function isEmailNotConfirmedError(err: unknown): boolean {
+  const msg = String((err as { message?: string } | null)?.message ?? '');
+  return /email not confirmed/i.test(msg);
+}
+
 /** Map a Supabase signIn failure onto the app's login error codes. */
 export function mapSignInError(err: unknown): SignInErrorCode {
   if (isNetworkError(err)) return 'network';
@@ -106,6 +112,10 @@ export interface AuthClientLike {
     resetPasswordForEmail(
       email: string,
     ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
+    resend(args: {
+      type: 'signup';
+      email: string;
+    }): Promise<{ data?: unknown; error?: { message?: string; status?: number; code?: string } | null }>;
     setSession?(args: {
       access_token: string;
       refresh_token: string;
@@ -113,7 +123,9 @@ export interface AuthClientLike {
       data: { session?: { user?: { id?: string } } | null };
       error?: { message?: string } | null;
     }>;
-    signOut(): Promise<{ error?: { message?: string } | null }>;
+    signOut(options?: {
+      scope?: 'local' | 'global' | 'others';
+    }): Promise<{ error?: { message?: string } | null }>;
     getSession(): Promise<{
       data: { session?: { user?: { id?: string; email?: string } } | null };
     }>;
@@ -135,7 +147,7 @@ export interface AuthServiceDeps {
 export type RoleChoice = 'realtor' | 'client';
 
 export type SignUpResult =
-  | { ok: true; userId: string | null }
+  | { ok: true; userId: string | null; existingAccount?: boolean }
   | { ok: false; code: SignUpErrorCode };
 
 export type SignInResult =
@@ -144,11 +156,16 @@ export type SignInResult =
 
 export type ResetResult = { ok: true } | { ok: false; code: 'network' | 'unconfigured' };
 
+export type ResendResult =
+  | { ok: true }
+  | { ok: false; code: 'rate_limited' | 'network' | 'unconfigured' | 'unknown' };
+
 export type ChangePasswordErrorCode =
   | 'wrong_current'
   | 'weak_password'
   | 'network'
   | 'unconfigured'
+  | 'revoke_failed'
   | 'unknown';
 
 export type ChangePasswordResult =
@@ -194,6 +211,10 @@ export function validatePasswordReset(
  * the link is expired/invalid (`#error=…&error_description=…`). The client
  * runs with detectSessionInUrl: false, so the app parses the fragment
  * itself and hands the tokens to consumeRecoverySession.
+ *
+ * Fragment-only (L9, Oct 2026): query params are deliberately never read.
+ * A token in `?query=` would land in server/proxy logs; the fragment never
+ * leaves the device.
  */
 export type RecoveryLink =
   | { kind: 'recovery'; accessToken: string; refreshToken: string }
@@ -202,7 +223,6 @@ export type RecoveryLink =
 
 export function parseRecoveryLink(rawUrl: string): RecoveryLink {
   let hash = '';
-  let search = '';
   try {
     // Works for http(s) URLs, scheme URLs (clear-to-close://…), and bare
     // fragments. Bare "#…" strings fail the URL constructor on their own.
@@ -210,14 +230,14 @@ export function parseRecoveryLink(rawUrl: string): RecoveryLink {
       ? new URL(`x://x/${rawUrl}`)
       : new URL(rawUrl, 'x://x');
     hash = u.hash;
-    search = u.search;
   } catch {
     return { kind: 'none' };
   }
   const frag = hash.startsWith('#') ? hash.slice(1) : hash;
   const fp = new URLSearchParams(frag);
-  const qp = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
-  const get = (k: string) => fp.get(k) ?? qp.get(k);
+  // L9: fragment-only. The query string is intentionally ignored even when
+  // it carries token-shaped params (see docstring above).
+  const get = (k: string) => fp.get(k);
   if (get('error') || get('error_code')) {
     return {
       kind: 'recovery-error',
@@ -242,6 +262,7 @@ export type RecoverySetPasswordErrorCode =
   | 'weak_password'
   | 'network'
   | 'unconfigured'
+  | 'revoke_failed'
   | 'unknown';
 
 export type RecoverySetPasswordResult =
@@ -282,6 +303,7 @@ const K_CLIENT_LINK = 'ctc:clientlink';
 const K_CLIENT_LINKS = 'ctc:clientlinks';
 const K_PROFILE_SKIPPED = 'ctc:profileskipped';
 const K_PENDING_NAME = 'ctc:pendingname';
+const K_EXISTING_ACCOUNT_NOTICE = 'ctc:existingaccountnotice';
 const K_HAS_ACCOUNT = 'ctc:hasaccount';
 
 export function createAuthService(deps: AuthServiceDeps) {
@@ -347,6 +369,23 @@ export function createAuthService(deps: AuthServiceDeps) {
       return [single];
     }
     return [];
+  }
+
+  /**
+   * M6b (Oct 2026): after any successful password update, revoke every
+   * other live session — an attacker holding a stolen refresh token must
+   * not survive the reset. Runs client-side via the JWT-bearing session
+   * (Anuraj, Oct 1 — no edge function). Returns false when the revocation
+   * fails so the caller can surface 'revoke_failed' LOUDLY; the password
+   * update already succeeded, so the failure must never be swallowed.
+   */
+  async function revokeOtherSessions(client: AuthClientLike): Promise<boolean> {
+    try {
+      const { error } = await client.auth.signOut({ scope: 'others' });
+      return !error;
+    } catch {
+      return false;
+    }
   }
 
   return {
@@ -501,6 +540,29 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
     },
 
+    /**
+     * One-time "we've signed you in" notice for the signup fallback path
+     * (existing email + correct password). Set by the signup screen when
+     * the signUp result carries existingAccount; takeExistingAccountNotice
+     * consumes it so profile-create shows the banner exactly once.
+     */
+    async setExistingAccountNotice(): Promise<void> {
+      try {
+        await kv.setItem(K_EXISTING_ACCOUNT_NOTICE, '1');
+      } catch {
+        // best-effort
+      }
+    },
+    async takeExistingAccountNotice(): Promise<boolean> {
+      try {
+        const v = await kv.getItem(K_EXISTING_ACCOUNT_NOTICE);
+        await kv.removeItem(K_EXISTING_ACCOUNT_NOTICE);
+        return v === '1';
+      } catch {
+        return false;
+      }
+    },
+
     // -- realtor session ------------------------------------------------------
     async getSessionUserId(): Promise<string | null> {
       const client = deps.getClient();
@@ -564,15 +626,39 @@ export function createAuthService(deps: AuthServiceDeps) {
           });
           if (!again.error && again.data?.session) {
             await clearStaleClientLink();
-            return { ok: true, userId: again.data.user?.id ?? null };
+            // Fallback sign-in succeeded: this is an EXISTING account, not
+            // a new signup. Flag it so the UI can say so explicitly instead
+            // of silently logging the user in.
+            return { ok: true, userId: again.data.user?.id ?? null, existingAccount: true };
+          }
+          // Supabase hides email enumeration on signup: an existing email
+          // returns a fake success with no session. If the fallback sign-in
+          // then fails with "Invalid login credentials", the account exists
+          // and the password was wrong — surface duplicate_email, which the
+          // signup screen renders with a login path.
+          if (mapSignInError(again.error) === 'invalid_credentials') {
+            return { ok: false, code: 'duplicate_email' };
+          }
+          // Only an explicit "Email not confirmed" earns the inbox nudge.
+          // Anything unrecognized fails loud-generic (auditor hardening,
+          // Oct 2, 2026) — never "check your inbox" on a guess.
+          if (isEmailNotConfirmedError(again.error)) {
+            return { ok: false, code: 'email_confirmation_required' };
           }
         } catch (e) {
           // A network failure here is a connectivity problem, not a
           // confirmation requirement — label it so the UI offers a retry.
           if (isNetworkError(e)) return { ok: false, code: 'network' };
-          // fall through to the confirmation error
+          // A thrown invalid-credentials error carries the same signal.
+          if (mapSignInError(e) === 'invalid_credentials') {
+            return { ok: false, code: 'duplicate_email' };
+          }
+          if (isEmailNotConfirmedError(e)) {
+            return { ok: false, code: 'email_confirmation_required' };
+          }
+          // fall through to the generic error
         }
-        return { ok: false, code: 'email_confirmation_required' };
+        return { ok: false, code: 'unknown' };
       } catch (e) {
         return { ok: false, code: mapSignUpError(e) };
       }
@@ -614,6 +700,30 @@ export function createAuthService(deps: AuthServiceDeps) {
         return { ok: true };
       } catch (e) {
         return isNetworkError(e) ? { ok: false, code: 'network' } : { ok: true };
+      }
+    },
+
+    /**
+     * Resend the signup confirmation email ("Didn't get the email?
+     * Resend" on the check-inbox card). Never throws. Rate-limit errors
+     * map to 'rate_limited' so the UI shows the "too many attempts" copy
+     * instead of inviting re-taps that burn the resend budget.
+     */
+    async resendConfirmation(email: string): Promise<ResendResult> {
+      const client = deps.getClient();
+      if (!client) return { ok: false, code: 'unconfigured' };
+      try {
+        const { error } = await client.auth.resend({ type: 'signup', email: email.trim() });
+        if (!error) return { ok: true };
+        if (isNetworkError(error)) return { ok: false, code: 'network' };
+        const e = error as { status?: number; code?: string; message?: string };
+        if (e.status === 429 || e.code === 'over_email_send_rate_limit' || /rate.?limit/i.test(String(e.message ?? ''))) {
+          return { ok: false, code: 'rate_limited' };
+        }
+        return { ok: false, code: 'unknown' };
+      } catch (e) {
+        if (isNetworkError(e)) return { ok: false, code: 'network' };
+        return { ok: false, code: 'unknown' };
       }
     },
 
@@ -668,7 +778,13 @@ export function createAuthService(deps: AuthServiceDeps) {
         const { error } = await client.auth.updateUser({
           password: newPassword,
         });
-        if (!error) return { ok: true };
+        if (!error) {
+          // M6b: password changed — kill every other session now. LOUD if
+          // revocation fails; the password is already changed at this point.
+          if (!(await revokeOtherSessions(client)))
+            return { ok: false, code: 'revoke_failed' };
+          return { ok: true };
+        }
         if (isNetworkError(error)) return { ok: false, code: 'network' };
         const msg = String(error.message ?? '').toLowerCase();
         if (/session|jwt|token|expir|invalid/i.test(msg))
@@ -720,6 +836,10 @@ export function createAuthService(deps: AuthServiceDeps) {
             return { ok: false, code: 'weak_password' };
           return { ok: false, code: 'unknown' };
         }
+        // M6b: password changed — kill every other session now. LOUD if
+        // revocation fails; the password is already changed at this point.
+        if (!(await revokeOtherSessions(client)))
+          return { ok: false, code: 'revoke_failed' };
         return { ok: true };
       } catch (e) {
         return { ok: false, code: isNetworkError(e) ? 'network' : 'unknown' };
@@ -766,6 +886,10 @@ export function createAuthService(deps: AuthServiceDeps) {
         // FIRST, ahead of the realtor login — a stale link would boot the
         // signed-out device straight into the old client view.
         await kv.removeItem(K_CLIENT_LINK);
+        // H4 (Oct 2026): signOut cleared only the legacy single-link key —
+        // the live multi-link array survived a realtor logout, so a stale
+        // client link could still boot the next user into a client view.
+        await kv.removeItem(K_CLIENT_LINKS);
       } catch {
         // never throw from sign-out cleanup
       }

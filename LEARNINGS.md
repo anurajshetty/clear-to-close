@@ -1382,3 +1382,21 @@ check-off copy; `tests/run.sh` wires both.
   weakened; (2) `@expo/vector-icons` is not a project dependency, so the
   add-buyer control mirrors the TC screen's plain-text "+ Add another
   buyer" instead of an icon.
+- **M6a SecureStore token storage (Oct 1, 2026):** auth session tokens now
+  live in the OS keychain/keystore via `expo-secure-store` on native
+  (`src/lib/supabase.ts`: `nativeAuthStorage()` ->
+  `createMigratingAuthStorage()`); web keeps localStorage, and
+  `Platform.OS === 'web'` explicitly keeps SecureStore off web. First run
+  migrates the token from the old AsyncStorage key (`sb-<ref>-auth-token`,
+  derived with the exact supabase-js formula) exactly once: copy, confirm
+  by read-back, and only then delete the legacy copy; a persisted flag in
+  SecureStore makes reruns a no-op. New native module = Anuraj needs a
+  fresh iOS binary after this ships (JS-only deploy is not enough); if the
+  module can't load (old binary, node tests) the adapter falls back to the
+  previous AsyncStorage behavior so auth never breaks. Regression suite:
+  `tests/securestore_migration.test.ts` (round-trip, migrate/no-op/
+  write-failure-never-deletes-old, secure-authoritative precedence, wiring
+  + fallback). Lesson: `expo install` on SDK 57 prints a config-plugin
+  reminder for `app.config.js`-style dynamic configs — the plugin
+  (`expo-secure-store`) belongs in `app.json`'s plugins array, which is the
+  single source of truth here.

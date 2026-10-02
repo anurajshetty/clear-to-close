@@ -30,6 +30,10 @@ export default function ProfileCreate() {
   // profile is not confirmed on the server — the failure must be visible
   // on screen instead of silently landing the realtor on the deal list.
   const [saveError, setSaveError] = useState<string | null>(null);
+  // One-time, non-blocking banner for the signup fallback path (existing
+  // account + correct password). Armed by the signup screen via
+  // setExistingAccountNotice; consumed here so it shows exactly once.
+  const [showSignedInNotice, setShowSignedInNotice] = useState(false);
 
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
@@ -42,12 +46,22 @@ export default function ProfileCreate() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      auth
-        .takePendingProfileName()
-        .then((pending) => {
-          if (pending && active) setDraft((d) => ({ ...d, name: pending }));
-        })
-        .catch(() => {});
+      (async () => {
+        const [existing, pending] = await Promise.all([
+          store.getProfile().catch(() => null),
+          auth.takePendingProfileName().catch(() => null),
+        ]);
+        const notice = await auth.takeExistingAccountNotice().catch(() => false);
+        if (!active) return;
+        // Name pre-fill: an existing profile's name wins. The just-typed
+        // name was already consumed (discarded) by takePendingProfileName
+        // above, so it can never silently overwrite the stored name on the
+        // fallback path. New users have no profile — the typed name stands.
+        const existingName = existing?.name?.trim();
+        const prefill = existingName ? existing!.name : pending;
+        if (prefill) setDraft((d) => ({ ...d, name: prefill }));
+        if (notice) setShowSignedInNotice(true);
+      })();
       return () => {
         active = false;
       };
@@ -107,6 +121,13 @@ export default function ProfileCreate() {
       >
         <Kicker>Step 2 of 2 · Realtor</Kicker>
         <Text style={styles.h1}>Create your profile</Text>
+        {showSignedInNotice ? (
+          <View style={styles.noticeCard} testID="existing-account-notice">
+            <Text style={styles.noticeText}>
+              An account with this email already exists — we&apos;ve signed you in.
+            </Text>
+          </View>
+        ) : null}
         <Text style={styles.sub}>
           One profile, shown on every client&apos;s home view. You can edit it anytime later in your profile.
         </Text>
@@ -138,6 +159,16 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
+  noticeCard: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+  },
+  noticeText: { fontSize: 14, color: colors.body, lineHeight: 20 },
   cta: { marginTop: 24 },
   error: { fontSize: 13, color: colors.red, marginTop: 10 },
 });

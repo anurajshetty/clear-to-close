@@ -20,6 +20,16 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_DIRS = [os.path.join(ROOT, "app"), os.path.join(ROOT, "src")]
 
+# Anuraj-approved exceptions: exact user-facing strings whose em/en dash
+# Anuraj explicitly approved verbatim, overriding the general rule for that
+# one string. Keep this list minimal — every entry cites its approval.
+ALLOWED = [
+    # Oct 2, 2026 — signup fallback "we've signed you in" banner
+    # (app/profile-create.tsx). Anuraj approved this copy verbatim via the
+    # coordinator with an explicit "do not normalize" on the em dash.
+    "An account with this email already exists — we&apos;ve signed you in.",
+]
+
 
 def strip_comments(src):
     """Remove //, /* */, and {/* */} comments, keeping string literals and
@@ -67,6 +77,8 @@ def main():
                 with open(path, encoding="utf-8") as fh:
                     stripped = strip_comments(fh.read())
                 for ln, line in enumerate(stripped.split("\n"), 1):
+                    if any(a in line for a in ALLOWED):
+                        continue
                     for ch in ("—", "–"):
                         if ch in line:
                             offenders.append(

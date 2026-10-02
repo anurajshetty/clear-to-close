@@ -32,6 +32,7 @@ import {
   showBuyerDetailsForTcView,
   showBuyerIntakeForRealtorSide,
   type BuyerIntakeData,
+  validateBuyerIntakeConditional,
 } from '../src/lib/buyerIntake';
 import { emptyTcIntake } from '../src/lib/tcIntake';
 
@@ -183,14 +184,24 @@ async function main(): Promise<void> {
 
   // ---------------------------------------------------------- math check ---
   {
-    const ok = fullIntake();
-    assert(checkBuyerIntakeMath(ok) === null, '195000 + 780000 = 975000 -> no warning');
-    const bad = { ...fullIntake(), loanAmount: '700000' };
-    const note = checkBuyerIntakeMath(bad);
-    assert(typeof note === 'string' && note.length > 0, 'mismatched down + loan warns');
+    // Deposit counts in the purchase-price check (Anuraj, Oct 1, 2026):
+    // price = deposit + down payment + loan. Empty deposit counts as 0.
+    const live = { ...emptyBuyerIntake(), purchasePrice: '983000', deposit: '25000', downPayment: '200000', loanAmount: '758000' };
+    assert(checkBuyerIntakeMath(live) === null, 'Anuraj live numbers: 25000 + 200000 + 758000 = 983000 -> no warning');
+    const full = { ...fullIntake(), purchasePrice: '1000000' };
+    assert(checkBuyerIntakeMath(full) === null, '25000 + 195000 + 780000 = 1000000 -> no warning');
+    const emptyDeposit = { ...emptyBuyerIntake(), purchasePrice: '975000', deposit: '', downPayment: '195000', loanAmount: '780000' };
+    assert(checkBuyerIntakeMath(emptyDeposit) === null, 'empty deposit counts as 0: 195000 + 780000 = 975000 -> no warning');
+    const missingDeposit = { ...emptyBuyerIntake(), purchasePrice: '983000', deposit: '', downPayment: '200000', loanAmount: '758000' };
+    const note = checkBuyerIntakeMath(missingDeposit);
+    assert(typeof note === 'string' && note.length > 0, 'deposit left empty when it should count -> warns');
+    assert(
+      note === 'Purchase price does not match the deposit, down payment, and loan amount. Worth a second look.',
+      'warning uses the exact approved copy',
+    );
     assert(!/block|save/i.test(note ?? ''), 'the note is gentle, never mentions blocking');
     const partial = { ...emptyBuyerIntake(), purchasePrice: '975000', downPayment: '195000' };
-    assert(checkBuyerIntakeMath(partial) === null, 'warning fires only when all three are filled');
+    assert(checkBuyerIntakeMath(partial) === null, 'warning fires only when price/down/loan are filled');
   }
 
   // ------------------------------------------------------- status / sides --
@@ -364,6 +375,93 @@ async function main(): Promise<void> {
     }
   }
 
+  // ---------------- conditional required validation (Anuraj, Oct 1) -----
+  {
+    // (d) Unanswered toggles ('') skip the pair entirely.
+    const untouched = emptyBuyerIntake();
+    assert(
+      Object.keys(validateBuyerIntakeConditional(untouched)).length === 0,
+      'unanswered toggles -> no violations',
+    );
+
+    // (a) Yes + empty follow-up -> blocked with the exact approved copy.
+    const emptyPairs = emptyBuyerIntake();
+    emptyPairs.investigation = 'yes';
+    emptyPairs.appraisal = 'yes';
+    emptyPairs.loan = 'yes';
+    emptyPairs.hoa = 'yes';
+    emptyPairs.solar = 'yes';
+    const ev = validateBuyerIntakeConditional(emptyPairs);
+    assert(ev.investigationDays === 'Enter the investigation period in days.', 'investigation yes + empty days -> error');
+    assert(ev.appraisalDays === 'Enter the appraisal period in days.', 'appraisal yes + empty days -> error');
+    assert(ev.loanDays === 'Enter the loan period in days.', 'loan yes + empty days -> error');
+    assert(ev.hoaAmount === 'Enter the HOA amount per month.', 'hoa yes + empty amount -> error');
+    assert(ev.solarLeasedOwned === 'Say whether the solar is leased or owned.', 'solar yes + empty leased/owned -> error');
+    assert(ev.solarAmount === 'Enter the solar amount.', 'solar yes + empty amount -> error');
+    assert(Object.keys(ev).length === 6, 'all violations collected at once (6)');
+
+    // (b) Yes + valid follow-ups -> saves clean.
+    const valid = emptyBuyerIntake();
+    valid.investigation = 'yes';
+    valid.investigationDays = '17';
+    valid.appraisal = 'yes';
+    valid.appraisalDays = '21';
+    valid.loan = 'yes';
+    valid.loanDays = '21';
+    valid.hoa = 'yes';
+    valid.hoaAmount = '250';
+    valid.solar = 'yes';
+    valid.solarLeasedOwned = 'leased';
+    valid.solarAmount = '18000';
+    assert(
+      Object.keys(validateBuyerIntakeConditional(valid)).length === 0,
+      'yes + valid follow-ups -> no violations',
+    );
+
+    // (c) No -> pair skipped, even with stale follow-up values.
+    const no = emptyBuyerIntake();
+    no.investigation = 'no';
+    no.investigationDays = 'garbage';
+    no.solar = 'no';
+    no.solarAmount = 'garbage';
+    assert(
+      Object.keys(validateBuyerIntakeConditional(no)).length === 0,
+      'no -> no violations regardless of follow-up values',
+    );
+
+    // (e) Non-numeric / non-positive follow-ups -> blocked.
+    const bad = emptyBuyerIntake();
+    bad.investigation = 'yes';
+    bad.investigationDays = 'abc';
+    bad.hoa = 'yes';
+    bad.hoaAmount = '0';
+    bad.solar = 'yes';
+    bad.solarLeasedOwned = 'owned';
+    bad.solarAmount = '-5';
+    const eb = validateBuyerIntakeConditional(bad);
+    assert(eb.investigationDays === 'Enter a number.', 'non-numeric days -> Enter a number.');
+    assert(eb.hoaAmount === 'Enter a number.', 'zero amount -> Enter a number.');
+    assert(eb.solarAmount === 'Enter a number.', 'negative amount -> Enter a number.');
+
+    // Whitespace-only counts as empty.
+    const ws = emptyBuyerIntake();
+    ws.appraisal = 'yes';
+    ws.appraisalDays = '   ';
+    assert(
+      validateBuyerIntakeConditional(ws).appraisalDays === 'Enter the appraisal period in days.',
+      'whitespace-only days -> empty copy',
+    );
+
+    // Decimals are valid positive numbers.
+    const dec = emptyBuyerIntake();
+    dec.hoa = 'yes';
+    dec.hoaAmount = '250.50';
+    assert(
+      Object.keys(validateBuyerIntakeConditional(dec)).length === 0,
+      'decimal amount -> no violations',
+    );
+  }
+
   // -------------------------------------- structural guards (route files) --
   {
     // Both dates on the buyer intake form are optional AND clearable: the
@@ -374,6 +472,84 @@ async function main(): Promise<void> {
       assert(idx !== -1, `buyer intake form renders ${testID}`);
       const block = form.slice(Math.max(0, idx - 400), idx);
       assert(block.includes('onClear'), `${testID} wires the clear control`);
+    }
+
+    // Conditional required validation (Anuraj, Oct 1): onSave validates
+    // before the save call, and every follow-up control carries the inline
+    // error prop. Never validated while typing.
+    const saveIdx = form.indexOf('const onSave = async ()');
+    assert(saveIdx !== -1, 'buyer intake form defines onSave');
+    const saveBlock = form.slice(saveIdx, saveIdx + 600);
+    assert(
+      saveBlock.includes('validateBuyerIntakeConditional(form)'),
+      'onSave runs the conditional validation',
+    );
+    assert(
+      saveBlock.indexOf('setErrors(violations)') < saveBlock.indexOf('store.saveBuyerIntake'),
+      'violations block the save call',
+    );
+    for (const [testID, key] of [
+      ['buyer-intake-investigation-days', 'investigationDays'],
+      ['buyer-intake-appraisal-days', 'appraisalDays'],
+      ['buyer-intake-loan-days', 'loanDays'],
+      ['buyer-intake-hoa-amount', 'hoaAmount'],
+      ['buyer-intake-solar-amount', 'solarAmount'],
+    ] as const) {
+      const idx = form.indexOf(`testID="${testID}"`);
+      assert(idx !== -1, `buyer intake form renders ${testID}`);
+      const block = form.slice(Math.max(0, idx - 500), idx);
+      assert(block.includes(`error={errors.${key} ?? null}`), `${testID} carries the inline error prop`);
+    }
+    {
+      const idx = form.indexOf('testID="buyer-intake-solar-leased-owned"');
+      assert(idx !== -1, 'buyer intake form renders buyer-intake-solar-leased-owned');
+      const block = form.slice(Math.max(0, idx - 600), idx);
+      assert(block.includes('error={errors.solarLeasedOwned ?? null}'), 'solar leased/owned seg carries the inline error prop');
+    }
+    // "No" clears the follow-ups in the toggle onChange handlers.
+    for (const [toggle, followup] of [
+      ['buyer-intake-investigation', 'investigationDays'],
+      ['buyer-intake-appraisal', 'appraisalDays'],
+      ['buyer-intake-loan', 'loanDays'],
+      ['buyer-intake-hoa', 'hoaAmount'],
+      ['buyer-intake-solar', 'solarAmount'],
+    ] as const) {
+      const idx = form.indexOf(`testID="${toggle}"`);
+      assert(idx !== -1, `buyer intake form renders ${toggle}`);
+      const block = form.slice(Math.max(0, idx - 600), idx);
+      assert(block.includes(`${followup}: v === 'yes' ?`), `"No" on ${toggle} clears ${followup}`);
+    }
+
+    // Errors clear on edit: the update() helper drops error entries for
+    // the fields being changed.
+    const updateIdx = form.indexOf('const update = (patch: Partial<BuyerIntakeData>)');
+    assert(updateIdx !== -1, 'buyer intake form defines update()');
+    const updateBlock = form.slice(updateIdx, updateIdx + 700);
+    assert(updateBlock.includes('setErrors'), 'update() clears field errors on edit');
+
+    // YesNoSeg gained an error prop mirroring Field's red hint style.
+    const seg = repoFile('src/components/YesNoSeg.tsx');
+    assert(seg.includes('error?: string | null'), 'YesNoSeg accepts an error prop');
+    assert(seg.includes('testID ? `${testID}-error` : undefined'), 'YesNoSeg error carries the -error testID');
+    assert(seg.includes('styles.segError'), 'YesNoSeg renders the error style');
+
+    // Save toast (Anuraj, Oct 1, 2026): mirrors the TC intake pattern
+    // verbatim — showToast with 2400ms auto-dismiss, same pill styling.
+    assert(form.includes("showToast('Buyer intake saved.')"), 'buyer intake shows the save toast with the approved copy');
+    assert(form.includes('setTimeout(() => setToastMsg(null), 2400)'), 'toast auto-dismisses after 2400ms like TC');
+    assert(form.includes('testID="toast"'), 'toast pill carries the toast testID');
+    {
+      // The toast fires only on successful save: the showToast('Buyer intake
+      // saved.') call sits in onSave's try block after saveBuyerIntake, and
+      // the catch block (save failure) never toasts.
+      const onSaveIdx = form.indexOf('const onSave = async ()');
+      const onSaveEnd = form.indexOf('};', form.indexOf('setSaving(false);', onSaveIdx));
+      const onSaveBody = form.slice(onSaveIdx, onSaveEnd);
+      const tryIdx = onSaveBody.indexOf('try {');
+      const catchIdx = onSaveBody.indexOf('} catch');
+      const toastCall = onSaveBody.indexOf("showToast('Buyer intake saved.')");
+      assert(tryIdx !== -1 && catchIdx !== -1 && toastCall !== -1, 'onSave has try/catch and the toast call');
+      assert(toastCall > tryIdx && toastCall < catchIdx, 'toast fires only on successful save, never on failure');
     }
 
     // Entry-row side gating: the row renders below the time tracker on both

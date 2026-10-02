@@ -32,6 +32,23 @@ let platformOverride: string | null = null;
 export function __setPlatformForTests(os: string | null): void {
   platformOverride = os;
 }
+// Test seams for the M2 device-binding regression test (node has no
+// expo-notifications and no Supabase client). `undefined` = no override.
+let notificationsOverride: any | undefined;
+/** Test seam: inject the notifications module in node tests. */
+export function __setNotificationsForTests(n: any | null): void {
+  notificationsOverride = n;
+}
+let supabaseOverride: any | undefined;
+/** Test seam: inject the Supabase client in node tests. */
+export function __setSupabaseForTests(c: any | null): void {
+  supabaseOverride = c;
+}
+/** Test-seam-aware client getter (production: the real Supabase client). */
+function getClient(): any | null {
+  if (supabaseOverride !== undefined) return supabaseOverride;
+  return getSupabase();
+}
 function platformOS(): string {
   if (platformOverride) return platformOverride;
   try {
@@ -45,6 +62,7 @@ const isWeb = (): boolean => platformOS() === 'web';
 
 /** Lazy, guarded access to expo-notifications. Null on web / node. */
 export function loadNotifications(): any | null {
+  if (notificationsOverride !== undefined) return notificationsOverride;
   if (isWeb()) return null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -204,14 +222,22 @@ export async function registerPushToken(): Promise<boolean> {
  * link's pushes stop without touching the device's other escrows'
  * registrations. The device-wide unregisterPushToken below still exists
  * for start-over / opt-out.
+ *
+ * M2 staged lockstep (Oct 1, 2026): passes this device's id so the server
+ * binds the delete to the device/link pair (Stage 2). The server keeps a
+ * default-null p_device_id for old app versions (Stage 1).
  */
 export async function unregisterPushTokenForLink(linkId: string): Promise<void> {
   const N = loadNotifications();
   if (!N) return;
   try {
-    const client = getSupabase();
+    const deviceId = await auth.getDeviceId();
+    const client = getClient();
     if (!client) return;
-    await client.rpc('unregister_push_token_for_link', { p_link_id: linkId });
+    await client.rpc('unregister_push_token_for_link', {
+      p_link_id: linkId,
+      p_device_id: deviceId,
+    });
   } catch {
     // best-effort
   }

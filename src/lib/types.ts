@@ -250,7 +250,7 @@ export interface Invite {
 
 export type RedeemResult =
   | { ok: true; escrowId: string; role: ClientRole; partyName: string; linkId: string }
-  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'wrong_side' };
+  | { ok: false; error: 'invalid' | 'name_mismatch' | 'revoked' | 'already_used' | 'network' | 'wrong_side' | 'role_mismatch' | 'expired' | 'too_many_attempts' };
 
 /**
  * The inviting realtor's public branding for the branded invite welcome

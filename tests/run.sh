@@ -54,6 +54,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/outbox_seed.ts" \
   "$ROOT/tests/invite.test.ts" \
+  "$ROOT/tests/invite_code_csprng.test.ts" \
   "$ROOT/tests/sync.test.ts" \
   "$ROOT/tests/uniqueness.test.ts" \
   "$ROOT/tests/checklist.test.ts" \
@@ -71,6 +72,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/push.test.ts" \
   "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
+  "$ROOT/tests/signup.test.ts" \
+  "$ROOT/tests/securestore_migration.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
   "$ROOT/tests/profilepull.test.ts" \
   "$ROOT/tests/realtygroup.test.ts" \
@@ -146,6 +149,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/pool_strip.test.ts" \
   "$ROOT/tests/step_key_dates.test.ts" \
   "$ROOT/tests/share_button_label.test.ts" \
+  "$ROOT/tests/unregister_push_token_device_binding.test.ts" \
   --outDir "$OUT" \
   --module commonjs \
   --target es2020 \
@@ -153,14 +157,17 @@ npx tsc --ignoreConfig \
   --skipLibCheck
 
 # NODE_PATH lets the compiled tests resolve @supabase/supabase-js for the
-# platform-storage tests (they run from /tmp, outside the repo tree).
-export NODE_PATH="$ROOT/node_modules"
+# platform-storage tests (they run from /tmp, outside the repo tree), and
+# tests/stubs FIRST so the Node-test-only expo-crypto shim (Stream D, Oct
+# 2026) shadows the real native module, which cannot load under plain Node.
+export NODE_PATH="$ROOT/tests/stubs:$ROOT/node_modules"
 
 # CTC_REPO_ROOT lets the structural regression tests read component/route
 # sources (RN components are not importable in the node suite).
 export CTC_REPO_ROOT="$ROOT"
 
 node "$OUT/tests/invite.test.js"
+node "$OUT/tests/invite_code_csprng.test.js"
 node "$OUT/tests/sync.test.js"
 node "$OUT/tests/uniqueness.test.js"
 node "$OUT/tests/checklist.test.js"
@@ -180,6 +187,8 @@ node "$OUT/tests/push.test.js"
 node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
+node "$OUT/tests/signup.test.js"
+node "$OUT/tests/securestore_migration.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/tc_view.test.js"
 node "$OUT/tests/tc_intake.test.js"
@@ -262,6 +271,11 @@ python3 "$ROOT/tests/topcard_redesign.py"
 # human — no em dashes (—) or en dashes (–) outside code comments.
 python3 "$ROOT/tests/em_dash_sweep.py"
 
+# Redeem error-code copy check (Oct 2026): the server's role_mismatch /
+# expired / too_many_attempts codes land VERBATIM in app/redeem.tsx's
+# ERROR_COPY (plain hyphens, exact punctuation).
+python3 "$ROOT/tests/redeem_copy_check.py"
+
 # Migration 0011 additive/rollback guard (Sept 2026): the reviews migration
 # must stay additive-only so pre-release code keeps working against the
 # migrated DB; no public exposure of the reviews link_id.
@@ -302,9 +316,16 @@ python3 "$ROOT/tests/buyer_intake_migration.py"
 # client_links so the client observes its own revocation). SQL, not
 # runnable in node.
 python3 "$ROOT/tests/client_realtime_migration.py"
+# M2 device-binding migration self-check (Oct 1, 2026): the 0037 migration
+# drops the bearer-only 1-arg unregister_push_token_for_link, recreates it
+# with optional p_device_id (default null), rejects the delete on device
+# mismatch, and keeps the old 1-arg / legacy-link paths working. SQL, not
+# runnable in node.
+python3 "$ROOT/tests/m2_device_binding_migration.py"
 node "$OUT/tests/toast_dismiss.test.js"
 node "$OUT/tests/share_screen.test.js"
 node "$OUT/tests/tc_intake_decimal.test.js"
 node "$OUT/tests/pool_strip.test.js"
 node "$OUT/tests/step_key_dates.test.js"
 node "$OUT/tests/share_button_label.test.js"
+node "$OUT/tests/unregister_push_token_device_binding.test.js"

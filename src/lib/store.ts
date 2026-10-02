@@ -434,6 +434,48 @@ const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
 const MAX_CODE_ATTEMPTS = 100;
 
+// Lazy require for the native secure-random fallback (same pattern as kv.ts /
+// push.ts): keeps the plain-Node unit-test runtime from loading the native
+// module at import time.
+declare const require: (id: string) => any;
+
+/**
+ * CSPRNG bytes (L1 fix, Oct 2026). Invite codes must never come from
+ * Math.random.
+ * - Web: window.crypto.getRandomValues (WebCrypto, always present).
+ * - Native (Hermes): Hermes ships no crypto.getRandomValues (verified in the
+ *   installed RN 0.86.3 tree), so fall back to expo-crypto's native secure
+ *   random, lazily required. The require only runs on native; web and the
+ *   Node test runtime take the WebCrypto branch above.
+ */
+export function secureRandomBytes(byteCount: number): Uint8Array {
+  const g = globalThis as {
+    crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array };
+  };
+  if (typeof g.crypto?.getRandomValues === 'function') {
+    return g.crypto.getRandomValues(new Uint8Array(byteCount));
+  }
+  const { getRandomBytes } = require('expo-crypto') as {
+    getRandomBytes: (n: number) => Uint8Array;
+  };
+  return getRandomBytes(byteCount);
+}
+
+/**
+ * Unbiased alphabet index via rejection sampling (L1). CODE_ALPHABET has 31
+ * symbols and 256 % 31 = 8, so a plain `byte % 31` would favor the first 8
+ * symbols. Discarding bytes >= 248 keeps every code equally likely.
+ */
+export function secureAlphabetIndex(): number {
+  const n = CODE_ALPHABET.length;
+  const limit = 256 - (256 % n);
+  let b = limit;
+  while (b >= limit) {
+    b = secureRandomBytes(1)[0];
+  }
+  return b % n;
+}
+
 /**
  * Two active clients per escrow+role max (invite-client flow, Sept 2026).
  * Counts non-revoked invites; revoking frees a slot.
@@ -500,10 +542,10 @@ function normalizeExplainer(explainer: string | null | undefined): string | null
   return note ? note : null;
 }
 
-function randomCode(): string {
+export function randomCode(): string {
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) {
-    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    code += CODE_ALPHABET[secureAlphabetIndex()];
   }
   return code;
 }

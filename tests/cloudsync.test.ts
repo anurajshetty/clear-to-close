@@ -21,6 +21,7 @@ import {
   pingCloud,
   pushEscrowNow,
   pushInviteNow,
+  randomCode,
   SyncNotAppliedError,
   redeemViaCloud,
   regenerateInviteNow,
@@ -200,6 +201,33 @@ async function main(): Promise<void> {
   assert(rbogus.ok === false && rbogus.error === 'invalid', 'unknown redeem error -> invalid');
   const rnet = mapRedeemRpc({ ok: false, error: 'network' });
   assert(rnet.ok === false && rnet.error === 'network', 'redeem network error passes through');
+
+  // --- Redeem error-code mappings (Oct 2026) --------------------------------
+  // role_mismatch / expired / too_many_attempts must survive the mapping so
+  // the redeem screen can show their specific copy — not collapse to
+  // 'invalid' like unknown codes do.
+  const rRoleMismatch = mapRedeemRpc({ ok: false, error: 'role_mismatch' });
+  assert(rRoleMismatch.ok === false && rRoleMismatch.error === 'role_mismatch', 'redeem role_mismatch maps (not invalid)');
+  const rExpired = mapRedeemRpc({ ok: false, error: 'expired' });
+  assert(rExpired.ok === false && rExpired.error === 'expired', 'redeem expired maps (not invalid)');
+  const rTooMany = mapRedeemRpc({ ok: false, error: 'too_many_attempts' });
+  assert(rTooMany.ok === false && rTooMany.error === 'too_many_attempts', 'redeem too_many_attempts maps (not invalid)');
+
+  // --- mapRedeemRpc null guard (Oct 2026) ------------------------------------
+  // The live H2c bug: an ok:true payload with NULL ids produced
+  // String(null) === "null" and navigated to /client/null/null. A null/empty
+  // escrow_id, link_id, role, or party_name must fail loud and retryable as
+  // 'network' — never a fake ok:true.
+  const rNullEscrow = mapRedeemRpc({ ok: true, escrow_id: null, role: 'seller', party_name: 'Bob', link_id: 'lid' });
+  assert(rNullEscrow.ok === false && rNullEscrow.error === 'network', 'ok:true + null escrow_id -> network');
+  const rNullLink = mapRedeemRpc({ ok: true, escrow_id: 'eid', role: 'seller', party_name: 'Bob', link_id: null });
+  assert(rNullLink.ok === false && rNullLink.error === 'network', 'ok:true + null link_id -> network');
+  const rEmptyRole = mapRedeemRpc({ ok: true, escrow_id: 'eid', role: '', party_name: 'Bob', link_id: 'lid' });
+  assert(rEmptyRole.ok === false && rEmptyRole.error === 'network', 'ok:true + empty role -> network');
+  const rNullName = mapRedeemRpc({ ok: true, escrow_id: 'eid', role: 'seller', party_name: null, link_id: 'lid' });
+  assert(rNullName.ok === false && rNullName.error === 'network', 'ok:true + null party_name -> network');
+  const rAllGood = mapRedeemRpc({ ok: true, escrow_id: 'eid', role: 'seller', party_name: 'Bob', link_id: 'lid' });
+  assert(rAllGood.ok === true && rAllGood.escrowId === 'eid' && rAllGood.linkId === 'lid', 'ok:true + all fields present still maps ok');
 
   // Transport failures during cloud redeem surface as retryable 'network',
   // never 'invalid' (a missing migration or a dropped connection is not a
@@ -420,6 +448,29 @@ async function main(): Promise<void> {
 
   delete process.env.EXPO_PUBLIC_SUPABASE_URL;
   delete process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+  // L1 follow-up (Oct 2026): cloudSync's randomCode (default genCode for
+  // pushInviteNow collision regeneration) must also draw from the CSPRNG,
+  // never Math.random. Swap in a thrower: the old implementation throws on
+  // every call (fails without the fix); the CSPRNG one never touches it.
+  {
+    const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    const origRandom = Math.random;
+    (Math as { random: () => number }).random = () => {
+      throw new Error('Math.random must not be used for invite codes');
+    };
+    try {
+      for (let i = 0; i < 50; i++) {
+        const code = randomCode();
+        assert(
+          code.length === 6 && [...code].every((c) => ALPHABET.includes(c)),
+          `cloudsync randomCode ${i} is 6 chars from the safe alphabet (no Math.random)`,
+        );
+      }
+    } finally {
+      (Math as { random: () => number }).random = origRandom;
+    }
+  }
 
   summary('cloudsync');
 }

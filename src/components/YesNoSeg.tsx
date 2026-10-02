@@ -20,12 +20,20 @@ export function YesNoSeg({
   onChange,
   options,
   testID,
+  error,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: SegOption[];
   testID?: string;
+  /**
+   * Inline validation error shown under the control (Oct 2026, buyer
+   * intake conditional validation) — mirrors Field's error pattern, same
+   * red hint style. Purely additive: existing callers render byte-identical
+   * output.
+   */
+  error?: string | null;
 }) {
   return (
     <View style={styles.segWrap} testID={testID}>
@@ -47,6 +55,11 @@ export function YesNoSeg({
           );
         })}
       </View>
+      {error ? (
+        <Text style={styles.segError} testID={testID ? `${testID}-error` : undefined}>
+          {error}
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -100,5 +113,13 @@ const styles = StyleSheet.create({
   },
   segBtnTextOn: {
     color: colors.ink,
+  },
+  /** Mirrors Field's fieldError style (Oct 2026, buyer intake conditional
+   * validation) — same red hint line under the control. */
+  segError: {
+    fontSize: 13,
+    color: colors.red,
+    marginTop: 6,
+    lineHeight: 18,
   },
 });

@@ -40,6 +40,7 @@ import {
   type BuyerIntakeBuyer,
   type BuyerIntakeData,
   type BuyerYesNo,
+  validateBuyerIntakeConditional,
 } from '../../src/lib/buyerIntake';
 import { shareText } from '../../src/lib/share';
 import { colors, radius, type } from '../../src/theme';
@@ -56,6 +57,19 @@ export default function BuyerIntakeScreen() {
   const [form, setForm] = useState<BuyerIntakeData | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** Inline field errors from the conditional required validation (Anuraj,
+   * Oct 1, 2026): field key -> error copy. Set in onSave only, cleared on
+   * edit. */
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  /** Save toast (mirrors the TC intake pattern verbatim): brief
+   * confirmation pill on every successful save, auto-dismissed. */
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
+  };
   /** The auto-fill seed captured on load: a pill shows only while the
    * field still carries its seeded value (mockup ②). */
   const seedRef = useRef<Record<string, string>>({});
@@ -92,6 +106,19 @@ export default function BuyerIntakeScreen() {
   const update = (patch: Partial<BuyerIntakeData>) => {
     setForm((f) => (f ? { ...f, ...patch } : f));
     setSaveError(null);
+    // Errors clear on edit (standard): drop the error entries for the
+    // fields being changed.
+    setErrors((e) => {
+      let changed = false;
+      const next: Record<string, string> = { ...e };
+      for (const k of Object.keys(patch)) {
+        if (k in next) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : e;
+    });
   };
   const updateBuyer = (i: number, patch: Partial<BuyerIntakeBuyer>) => {
     setForm((f) => {
@@ -123,6 +150,15 @@ export default function BuyerIntakeScreen() {
 
   const onSave = async () => {
     if (!form) return;
+    // Conditional required validation (Anuraj, Oct 1, 2026): runs here
+    // only, never while typing. All violations surface at once; save is
+    // blocked until they are resolved.
+    const violations = validateBuyerIntakeConditional(form);
+    if (Object.keys(violations).length > 0) {
+      setErrors(violations);
+      return;
+    }
+    setErrors({});
     setSaving(true);
     setSaveError(null);
     try {
@@ -130,6 +166,7 @@ export default function BuyerIntakeScreen() {
       setForm(saved.data);
       // A saved intake is the realtor's own confirmed data — no seed pills.
       seedRef.current = {};
+      showToast('Buyer intake saved.');
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Could not save the buyer intake.');
     } finally {
@@ -339,6 +376,7 @@ export default function BuyerIntakeScreen() {
                   onChangeText={(t) => update({ investigationDays: t })}
                   placeholder="17"
                   keyboardType="numeric"
+                  error={errors.investigationDays ?? null}
                   testID="buyer-intake-investigation-days"
                 />
               )}
@@ -358,6 +396,7 @@ export default function BuyerIntakeScreen() {
                   onChangeText={(t) => update({ appraisalDays: t })}
                   placeholder="21"
                   keyboardType="numeric"
+                  error={errors.appraisalDays ?? null}
                   testID="buyer-intake-appraisal-days"
                 />
               )}
@@ -377,6 +416,7 @@ export default function BuyerIntakeScreen() {
                   onChangeText={(t) => update({ loanDays: t })}
                   placeholder="21"
                   keyboardType="numeric"
+                  error={errors.loanDays ?? null}
                   testID="buyer-intake-loan-days"
                 />
               )}
@@ -409,6 +449,7 @@ export default function BuyerIntakeScreen() {
                   onChangeText={(t) => update({ hoaAmount: t })}
                   placeholder="250"
                   keyboardType="decimal-pad"
+                  error={errors.hoaAmount ?? null}
                   testID="buyer-intake-hoa-amount"
                 />
               )}
@@ -432,6 +473,7 @@ export default function BuyerIntakeScreen() {
                     value={form.solarLeasedOwned}
                     onChange={(v: string) => update({ solarLeasedOwned: v as BuyerIntakeData['solarLeasedOwned'] })}
                     options={LEASED_OWNED}
+                    error={errors.solarLeasedOwned ?? null}
                     testID="buyer-intake-solar-leased-owned"
                   />
                   <Field
@@ -440,6 +482,7 @@ export default function BuyerIntakeScreen() {
                     onChangeText={(t) => update({ solarAmount: t })}
                     placeholder="18,000"
                     keyboardType="decimal-pad"
+                    error={errors.solarAmount ?? null}
                     testID="buyer-intake-solar-amount"
                   />
                 </>
@@ -501,6 +544,11 @@ export default function BuyerIntakeScreen() {
           </View>
         </View>
       </View>
+      {toastMsg && (
+        <View style={styles.toast} testID="toast">
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -584,5 +632,19 @@ const styles = StyleSheet.create({
     color: colors.red,
     marginBottom: 8,
     lineHeight: 18,
+  },
+  toast: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    bottom: 110,
+    backgroundColor: colors.ink,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  toastText: {
+    color: '#FFFFFF',
+    fontSize: 14,
   },
 });

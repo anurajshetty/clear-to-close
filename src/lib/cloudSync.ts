@@ -37,6 +37,7 @@ import type {
   TcView,
 } from './types';
 import type { KV } from './store';
+import { secureAlphabetIndex } from './store';
 import { isSupabaseConfigured } from './supabase';
 import { getAuthClient } from './auth';
 import { daysToClose } from './dates';
@@ -485,9 +486,10 @@ export function fromInviteRow(row: Record<string, unknown>): Invite {
 }
 
 export function randomCode(): string {
+  // L1: CSPRNG via rejection sampling (shared with store.ts) — never Math.random().
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) {
-    code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    code += CODE_ALPHABET[secureAlphabetIndex()];
   }
   return code;
 }
@@ -538,12 +540,24 @@ type RpcRedeemOk = {
 export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } {
   const d = data as Record<string, unknown>;
   if (d && d.ok === true) {
+    // Null guard (Oct 2026): the live H2c bug returned ok:true with NULL
+    // ids, and String(null) produced the literal "null" — the app navigated
+    // to /client/null/null. A null/empty escrow_id, link_id, role, or
+    // party_name is a loud mapping failure: retryable 'network', never a
+    // fake success.
+    const escrowId = typeof d.escrow_id === 'string' ? d.escrow_id : '';
+    const linkId = typeof d.link_id === 'string' ? d.link_id : '';
+    const role = typeof d.role === 'string' ? d.role : '';
+    const partyName = typeof d.party_name === 'string' ? d.party_name : '';
+    if (!escrowId || !linkId || !role || !partyName) {
+      return { ok: false, error: 'network' };
+    }
     return {
       ok: true,
-      escrowId: String(d.escrow_id),
-      role: d.role as ClientRole,
-      partyName: String(d.party_name),
-      linkId: String(d.link_id),
+      escrowId,
+      role: role as ClientRole,
+      partyName,
+      linkId,
     } as RpcRedeemOk;
   }
   const err = (d?.error as string) ?? 'invalid';
@@ -551,7 +565,10 @@ export function mapRedeemRpc(data: unknown): RedeemResult & { linkId?: string } 
   // rejection is gone — redeem_invite returns the existing link for a
   // same-device/same-escrow redeem instead of erroring, and the
   // (device_id, escrow_id) index makes a second escrow's redeem succeed.
-  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network', 'wrong_side'] as const;
+  // Oct 2026: role_mismatch / expired / too_many_attempts pass through so
+  // the redeem screen can show their specific copy; unknown codes still
+  // collapse to 'invalid'.
+  const valid = ['invalid', 'name_mismatch', 'revoked', 'already_used', 'network', 'wrong_side', 'role_mismatch', 'expired', 'too_many_attempts'] as const;
   return { ok: false, error: valid.includes(err as (typeof valid)[number]) ? (err as (typeof valid)[number]) : 'invalid' };
 }
 
