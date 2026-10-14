@@ -19,6 +19,21 @@ import type { Escrow } from './types';
 /** A Yes/No answer; '' = unanswered (nothing is assumed — mockup rule). */
 export type BuyerYesNo = '' | 'yes' | 'no';
 
+/** Type of loan (Oct 14, 2026): single-select, '' = unanswered. */
+export type BuyerLoanType = '' | 'conventional' | 'fha' | 'va' | 'cash' | 'other';
+
+export const LOAN_TYPE_OPTIONS: { label: string; value: Exclude<BuyerLoanType, ''> }[] = [
+  { label: 'Conventional', value: 'conventional' },
+  { label: 'FHA', value: 'fha' },
+  { label: 'VA', value: 'va' },
+  { label: 'Cash', value: 'cash' },
+  { label: 'Other', value: 'other' },
+];
+
+export function loanTypeLabel(v: BuyerLoanType): string {
+  return LOAN_TYPE_OPTIONS.find((o) => o.value === v)?.label ?? '';
+}
+
 export interface BuyerIntakeBuyer {
   name: string;
   phone: string;
@@ -41,6 +56,17 @@ export interface BuyerIntakeData {
   deposit: string;
   downPayment: string;
   loanAmount: string;
+  /** Type of loan (Oct 14, 2026) — display-only picker, no logic hangs off it. */
+  loanType: BuyerLoanType;
+  /** Buyer credit (Oct 14, 2026): Yes reveals the credit amount, which is
+   * required on save (conditional validation). No clears the amount. */
+  buyerCredit: BuyerYesNo;
+  buyerCreditAmount: string;
+  /** BRBC signed (Oct 14, 2026). */
+  brbcSigned: BuyerYesNo;
+  // Commission (Oct 14, 2026 — mirrors the TC form's section)
+  buyerAgentPct: string;
+  sellerAgentPct: string;
   // Dates (both optional)
   /** YYYY-MM-DD or ''. */
   closeOfEscrow: string;
@@ -87,6 +113,12 @@ export function emptyBuyerIntake(): BuyerIntakeData {
     deposit: '',
     downPayment: '',
     loanAmount: '',
+    loanType: '',
+    buyerCredit: '',
+    buyerCreditAmount: '',
+    brbcSigned: '',
+    buyerAgentPct: '',
+    sellerAgentPct: '',
     closeOfEscrow: '',
     possession: '',
     saleOfBuyersProperty: '',
@@ -117,6 +149,10 @@ function asYesNo(v: unknown): BuyerYesNo {
   return v === 'yes' || v === 'no' ? v : '';
 }
 
+function asLoanType(v: unknown): BuyerLoanType {
+  return v === 'conventional' || v === 'fha' || v === 'va' || v === 'cash' || v === 'other' ? v : '';
+}
+
 function asBuyer(v: unknown): BuyerIntakeBuyer {
   const b = (v ?? {}) as Record<string, unknown>;
   return { name: asText(b.name), phone: asText(b.phone), email: asText(b.email) };
@@ -142,6 +178,12 @@ export function normalizeBuyerIntake(raw: unknown): BuyerIntakeData {
     deposit: asText(d.deposit),
     downPayment: asText(d.downPayment),
     loanAmount: asText(d.loanAmount),
+    loanType: asLoanType(d.loanType),
+    buyerCredit: asYesNo(d.buyerCredit),
+    buyerCreditAmount: asText(d.buyerCreditAmount),
+    brbcSigned: asYesNo(d.brbcSigned),
+    buyerAgentPct: asText(d.buyerAgentPct),
+    sellerAgentPct: asText(d.sellerAgentPct),
     closeOfEscrow: asText(d.closeOfEscrow),
     possession: asText(d.possession),
     saleOfBuyersProperty: asYesNo(d.saleOfBuyersProperty),
@@ -168,8 +210,10 @@ export function normalizeBuyerIntake(raw: unknown): BuyerIntakeData {
  * Completion count, mirroring the mockup's recount(): every VISIBLE Yes/No
  * group counts 1 when answered, every VISIBLE text input counts 1 when
  * non-empty. Hidden conditional blocks and hidden buyer blocks do not
- * count. With one buyer block and no Yes answers the total is 23
- * (the mockup's "5 of 23 filled" for the auto-filled draft).
+ * count. With one buyer block and no Yes answers the total is 28
+ * (the mockup's original "5 of 23 filled" for the auto-filled draft, plus
+ * the Oct 14, 2026 additions: loan type, buyer credit, BRBC, and the two
+ * commission percents).
  */
 export function countBuyerIntake(data: BuyerIntakeData): {
   filled: number;
@@ -198,6 +242,12 @@ export function countBuyerIntake(data: BuyerIntakeData): {
   tx(data.deposit);
   tx(data.downPayment);
   tx(data.loanAmount);
+  tx(data.loanType);
+  yn(data.buyerCredit);
+  if (data.buyerCredit === 'yes') tx(data.buyerCreditAmount);
+  yn(data.brbcSigned);
+  tx(data.buyerAgentPct);
+  tx(data.sellerAgentPct);
   tx(data.closeOfEscrow);
   tx(data.possession);
   yn(data.saleOfBuyersProperty);
@@ -291,7 +341,7 @@ export function checkBuyerIntakeMath(data: BuyerIntakeData): string | null {
 export function validateBuyerIntakeConditional(data: BuyerIntakeData): Record<string, string> {
   const errors: Record<string, string> = {};
   const requirePositiveNumber = (
-    key: 'investigationDays' | 'appraisalDays' | 'loanDays' | 'hoaAmount' | 'solarAmount',
+    key: 'investigationDays' | 'appraisalDays' | 'loanDays' | 'hoaAmount' | 'solarAmount' | 'buyerCreditAmount',
     emptyCopy: string,
   ) => {
     const raw = data[key].trim();
@@ -319,6 +369,9 @@ export function validateBuyerIntakeConditional(data: BuyerIntakeData): Record<st
       errors.solarLeasedOwned = 'Say whether the solar is leased or owned.';
     }
     requirePositiveNumber('solarAmount', 'Enter the solar amount.');
+  }
+  if (data.buyerCredit === 'yes') {
+    requirePositiveNumber('buyerCreditAmount', 'Enter the credit amount.');
   }
   return errors;
 }
@@ -376,6 +429,12 @@ export function buildBuyerIntakeSections(
       : data.hoa === 'no'
         ? 'No'
         : '';
+  const creditValue =
+    data.buyerCredit === 'yes'
+      ? `Yes${data.buyerCreditAmount.trim() !== '' ? `, ${money(data.buyerCreditAmount)}` : ''}`
+      : data.buyerCredit === 'no'
+        ? 'No'
+        : '';
   const solarParts =
     data.solar === 'yes'
       ? [
@@ -406,6 +465,15 @@ export function buildBuyerIntakeSections(
     row('Deposit', money(data.deposit)),
     row('Down payment', money(data.downPayment)),
     row('Loan amount', money(data.loanAmount)),
+    row('Type of loan', loanTypeLabel(data.loanType)),
+    row('Buyer credit', creditValue),
+    row('BRBC signed', ynText(data.brbcSigned)),
+  ];
+
+  const pct = (v: string) => (v.trim() !== '' ? `${v.trim()}%` : '');
+  const commissionRows: BuyerIntakeRow[] = [
+    row("Buyer's agent", pct(data.buyerAgentPct)),
+    row("Seller's agent", pct(data.sellerAgentPct)),
   ];
 
   const dateRows: BuyerIntakeRow[] = [
@@ -436,6 +504,7 @@ export function buildBuyerIntakeSections(
     { title: 'Agent', rows: agentRows },
     { title: 'Buyers', rows: buyerRows },
     { title: 'Offer terms', rows: offerRows },
+    { title: 'Commission', rows: commissionRows },
     { title: 'Dates', rows: dateRows },
     { title: 'Contingencies', rows: contingencyRows },
     { title: 'Property details', rows: detailsRows },

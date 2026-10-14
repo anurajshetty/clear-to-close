@@ -40,6 +40,9 @@ export const BUY_STEPS: StepTemplate[] = [
 
 export const SELL_STEPS: StepTemplate[] = [
   { t: 'Escrow opened', s: 'See the time tracker card above.', key: 'escrow-open' },
+  // Added Oct 14, 2026 (Anuraj): the escrow officer's contact is confirmed
+  // right after open. New escrows only — existing escrows keep their steps.
+  { t: 'Escrow officer contact confirmed', s: '', key: 'escrow-officer-contact-confirmed' },
   { t: 'Wire received', s: 'Earnest money from the buyer.', key: 'wire-received' },
   { t: 'Property inspection scheduled', s: '', key: 'property-inspection-scheduled' },
   { t: 'Appraisal scheduled', s: '', key: 'appraisal-scheduled' },
@@ -53,6 +56,12 @@ export const SELL_STEPS: StepTemplate[] = [
     key: 'schedule-utilities',
   },
   { t: 'Final walkthrough scheduled', s: '', key: 'final-walkthrough-scheduled' },
+  // Added Oct 14, 2026 (Anuraj): move-out reminder ahead of close.
+  {
+    t: 'Remind seller: buyer possession in 5 days',
+    s: '',
+    key: 'remind-seller-possession-5-days',
+  },
   { t: 'Close escrow', s: '', key: 'close-escrow' },
   { t: 'Record deed', s: '', key: 'record-deed' },
 ];

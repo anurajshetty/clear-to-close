@@ -20,6 +20,7 @@ import { BackChevron, Kicker, PrimaryButton, useKeyboardHeight } from '../src/co
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { isValidReviewLink } from '../src/lib/reviewLinks';
+import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
@@ -48,6 +49,7 @@ export default function ProfileUpdate() {
     banner: false,
   });
   const [nameError, setNameError] = useState<string | null>(null);
+  const [brokerError, setBrokerError] = useState<string | null>(null);
   // Review links (Oct 2026): a save attempt with invalid links forces the
   // inline errors visible.
   const [linksSubmitAttempted, setLinksSubmitAttempted] = useState(false);
@@ -75,6 +77,7 @@ export default function ProfileUpdate() {
     (p: Partial<ProfileDraft>) => {
       setDraft((d) => ({ ...d, ...p }));
       if (p.name !== undefined) setNameError(null);
+      if (p.realty_group !== undefined) setBrokerError(null);
       if (p.googleReviewLink !== undefined || p.realtorComReviewLink !== undefined) {
         setLinksSubmitAttempted(false);
       }
@@ -114,6 +117,7 @@ export default function ProfileUpdate() {
           banner: (p.banner_image ?? p.bannerRemoteUrl) != null,
         };
         setNameError(null);
+        setBrokerError(null);
         editedRef.current = false;
       })
       .catch(() => {});
@@ -141,8 +145,15 @@ export default function ProfileUpdate() {
   }, [load]);
 
   const onSave = async () => {
-    if (!draft.name.trim()) {
-      setNameError('Required');
+    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
+    // phone, broker. Every error surfaces together on this one attempt —
+    // name/broker via the error props, email/phone live in the form
+    // (submitAttempted reveals them) — and any error blocks the save.
+    const errors = profileFieldErrors(draft);
+    setNameError(errors.name);
+    setBrokerError(errors.broker);
+    if (hasProfileFieldErrors(errors)) {
+      setLinksSubmitAttempted(true);
       return;
     }
     // Review links (Oct 2026): an invalid link blocks save — the inline
@@ -230,6 +241,7 @@ export default function ProfileUpdate() {
           value={draft}
           onChange={patch}
           nameError={nameError}
+          brokerError={brokerError}
           showReviewLinks
           submitAttempted={linksSubmitAttempted}
         />

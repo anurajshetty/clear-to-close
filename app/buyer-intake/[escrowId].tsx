@@ -29,9 +29,10 @@ import {
 } from '../../src/components/ui';
 import DateField from '../../src/components/DateField';
 import { BuyerIntakeSections } from '../../src/components/BuyerIntakeEntry';
-import { YesNoSeg, YES_NO, LEASED_OWNED } from '../../src/components/YesNoSeg';
+import { YesNoSeg, OptionChips, YES_NO, LEASED_OWNED } from '../../src/components/YesNoSeg';
 import {
   BUYER_INTAKE_MAX_BUYERS,
+  LOAN_TYPE_OPTIONS,
   autoFillBuyerIntake,
   buildBuyerIntakeShareText,
   checkBuyerIntakeMath,
@@ -39,6 +40,7 @@ import {
   emptyBuyerIntakeBuyer,
   type BuyerIntakeBuyer,
   type BuyerIntakeData,
+  type BuyerLoanType,
   type BuyerYesNo,
   validateBuyerIntakeConditional,
 } from '../../src/lib/buyerIntake';
@@ -328,6 +330,61 @@ export default function BuyerIntakeScreen() {
                 testID="buyer-intake-loan-amount"
               />
               {mathNote && <Text style={styles.mathNote}>{mathNote}</Text>}
+              <OptionChips
+                label="Type of loan"
+                value={form.loanType}
+                onChange={(v: string) => update({ loanType: v as BuyerLoanType })}
+                options={LOAN_TYPE_OPTIONS}
+                testID="buyer-intake-loan-type"
+              />
+              <YesNoSeg
+                label="Buyer credit"
+                value={form.buyerCredit}
+                onChange={(v: string) =>
+                  update({ buyerCredit: v as BuyerYesNo, buyerCreditAmount: v === 'yes' ? form.buyerCreditAmount : '' })
+                }
+                options={YES_NO}
+                testID="buyer-intake-buyer-credit"
+              />
+              {form.buyerCredit === 'yes' && (
+                <Field
+                  label="Credit amount"
+                  value={form.buyerCreditAmount}
+                  onChangeText={(t) => update({ buyerCreditAmount: t })}
+                  placeholder="$10,000"
+                  keyboardType="decimal-pad"
+                  error={errors.buyerCreditAmount ?? null}
+                  testID="buyer-intake-buyer-credit-amount"
+                />
+              )}
+              <YesNoSeg
+                label="BRBC signed"
+                value={form.brbcSigned}
+                onChange={(v: string) => update({ brbcSigned: v as BuyerYesNo })}
+                options={YES_NO}
+                testID="buyer-intake-brbc-signed"
+              />
+            </View>
+
+            {/* Commission */}
+            <View style={styles.section}>
+              <Kicker>Commission</Kicker>
+              <Field
+                label="Buyer's agent %"
+                value={form.buyerAgentPct}
+                onChangeText={(t) => update({ buyerAgentPct: t })}
+                placeholder="2.5"
+                keyboardType="decimal-pad"
+                testID="buyer-intake-buyer-agent-pct"
+              />
+              <Field
+                label="Seller's agent %"
+                value={form.sellerAgentPct}
+                onChangeText={(t) => update({ sellerAgentPct: t })}
+                placeholder="2.5"
+                keyboardType="decimal-pad"
+                testID="buyer-intake-seller-agent-pct"
+              />
             </View>
 
             {/* Dates */}

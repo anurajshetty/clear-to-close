@@ -31,6 +31,7 @@ import {
   buildTcIntakeShareText,
   countTcIntake,
   emptyTcIntake,
+  validateTcIntakeConditional,
   type TcIntakeData,
   type TcIntakeSeller,
   type TcYesNo,
@@ -59,6 +60,9 @@ export default function TcIntakeScreen() {
   const [form, setForm] = useState<TcIntakeData | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** Conditional-required field errors (water softener follow-up), set on
+   * Save only — mirrors the buyer intake's pattern. */
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string) => {
@@ -91,6 +95,18 @@ export default function TcIntakeScreen() {
   const update = (patch: Partial<TcIntakeData>) => {
     setForm((f) => (f ? { ...f, ...patch } : f));
     setSaveError(null);
+    // Errors clear on edit (same rule as the buyer intake).
+    setErrors((e) => {
+      let changed = false;
+      const next: Record<string, string> = { ...e };
+      for (const k of Object.keys(patch)) {
+        if (k in next) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : e;
+    });
   };
   const updateSeller = (index: number, patch: Partial<TcIntakeSeller>) => {
     setForm((f) => {
@@ -103,6 +119,14 @@ export default function TcIntakeScreen() {
 
   const onSave = async () => {
     if (saving || !form || locked) return;
+    // Conditional required validation (Oct 14, 2026): runs here only,
+    // never while typing. Violations surface inline; save is blocked.
+    const violations = validateTcIntakeConditional(form);
+    if (Object.keys(violations).length > 0) {
+      setErrors(violations);
+      return;
+    }
+    setErrors({});
     setSaveError(null);
     setSaving(true);
     try {
@@ -245,6 +269,7 @@ export default function TcIntakeScreen() {
             <Kicker>Commission</Kicker>
             <Field label="Realtor total %" value={form.totalPct} onChangeText={(t) => update({ totalPct: t })} keyboardType="decimal-pad" testID="tc-total-pct" />
             <Field label="Buyer's-agent offer %" value={form.buyerPct} onChangeText={(t) => update({ buyerPct: t })} keyboardType="decimal-pad" testID="tc-buyer-pct" />
+            <Field label="Seller's-agent %" value={form.sellerPct} onChangeText={(t) => update({ sellerPct: t })} keyboardType="decimal-pad" testID="tc-seller-pct" />
             <Field label="TC fee" value={form.tcFee} onChangeText={(t) => update({ tcFee: t })} keyboardType="decimal-pad" testID="tc-tc-fee" />
             <Field label="Broker fee" value={form.brokerFee} onChangeText={(t) => update({ brokerFee: t })} keyboardType="decimal-pad" testID="tc-broker-fee" />
 
@@ -263,11 +288,17 @@ export default function TcIntakeScreen() {
                 <Field label="Solar company" value={form.solarCompany} onChangeText={(t) => update({ solarCompany: t })} testID="tc-solar-company" />
               </>
             )}
+            <YesNoSeg label="Water softener?" value={form.waterSoftener} onChange={(v) => update({ waterSoftener: v as TcYesNo, waterSoftenerLeasedOwned: v === 'yes' ? form.waterSoftenerLeasedOwned : '' })} options={YES_NO} testID="tc-water-softener" />
+            {form.waterSoftener === 'yes' && (
+              <YesNoSeg label="Leased or owned?" value={form.waterSoftenerLeasedOwned} onChange={(v) => update({ waterSoftenerLeasedOwned: v as '' | 'leased' | 'owned' })} options={LEASED_OWNED} error={errors.waterSoftenerLeasedOwned ?? null} testID="tc-water-softener-lo" />
+            )}
             <YesNoSeg label="Pool?" value={form.pool} onChange={(v) => update({ pool: v as TcYesNo })} options={YES_NO} testID="tc-pool" />
 
             {/* 6 · Vendors */}
             <Kicker>Vendors</Kicker>
             <Field label="Escrow company" value={form.escrowCompany} onChangeText={(t) => update({ escrowCompany: t })} testID="tc-escrow-company" />
+            <Field label="Escrow officer name" value={form.escrowOfficerName} onChangeText={(t) => update({ escrowOfficerName: t })} testID="tc-escrow-officer-name" />
+            <Field label="Officer contact info" value={form.escrowOfficerContact} onChangeText={(t) => update({ escrowOfficerContact: t })} testID="tc-escrow-officer-contact" />
             <Field label="Title company" value={form.titleCompany} onChangeText={(t) => update({ titleCompany: t })} testID="tc-title-company" />
             <Field label="NHD company" value={form.nhdCompany} onChangeText={(t) => update({ nhdCompany: t })} testID="tc-nhd-company" />
             <Field label="Home warranty company" value={form.warrantyCompany} onChangeText={(t) => update({ warrantyCompany: t })} testID="tc-warranty-company" />

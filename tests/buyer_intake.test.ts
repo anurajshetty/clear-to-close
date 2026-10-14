@@ -75,6 +75,12 @@ function fullIntake(): BuyerIntakeData {
     deposit: '25000',
     downPayment: '195000',
     loanAmount: '780000',
+    loanType: 'conventional',
+    buyerCredit: 'yes',
+    buyerCreditAmount: '10000',
+    brbcSigned: 'yes',
+    buyerAgentPct: '2.5',
+    sellerAgentPct: '2.5',
     closeOfEscrow: '2026-10-15',
     possession: '2026-10-16',
     saleOfBuyersProperty: 'no',
@@ -114,15 +120,16 @@ async function main(): Promise<void> {
 
   // ----------------------------------------------------------------- count --
   {
-    // The mockup's "5 of 23 filled": with 1 buyer block and no Yes answers,
-    // exactly 23 visible fields; the auto-filled draft fills 5.
+    // Base count (Oct 14, 2026 additions included): with 1 buyer block and
+    // no Yes answers, exactly 28 visible fields; the auto-filled draft
+    // fills 5.
     const auto = autoFillBuyerIntake(
       { name: 'Rita Realtor', email: 'rita@realty.com' },
       { buyerName: '', address: '123 Main St', closeDate: '2026-10-15' },
       [{ partyName: 'Anaya Sharma' }],
     );
     const c = countBuyerIntake(auto.data);
-    assert(c.total === 23, `one buyer block + no Yes answers -> 23 visible fields (got ${c.total})`);
+    assert(c.total === 28, `one buyer block + no Yes answers -> 28 visible fields (got ${c.total})`);
     assert(c.filled === 5, `auto-filled draft fills 5 (got ${c.filled})`);
     assert(!c.complete, 'draft is not complete');
 
@@ -132,24 +139,35 @@ async function main(): Promise<void> {
     noYes.investigation = 'no';
     noYes.investigationDays = '17';
     const c2 = countBuyerIntake(noYes);
-    assert(c2.total === 23, 'hidden contingency-days fields do not count toward the total');
+    assert(c2.total === 28, 'hidden contingency-days fields do not count toward the total');
     assert(c2.filled === 1, 'only the answered Yes/No counts when the days field is hidden');
 
     // A Yes answer reveals the days field and it counts.
     const yes = emptyBuyerIntake();
     yes.investigation = 'yes';
     const c3 = countBuyerIntake(yes);
-    assert(c3.total === 24, 'a Yes answer adds its days field to the total');
+    assert(c3.total === 29, 'a Yes answer adds its days field to the total');
     assert(c3.filled === 1, 'unfilled revealed days field is not counted as filled');
 
     // Hidden buyer blocks never count.
     const twoBuyers = emptyBuyerIntake();
     twoBuyers.buyers.push({ name: '', phone: '', email: '' });
-    assert(countBuyerIntake(twoBuyers).total === 26, 'each visible buyer block adds 3 fields');
+    assert(countBuyerIntake(twoBuyers).total === 31, 'each visible buyer block adds 3 fields');
+
+    // Buyer credit behaves like the other conditionals: No hides the
+    // amount; Yes reveals and counts it.
+    const creditNo = emptyBuyerIntake();
+    creditNo.buyerCredit = 'no';
+    creditNo.buyerCreditAmount = '5000';
+    assert(countBuyerIntake(creditNo).total === 28, 'buyer credit No -> amount hidden from the count');
+    const creditYes = emptyBuyerIntake();
+    creditYes.buyerCredit = 'yes';
+    const cc = countBuyerIntake(creditYes);
+    assert(cc.total === 29 && cc.filled === 1, 'buyer credit Yes -> amount counts, unfilled');
 
     // Full intake: 2 buyers + all Yes answers.
     const full = countBuyerIntake(fullIntake());
-    assert(full.total === 32 && full.filled === 32 && full.complete, 'fully filled intake is complete');
+    assert(full.total === 38 && full.filled === 38 && full.complete, 'fully filled intake is complete');
   }
 
   // ------------------------------------------------------------ auto-fill ---
@@ -207,7 +225,7 @@ async function main(): Promise<void> {
   // ------------------------------------------------------- status / sides --
   {
     assert(describeBuyerIntakeStatus(null).text === 'Not started', 'null -> Not started');
-    assert(describeBuyerIntakeStatus(emptyBuyerIntake()).text === '0 of 23 filled', 'empty draft -> 0 of 23 filled');
+    assert(describeBuyerIntakeStatus(emptyBuyerIntake()).text === '0 of 28 filled', 'empty draft -> 0 of 28 filled');
     const s = describeBuyerIntakeStatus(fullIntake());
     assert(s.text === 'Complete' && s.complete, 'full intake -> Complete');
 
@@ -227,9 +245,28 @@ async function main(): Promise<void> {
     const sections = buildBuyerIntakeSections(fullIntake(), '123 Main St');
     const titles = sections.map((s) => s.title);
     assert(
-      JSON.stringify(titles) === JSON.stringify(['Agent', 'Buyers', 'Offer terms', 'Dates', 'Contingencies', 'Property details']),
-      'six sections in mockup order',
+      JSON.stringify(titles) === JSON.stringify(['Agent', 'Buyers', 'Offer terms', 'Commission', 'Dates', 'Contingencies', 'Property details']),
+      'seven sections in form order (Commission after Offer terms)',
     );
+    const offer = sections.find((s) => s.title === 'Offer terms')!;
+    const loanType = offer.rows.find((r) => r.label === 'Type of loan')!;
+    assert(loanType.value === 'Conventional' && loanType.provided, 'type of loan shows its label');
+    const credit = offer.rows.find((r) => r.label === 'Buyer credit')!;
+    assert(credit.value === 'Yes, $10000', 'buyer credit summary: "Yes, $X"');
+    const brbc = offer.rows.find((r) => r.label === 'BRBC signed')!;
+    assert(brbc.value === 'Yes', 'BRBC signed summary row');
+    const commission = sections.find((s) => s.title === 'Commission')!;
+    assert(commission.rows[0].label === "Buyer's agent" && commission.rows[0].value === '2.5%', 'commission: buyer agent %');
+    assert(commission.rows[1].label === "Seller's agent" && commission.rows[1].value === '2.5%', 'commission: seller agent %');
+    // Buyer credit "No" renders plainly; unanswered renders Not provided.
+    const creditNoData = emptyBuyerIntake();
+    creditNoData.buyerCredit = 'no';
+    const creditNoRow = buildBuyerIntakeSections(creditNoData, '123 Main St')
+      .find((s) => s.title === 'Offer terms')!.rows.find((r) => r.label === 'Buyer credit')!;
+    assert(creditNoRow.value === 'No' && creditNoRow.provided, 'buyer credit No summary');
+    const creditBlankRow = buildBuyerIntakeSections(emptyBuyerIntake(), '123 Main St')
+      .find((s) => s.title === 'Offer terms')!.rows.find((r) => r.label === 'Buyer credit')!;
+    assert(creditBlankRow.value === 'Not provided' && !creditBlankRow.provided, 'buyer credit unanswered -> Not provided');
     const buyers = sections.find((s) => s.title === 'Buyers')!;
     assert(buyers.rows.length === 2 && buyers.rows[0].value.includes('Anaya Sharma'), 'buyer rows join name/phone/email');
     const contingencies = sections.find((s) => s.title === 'Contingencies')!;
@@ -252,6 +289,10 @@ async function main(): Promise<void> {
     const text = buildBuyerIntakeShareText(fullIntake(), '123 Main St');
     assert(text.startsWith('Buyer intake · 123 Main St'), 'share text is headed by the escrow');
     assert(text.includes('Offer terms') && text.includes('Contingencies'), 'share text carries all sections');
+    assert(text.includes('Type of loan: Conventional'), 'share text carries the loan type');
+    assert(text.includes('Buyer credit: Yes, $10000'), 'share text carries the buyer credit');
+    assert(text.includes('BRBC signed: Yes'), 'share text carries BRBC signed');
+    assert(text.includes('Commission') && text.includes("Buyer's agent: 2.5%"), 'share text carries the commission section');
     assert(!/\n{3,}/.test(text), 'no runaway blank lines');
     const emptyText = buildBuyerIntakeShareText(emptyBuyerIntake(), '123 Main St');
     assert(emptyText.includes('Not provided'), 'unfilled values share as "Not provided"');
@@ -460,6 +501,38 @@ async function main(): Promise<void> {
       Object.keys(validateBuyerIntakeConditional(dec)).length === 0,
       'decimal amount -> no violations',
     );
+
+    // Buyer credit (Oct 14, 2026): same conditional rules as the others.
+    const creditEmpty = emptyBuyerIntake();
+    creditEmpty.buyerCredit = 'yes';
+    assert(
+      validateBuyerIntakeConditional(creditEmpty).buyerCreditAmount === 'Enter the credit amount.',
+      'buyer credit yes + empty amount -> error',
+    );
+    const creditBad = emptyBuyerIntake();
+    creditBad.buyerCredit = 'yes';
+    creditBad.buyerCreditAmount = 'abc';
+    assert(
+      validateBuyerIntakeConditional(creditBad).buyerCreditAmount === 'Enter a number.',
+      'buyer credit yes + non-numeric amount -> Enter a number.',
+    );
+    const creditOk = emptyBuyerIntake();
+    creditOk.buyerCredit = 'yes';
+    creditOk.buyerCreditAmount = '10000';
+    assert(
+      Object.keys(validateBuyerIntakeConditional(creditOk)).length === 0,
+      'buyer credit yes + valid amount -> no violations',
+    );
+    const creditNo = emptyBuyerIntake();
+    creditNo.buyerCredit = 'no';
+    creditNo.buyerCreditAmount = 'garbage';
+    assert(
+      Object.keys(validateBuyerIntakeConditional(creditNo)).length === 0,
+      'buyer credit no -> no violations regardless of the amount',
+    );
+    // Loan type normalizes defensively like the other enums.
+    assert(normalizeBuyerIntake({ loanType: 'fha' }).loanType === 'fha', 'normalize keeps a valid loan type');
+    assert(normalizeBuyerIntake({ loanType: 'jumbo' }).loanType === '', 'normalize drops an unknown loan type');
   }
 
   // -------------------------------------- structural guards (route files) --
@@ -494,6 +567,7 @@ async function main(): Promise<void> {
       ['buyer-intake-loan-days', 'loanDays'],
       ['buyer-intake-hoa-amount', 'hoaAmount'],
       ['buyer-intake-solar-amount', 'solarAmount'],
+      ['buyer-intake-buyer-credit-amount', 'buyerCreditAmount'],
     ] as const) {
       const idx = form.indexOf(`testID="${testID}"`);
       assert(idx !== -1, `buyer intake form renders ${testID}`);
@@ -513,11 +587,30 @@ async function main(): Promise<void> {
       ['buyer-intake-loan', 'loanDays'],
       ['buyer-intake-hoa', 'hoaAmount'],
       ['buyer-intake-solar', 'solarAmount'],
+      ['buyer-intake-buyer-credit', 'buyerCreditAmount'],
     ] as const) {
       const idx = form.indexOf(`testID="${toggle}"`);
       assert(idx !== -1, `buyer intake form renders ${toggle}`);
       const block = form.slice(Math.max(0, idx - 600), idx);
       assert(block.includes(`${followup}: v === 'yes' ?`), `"No" on ${toggle} clears ${followup}`);
+    }
+
+    // Oct 14, 2026 additions — form pins.
+    {
+      const loanAmountIdx = form.indexOf('testID="buyer-intake-loan-amount"');
+      const loanTypeIdx = form.indexOf('testID="buyer-intake-loan-type"');
+      assert(loanTypeIdx !== -1 && loanTypeIdx > loanAmountIdx, 'type of loan chips render after Loan amount');
+      const chipBlock = form.slice(Math.max(0, loanTypeIdx - 500), loanTypeIdx);
+      assert(chipBlock.includes('<OptionChips') && chipBlock.includes('LOAN_TYPE_OPTIONS'), 'loan type renders as OptionChips with the five options');
+      assert(chipBlock.includes('label="Type of loan"'), 'loan type label');
+      assert(form.includes('buyer-intake-buyer-credit') && form.includes('label="Buyer credit"'), 'buyer credit segment renders');
+      assert(form.includes('buyer-intake-brbc-signed') && form.includes('label="BRBC signed"'), 'BRBC signed segment renders with the exact label');
+      const buyerPctIdx = form.indexOf('testID="buyer-intake-buyer-agent-pct"');
+      const sellerPctIdx = form.indexOf('testID="buyer-intake-seller-agent-pct"');
+      assert(buyerPctIdx !== -1 && sellerPctIdx !== -1 && sellerPctIdx > buyerPctIdx, 'commission % fields render (buyer then seller)');
+      assert(buyerPctIdx > loanAmountIdx, 'commission section sits after Offer terms');
+      assert(form.includes('<Kicker>Commission</Kicker>'), 'commission section heading');
+      assert(form.includes('label="Credit amount"'), 'credit amount field label');
     }
 
     // Errors clear on edit: the update() helper drops error entries for

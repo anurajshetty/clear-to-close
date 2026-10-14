@@ -2,10 +2,11 @@
 //
 // The single approved profile form, reused by profile setup (01·⑬),
 // onboarding profile creation (㉒), and profile update (㉕). Field order
-// (Anuraj, Sept 2026): 1. Profile pic, 2. Banner image, 3. Full name,
-// 4. Email, 5. Phone, 6. Broker, 7. About, 8. Years of experience,
-// 9. Areas served, 10. License number. Buttons and headers belong to the
-// screens; this component owns the fields only.
+// (Anuraj, Sept 2026; years-of-experience field removed Oct 14, 2026 —
+// the stored value goes dormant, still on the draft and in sync):
+// 1. Profile pic, 2. Banner image, 3. Full name, 4. Email, 5. Phone,
+// 6. Broker, 7. About, 8. Areas served, 9. License number. Buttons and
+// headers belong to the screens; this component owns the fields only.
 
 import React, { useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -14,6 +15,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { deleteLegacyPhotoFile, saveManagedBanner, saveManagedPhoto } from '../lib/photoFile';
 import { bannerSizeHint } from '../lib/bannerSize';
 import { isValidReviewLink } from '../lib/reviewLinks';
+import { profileEmailError, profilePhoneError } from '../lib/profileRequired';
 import { Field, Kicker } from './ui';
 import { initialsOf } from './ui';
 import { PhotoCropper, type CropKind } from './PhotoCropper';
@@ -39,7 +41,10 @@ export interface ProfileDraft {
    */
   googleReviewLink: string;
   /**
-   * Optional realtor.com review link (Oct 2026) — same as googleReviewLink.
+   * Optional "Other" review link (Oct 2026) — same as googleReviewLink.
+   * Originally realtor.com-specific; made generic Oct 14, 2026 (label and
+   * icon only — the stored field/column keep their names, and existing
+   * saved realtor.com links keep working as the Other link).
    */
   realtorComReviewLink: string;
 }
@@ -62,8 +67,14 @@ export const EMPTY_PROFILE_DRAFT: ProfileDraft = {
 interface ProfileFormProps {
   value: ProfileDraft;
   onChange: (patch: Partial<ProfileDraft>) => void;
-  /** Inline error shown under the Full name field (㉕ "Required" state). */
+  /**
+   * Inline errors shown under the REQUIRED name/broker fields (the
+   * "Required" state) — the parent screens own this validation (see
+   * src/lib/profileRequired.ts). Email and phone errors are computed
+   * live inside the form (required + format, review-link pattern).
+   */
   nameError?: string | null;
+  brokerError?: string | null;
   /**
    * Review links section (Oct 2026) — appended to the form. Only the
    * profile-update screen passes this; profile-setup/onboarding are
@@ -141,7 +152,7 @@ interface CropJob {
   kind: CropKind;
 }
 
-export function ProfileForm({ value, onChange, nameError, showReviewLinks, onReviewLinksValidityChange, submitAttempted }: ProfileFormProps) {
+export function ProfileForm({ value, onChange, nameError, brokerError, showReviewLinks, onReviewLinksValidityChange, submitAttempted }: ProfileFormProps) {
   // A saved photo URI can go stale (e.g. a dead file/blob URI). Fall back
   // to initials rather than rendering a broken image; resets per URI.
   const [photoBroken, setPhotoBroken] = useState(false);
@@ -233,6 +244,16 @@ export function ProfileForm({ value, onChange, nameError, showReviewLinks, onRev
   };
 
   const set = (key: keyof ProfileDraft) => (text: string) => onChange({ [key]: text } as Partial<ProfileDraft>);
+
+  // Email / phone (Oct 14, 2026): required + format errors, computed live
+  // with the same touched pattern as the review links — an error shows
+  // after the field is touched/blurred, or on a save attempt
+  // (submitAttempted). The parent re-checks with profileFieldErrors and
+  // blocks the save while any error stands.
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const emailFieldError = emailTouched || submitAttempted ? profileEmailError(value.email) : null;
+  const phoneFieldError = phoneTouched || submitAttempted ? profilePhoneError(value.phone) : null;
 
   // Review links (Oct 2026): per-field touched state drives the inline
   // error. Validity is reported up so the parent can block save.
@@ -339,28 +360,33 @@ export function ProfileForm({ value, onChange, nameError, showReviewLinks, onRev
       {nameError ? <Text style={styles.nameError}>{nameError}</Text> : null}
       {/* 4. Email */}
       <Field
-        label="Email (optional)"
+        label="Email"
         value={value.email}
         onChangeText={set('email')}
+        onBlur={() => setEmailTouched(true)}
         placeholder="e.g. maya@compass.com"
         keyboardType="email-address"
         autoCapitalize="none"
+        error={emailFieldError}
       />
       {/* 5. Phone */}
       <Field
-        label="Phone (optional)"
+        label="Phone"
         value={value.phone}
         onChangeText={set('phone')}
+        onBlur={() => setPhoneTouched(true)}
         placeholder="Used by the Call and Text buttons on your client profile"
         keyboardType="phone-pad"
+        error={phoneFieldError}
       />
       {/* 6. Broker */}
       <Field
-        label="Broker (optional)"
+        label="Broker"
         value={value.realty_group}
         onChangeText={set('realty_group')}
         placeholder="e.g. Compass Realty"
       />
+      {brokerError ? <Text style={styles.nameError}>{brokerError}</Text> : null}
       {/* 7. About */}
       <Field
         label="About"
@@ -369,28 +395,24 @@ export function ProfileForm({ value, onChange, nameError, showReviewLinks, onRev
         placeholder="Tell clients about yourself"
         multiline
       />
-      {/* 8. Years of experience */}
-      <Field
-        label="Years of experience"
-        value={value.yearsExperience}
-        onChangeText={set('yearsExperience')}
-        placeholder="e.g. 12"
-      />
-      {/* 9. Areas served */}
+      {/* 8. Years of experience — field REMOVED (Anuraj, Oct 14, 2026).
+          The draft still carries yearsExperience end-to-end (stored data
+          and sync untouched); it is simply no longer editable here. */}
+      {/* 8. Areas served */}
       <Field
         label="Areas served"
         value={value.areasServed}
         onChangeText={set('areasServed')}
         placeholder="e.g. Santa Clarita, Valencia"
       />
-      {/* 10. License number */}
+      {/* 9. License number */}
       <Field
         label="License number (optional)"
         value={value.dreLicense}
         onChangeText={set('dreLicense')}
         placeholder="e.g. 01992736"
       />
-      {/* 11. Review links (Oct 2026) — profile-update screen only. */}
+      {/* 10. Review links (Oct 2026) — profile-update screen only. */}
       {showReviewLinks ? (
         <View style={styles.reviewLinks}>
           <Kicker>Review links</Kicker>
@@ -415,14 +437,14 @@ export function ProfileForm({ value, onChange, nameError, showReviewLinks, onRev
             hint="Find yours in your Google Business Profile → Share review form."
           />
           <Field
-            label="realtor.com review link · optional"
+            label="Other review link · optional"
             value={value.realtorComReviewLink}
             onChangeText={(t) => {
               set('realtorComReviewLink')(t);
               if (rdcTouched) setRdcTouched(true);
             }}
             onBlur={() => setRdcTouched(true)}
-            placeholder="https://www.realtor.com/…"
+            placeholder="https://…"
             keyboardType="url"
             autoCapitalize="none"
             autoCorrect={false}

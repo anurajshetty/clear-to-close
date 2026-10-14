@@ -45,6 +45,8 @@ export interface TcIntakeData {
   // Commission
   totalPct: string;
   buyerPct: string;
+  /** Seller's agent % (Oct 14, 2026). */
+  sellerPct: string;
   /** Prefilled brokerage defaults; editable. */
   tcFee: string;
   /** Prefilled brokerage defaults; editable. */
@@ -57,9 +59,16 @@ export interface TcIntakeData {
   solarLeasedOwned: '' | 'leased' | 'owned';
   solarAmount: string;
   solarCompany: string;
+  /** Water softener (Oct 14, 2026): mirrors Solar's Yes/No + Owned/Leased
+   * shape, minus amount/company. Owned/Leased is required on save when Yes. */
+  waterSoftener: TcYesNo;
+  waterSoftenerLeasedOwned: '' | 'leased' | 'owned';
   pool: TcYesNo;
   // Vendors
   escrowCompany: string;
+  /** Escrow officer (Oct 14, 2026): the person at the escrow company. */
+  escrowOfficerName: string;
+  escrowOfficerContact: string;
   titleCompany: string;
   nhdCompany: string;
   warrantyCompany: string;
@@ -94,6 +103,7 @@ export function emptyTcIntake(): TcIntakeData {
     homeOfChoice: '',
     totalPct: '',
     buyerPct: '',
+    sellerPct: '',
     tcFee: TC_FEE_DEFAULT,
     brokerFee: BROKER_FEE_DEFAULT,
     personalProperty: '',
@@ -103,8 +113,12 @@ export function emptyTcIntake(): TcIntakeData {
     solarLeasedOwned: '',
     solarAmount: '',
     solarCompany: '',
+    waterSoftener: '',
+    waterSoftenerLeasedOwned: '',
     pool: '',
     escrowCompany: '',
+    escrowOfficerName: '',
+    escrowOfficerContact: '',
     titleCompany: '',
     nhdCompany: '',
     warrantyCompany: '',
@@ -136,6 +150,7 @@ export function normalizeTcIntake(raw: unknown): TcIntakeData {
   const sellers = sellersRaw.slice(0, TC_INTAKE_MAX_SELLERS).map(asSeller);
   if (sellers.length === 0) sellers.push(emptyTcIntakeSeller());
   const slo = d.solarLeasedOwned;
+  const wlo = d.waterSoftenerLeasedOwned;
   return {
     ownerOccupied: asYesNo(d.ownerOccupied),
     inTrust: asYesNo(d.inTrust),
@@ -152,6 +167,7 @@ export function normalizeTcIntake(raw: unknown): TcIntakeData {
     homeOfChoice: asYesNo(d.homeOfChoice),
     totalPct: asText(d.totalPct),
     buyerPct: asText(d.buyerPct),
+    sellerPct: asText(d.sellerPct),
     // Fee defaults apply only when the field is ABSENT (a brand-new
     // intake) — never to an explicit blank. If the realtor clears the fee
     // and saves, the blank survives normalization and counts unfilled;
@@ -165,8 +181,12 @@ export function normalizeTcIntake(raw: unknown): TcIntakeData {
     solarLeasedOwned: slo === 'leased' || slo === 'owned' ? slo : '',
     solarAmount: asText(d.solarAmount),
     solarCompany: asText(d.solarCompany),
+    waterSoftener: asYesNo(d.waterSoftener),
+    waterSoftenerLeasedOwned: wlo === 'leased' || wlo === 'owned' ? wlo : '',
     pool: asYesNo(d.pool),
     escrowCompany: asText(d.escrowCompany),
+    escrowOfficerName: asText(d.escrowOfficerName),
+    escrowOfficerContact: asText(d.escrowOfficerContact),
     titleCompany: asText(d.titleCompany),
     nhdCompany: asText(d.nhdCompany),
     warrantyCompany: asText(d.warrantyCompany),
@@ -216,6 +236,7 @@ export function countTcIntake(data: TcIntakeData): {
   if (data.buyingAnother === 'yes') yn(data.homeOfChoice);
   tx(data.totalPct);
   tx(data.buyerPct);
+  tx(data.sellerPct);
   tx(data.tcFee);
   tx(data.brokerFee);
   tx(data.personalProperty);
@@ -227,8 +248,12 @@ export function countTcIntake(data: TcIntakeData): {
     tx(data.solarAmount);
     tx(data.solarCompany);
   }
+  yn(data.waterSoftener);
+  if (data.waterSoftener === 'yes') tx(data.waterSoftenerLeasedOwned);
   yn(data.pool);
   tx(data.escrowCompany);
+  tx(data.escrowOfficerName);
+  tx(data.escrowOfficerContact);
   tx(data.titleCompany);
   tx(data.nhdCompany);
   tx(data.warrantyCompany);
@@ -286,6 +311,22 @@ export function formatTcIntakeDate(iso: string): string {
 }
 
 const NOT_PROVIDED = 'Not provided';
+
+/**
+ * Conditional required validation (Oct 14, 2026 — the buyer intake's Oct 1
+ * rules applied to the TC form): when the water softener toggle is 'yes',
+ * its Owned/Leased follow-up is required. Runs in onSave only — never
+ * while typing. Returns a field-key -> error-copy map; empty means valid.
+ * An unanswered toggle ('') skips the pair; 'no' clears the follow-up in
+ * the form's onChange handler.
+ */
+export function validateTcIntakeConditional(data: TcIntakeData): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (data.waterSoftener === 'yes' && data.waterSoftenerLeasedOwned === '') {
+    errors.waterSoftenerLeasedOwned = 'Say whether the water softener is leased or owned.';
+  }
+  return errors;
+}
 
 function ynText(v: TcYesNo): string {
   if (v === 'yes') return 'Yes';
@@ -345,6 +386,16 @@ export function buildTcIntakeSections(
         ].filter(Boolean)
       : [];
   const solarValue = data.solar === 'yes' ? solarParts.join(', ') : data.solar === 'no' ? 'No' : '';
+  const waterSoftenerValue =
+    data.waterSoftener === 'yes'
+      ? data.waterSoftenerLeasedOwned === 'leased'
+        ? 'Yes, Leased'
+        : data.waterSoftenerLeasedOwned === 'owned'
+          ? 'Yes, Owned'
+          : 'Yes'
+      : data.waterSoftener === 'no'
+        ? 'No'
+        : '';
   const warranty = [data.warrantyCompany.trim(), data.warrantyAmount.trim()]
     .filter(Boolean)
     .join(', ');
@@ -385,6 +436,7 @@ export function buildTcIntakeSections(
       rows: [
         row('Your total', data.totalPct.trim() !== '' ? `${data.totalPct.trim()}%` : ''),
         row("Buyer's agent offer", data.buyerPct.trim() !== '' ? `${data.buyerPct.trim()}%` : ''),
+        row("Seller's agent", data.sellerPct.trim() !== '' ? `${data.sellerPct.trim()}%` : ''),
         row('TC / Broker fee', fee),
       ],
     },
@@ -394,6 +446,7 @@ export function buildTcIntakeSections(
         row('Personal property', data.personalProperty),
         row('HOA', hoaValue),
         row('Solar', solarValue),
+        row('Water softener', waterSoftenerValue),
         row('Pool', ynText(data.pool)),
       ],
     },
@@ -401,6 +454,8 @@ export function buildTcIntakeSections(
       title: 'Vendors',
       rows: [
         row('Escrow', data.escrowCompany),
+        row('Escrow officer name', data.escrowOfficerName),
+        row('Officer contact info', data.escrowOfficerContact),
         row('Title', data.titleCompany),
         row('NHD', data.nhdCompany),
         row('Home warranty', warranty),

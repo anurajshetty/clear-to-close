@@ -29,7 +29,7 @@ import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/Escrow
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
-import { ClientTriumphSection } from '../../../src/components/ClientTriumph';
+import { ClientTriumphSection, ShareProfileCard } from '../../../src/components/ClientTriumph';
 import { ReviewLinksCard } from '../../../src/components/ReviewLinksCard';
 import { shouldShowReviewLinksCard } from '../../../src/lib/reviewLinks';
 import { canLeaveReview } from '../../../src/lib/clientView';
@@ -150,6 +150,19 @@ export default function SellerView() {
             }
           />
 
+          {/* 100% celebration actions (Oct 14, 2026): the share card sits
+              directly below the top card, highlighted; the review-links
+              card follows it. Both appear only in the triumph state. */}
+          {showTriumphActions ? (
+            <ShareProfileCard
+              profile={profile}
+              clientName={partyName}
+              daysToClose={view.daysToClose}
+              realtorId={view.realtorId}
+              stepCount={view.steps.length}
+            />
+          ) : null}
+
           {/* Review links card (Oct 2026, mockup 07): after closing, the
               client taps a logo to leave a review in the external browser.
               Shown only when the review gate passes AND the realtor set at
@@ -195,10 +208,6 @@ export default function SellerView() {
             <ClientTriumphSection
               steps={view.steps}
               role="seller"
-              profile={profile}
-              clientName={partyName}
-              daysToClose={view.daysToClose}
-              realtorId={view.realtorId}
             />
           ) : (
             <>

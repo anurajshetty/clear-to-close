@@ -12,9 +12,10 @@
 // banner, cover-cropped; teal-gradient fallback only when no banner is
 // uploaded) with the back chevron overlaid — no title text — and the big
 // profile photo overlapping below the banner. The profile body is the shared
-// RealtorProfileView in its inApp variant: stats pared to Years in only,
-// the "What clients say" reviews section removed; name, subline, about,
-// and areas unchanged. Call / Text buttons sit below.
+// RealtorProfileView in its inApp variant: no stats row (years-of-experience
+// display removed Oct 14, 2026), the "What clients say" reviews section
+// removed; name, subline, about, and areas unchanged. Call / Text buttons
+// sit below.
 //
 // Data comes from the resolved invite realtor via store.getClientProfile
 // (linked-first, local fallback) — the same wiring as the celebration, so

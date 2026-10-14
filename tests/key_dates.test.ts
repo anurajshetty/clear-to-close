@@ -247,10 +247,34 @@ async function main() {
 
   // --- 3. Explainer inventory (key-based, fail closed) ---------------------
   {
-    // Template counts match the approved mockups (14 buyer + 12 seller;
-    // pool-equipment-inspection removed Sept 30, 2026).
+    // Template counts (14 buyer + 14 seller; pool-equipment-inspection
+    // removed Sept 30, 2026; two seller steps added Oct 14, 2026).
     assert(BUY_STEPS.length === 14, `buyer templates = 14 (got ${BUY_STEPS.length})`);
-    assert(SELL_STEPS.length === 12, `seller templates = 12 (got ${SELL_STEPS.length})`);
+    assert(SELL_STEPS.length === 14, `seller templates = 14 (got ${SELL_STEPS.length})`);
+    // Oct 14, 2026 seller additions, in position.
+    const officerIdx = SELL_STEPS.findIndex((s) => s.key === 'escrow-officer-contact-confirmed');
+    assert(
+      officerIdx === 1 && SELL_STEPS[officerIdx].t === 'Escrow officer contact confirmed' &&
+        SELL_STEPS[officerIdx - 1].key === 'escrow-open',
+      'Escrow officer contact confirmed sits immediately after Escrow opened',
+    );
+    const remindIdx = SELL_STEPS.findIndex((s) => s.key === 'remind-seller-possession-5-days');
+    assert(
+      remindIdx !== -1 && SELL_STEPS[remindIdx].t === 'Remind seller: buyer possession in 5 days' &&
+        SELL_STEPS[remindIdx - 1].key === 'final-walkthrough-scheduled' &&
+        SELL_STEPS[remindIdx + 1].key === 'close-escrow',
+      'Remind seller step sits between Final walkthrough scheduled and Close escrow',
+    );
+    assert(
+      stepExplainer('seller', { custom: false, templateKey: 'escrow-officer-contact-confirmed' }) ===
+        'The escrow officer handling your sale. Your realtor keeps their contact details on file.',
+      'escrow officer step carries its approved explainer',
+    );
+    assert(
+      stepExplainer('seller', { custom: false, templateKey: 'remind-seller-possession-5-days' }) ===
+        'Your realtor will remind you five days before the buyer takes possession, so you can plan your move-out.',
+      'possession reminder step carries its approved explainer',
+    );
     const termiteIdx = BUY_STEPS.findIndex((s) => s.key === 'termite-inspection-report');
     assert(
       termiteIdx !== -1 && BUY_STEPS[termiteIdx].t === 'Termite inspection report',
@@ -272,7 +296,7 @@ async function main() {
     );
     // Keys are unique per role.
     assert(new Set(BUY_STEPS.map((s) => s.key)).size === 14, 'buyer template keys unique');
-    assert(new Set(SELL_STEPS.map((s) => s.key)).size === 12, 'seller template keys unique');
+    assert(new Set(SELL_STEPS.map((s) => s.key)).size === 14, 'seller template keys unique');
 
     const missingBuyer = explainerCoverage('buyer', BUY_STEPS.map((s) => s.key));
     assert(missingBuyer.length === 0, `every buyer template key has an explainer (${missingBuyer.join(', ')})`);
@@ -785,6 +809,46 @@ async function main() {
     assert(
       stepExplainer('buyer', customLegacy) === 'Our note.',
       'legacy custom step keeps its own line, never the default explainer',
+    );
+  }
+
+  // --- 11b. Oct 14, 2026 seller steps: existing escrows unchanged ----------
+  {
+    // A pre-change escrow carries the OLD 12 seller steps. Loading must NOT
+    // add the two new template steps — templates apply at creation only.
+    const kv = trackingKV();
+    const oldTitles = [
+      'Escrow opened', 'Wire received', 'Property inspection scheduled', 'Appraisal scheduled',
+      'Seller disclosure due', 'Order home warranty', 'Contingency release', 'Signed closing docs',
+      'Schedule utilities', 'Final walkthrough scheduled', 'Close escrow', 'Record deed',
+    ];
+    const legacySeller = {
+      id: 'legacy-seller-1',
+      address: '11 Legacy Ct',
+      city: '',
+      side: 'sell',
+      status: 'open',
+      buyerName: null,
+      sellerName: 'Legacy Seller',
+      openDate: '2026-09-01',
+      closeDate: '2026-10-30',
+      buyerClosedAt: null,
+      sellerClosedAt: null,
+      inspectionDeadline: null,
+      appraisalDeadline: null,
+      loanApprovalDate: null,
+      buyerSteps: [],
+      sellerSteps: oldTitles.map((t, i) => ({
+        id: `ls${i}`, title: t, subtitle: '', done: false, custom: false, order: i, completedAt: null,
+      })),
+    };
+    await kv.setItem('ctc:escrows', JSON.stringify([legacySeller]));
+    const { store } = createSyncedStore(kv, { cloudClient: () => null });
+    const loaded = (await store.listEscrows()).find((e) => e.id === 'legacy-seller-1')!;
+    assert(loaded.sellerSteps.length === 12, 'existing escrow keeps its 12 seller steps (no template re-application)');
+    assert(
+      !loaded.sellerSteps.some((s) => s.templateKey === 'escrow-officer-contact-confirmed' || s.templateKey === 'remind-seller-possession-5-days'),
+      'the two new steps are absent from existing escrows',
     );
   }
 

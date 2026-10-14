@@ -2,7 +2,9 @@
 //
 // Field order: 1. Profile pic, 2. Banner image, 3. Full name, 4. Email,
 // 5. Phone, 6. Broker (renamed from "Realty group"), 7. About,
-// 8. Years of experience, 9. Areas served, 10. License number.
+// 8. Areas served, 9. License number. (Years of experience was field 8
+// until Oct 14, 2026, when Anuraj removed it from the form and from
+// every display; the stored value stays dormant on the profile.)
 // Email and Phone are stored on the profile; the client-facing profile's
 // Call/Text buttons use the phone number (tel:/sms:). "Avg days to close"
 // is removed from the form AND from every screen that showed it, including
@@ -44,11 +46,10 @@ const ORDER = [
   '1. Profile pic', // photo picker row
   '2. Banner image', // banner picker row
   'label="Full name"',
-  'label="Email (optional)"',
-  'label="Phone (optional)"',
-  'label="Broker (optional)"',
+  'label="Email"',
+  'label="Phone"',
+  'label="Broker"',
   'label="About"',
-  'label="Years of experience"',
   'label="Areas served"',
   'label="License number (optional)"',
 ];
@@ -58,11 +59,23 @@ for (const token of ORDER) {
   assert(at > last, `field order: "${token}" appears in order`);
   last = at;
 }
+// Years of experience: the FORM FIELD is removed (Oct 14, 2026) while the
+// draft key stays (stored data dormant, contract unchanged).
+assert(form.indexOf('label="Years of experience"') === -1, 'years field is gone from the form');
+assert(form.indexOf('yearsExperience: string') !== -1, 'yearsExperience key kept on the draft (dormant)');
 
 // --- 2. Broker rename -----------------------------------------------------
 assert(form.indexOf('label="Realty group"') === -1, '"Realty group" label is gone');
-assert(form.indexOf('label="Broker (optional)"') !== -1, '"Broker (optional)" label present');
+assert(form.indexOf('label="Broker"') !== -1, '"Broker" label present');
 assert(form.indexOf('realty_group') !== -1, 'realty_group field key kept (contractual)');
+
+// --- 2b. Email/Phone/Broker are REQUIRED (Anuraj, Oct 14, 2026) -----------
+// Labels drop "(optional)"; the validation matrix lives in
+// tests/profile_required.test.ts. License stays optional.
+for (const opt of ['label="Email (optional)"', 'label="Phone (optional)"', 'label="Broker (optional)"']) {
+  assert(form.indexOf(opt) === -1, `${opt} is gone (field is required now)`);
+}
+assert(form.indexOf('label="License number (optional)"') !== -1, 'license stays optional');
 
 // --- 3. Email/Phone on the draft and in storage ---------------------------
 assert(form.indexOf('email: string') !== -1, 'ProfileDraft has email');
@@ -121,7 +134,7 @@ async function main(): Promise<void> {
     profileView.indexOf('label="Avg days to close"') === -1,
     'public profile stat row: Avg days stat removed',
   );
-  assert(profileView.indexOf('label="Years in"') !== -1, 'public profile keeps the Years in stat');
+  assert(profileView.indexOf('label="Years in"') === -1, 'public profile: Years in stat removed (Oct 14, 2026)');
   assert(profileView.indexOf('label="Client rating"') !== -1, 'public profile keeps the Client rating stat');
 
   // --- 6. The 0016 email migration ----------------------------------------

@@ -8,6 +8,10 @@
 // mapping contract (tc branch carries tc_intake; buyer/seller payloads
 // carry no tcIntake key at all).
 //
+// Oct 14, 2026 additions covered below: Seller's agent % (Commission),
+// Water softener + its conditional Owned/Leased validation (the buyer
+// intake's Oct 1 conditional rules), and the escrow officer fields.
+//
 // No UI is rendered here (Anuraj's standing rule: unit tests only).
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
@@ -27,6 +31,7 @@ import {
   normalizeTcIntake,
   showTcDetailsForTcView,
   showTcIntakeForRealtorSide,
+  validateTcIntakeConditional,
   type TcIntakeData,
 } from '../src/lib/tcIntake';
 
@@ -68,6 +73,7 @@ function fullIntake(): TcIntakeData {
     homeOfChoice: 'yes',
     totalPct: '5',
     buyerPct: '2.5',
+    sellerPct: '2.5',
     tcFee: '500',
     brokerFee: '995',
     personalProperty: 'Refrigerator, washer/dryer',
@@ -77,8 +83,12 @@ function fullIntake(): TcIntakeData {
     solarLeasedOwned: 'owned',
     solarAmount: '$18,000',
     solarCompany: 'SunPower',
+    waterSoftener: 'yes',
+    waterSoftenerLeasedOwned: 'leased',
     pool: 'yes',
     escrowCompany: 'Fidelity National Title',
+    escrowOfficerName: 'Dana Officer',
+    escrowOfficerContact: 'dana@escrow.example · (555) 111-2222',
     titleCompany: 'Chicago Title',
     nhdCompany: 'NHD Solutions',
     warrantyCompany: 'First American',
@@ -92,7 +102,7 @@ async function main(): Promise<void> {
     const empty = emptyTcIntake();
     assert(empty.tcFee === TC_FEE_DEFAULT && empty.brokerFee === BROKER_FEE_DEFAULT, 'fees prefill the brokerage defaults');
     const c = countTcIntake(empty);
-    assert(c.total === 23, `empty intake counts 23 visible fields (got ${c.total})`);
+    assert(c.total === 27, `empty intake counts 27 visible fields (got ${c.total})`);
     assert(c.filled === 2, `empty intake counts only the 2 prefilled fees as filled (got ${c.filled})`);
     assert(!c.complete, 'empty intake is not complete');
   }
@@ -100,23 +110,26 @@ async function main(): Promise<void> {
     // Conditional fields only count once their gate is answered Yes.
     const t = emptyTcIntake();
     t.inTrust = 'yes';
-    assert(countTcIntake(t).total === 27, 'trust fields add 4 visible fields when inTrust=yes');
+    assert(countTcIntake(t).total === 31, 'trust fields add 4 visible fields when inTrust=yes');
     t.buyingAnother = 'yes';
-    assert(countTcIntake(t).total === 28, 'home-of-choice adds 1 when buyingAnother=yes');
+    assert(countTcIntake(t).total === 32, 'home-of-choice adds 1 when buyingAnother=yes');
     t.hoa = 'yes';
-    assert(countTcIntake(t).total === 29, 'HOA amount adds 1 when hoa=yes');
+    assert(countTcIntake(t).total === 33, 'HOA amount adds 1 when hoa=yes');
     t.solar = 'yes';
-    assert(countTcIntake(t).total === 32, 'solar details add 3 when solar=yes');
+    assert(countTcIntake(t).total === 36, 'solar details add 3 when solar=yes');
+    t.waterSoftener = 'yes';
+    assert(countTcIntake(t).total === 37, 'water softener Owned/Leased adds 1 when waterSoftener=yes');
     t.sellers.push({ name: '', phone: '', email: '' });
-    assert(countTcIntake(t).total === 35, 'a second seller block adds 3 fields');
+    assert(countTcIntake(t).total === 40, 'a second seller block adds 3 fields');
     // A "no" answer counts as answered and adds no conditional fields.
     const n = emptyTcIntake();
     n.inTrust = 'no';
     n.buyingAnother = 'no';
     n.hoa = 'no';
     n.solar = 'no';
+    n.waterSoftener = 'no';
     const nc = countTcIntake(n);
-    assert(nc.total === 23 && nc.filled === 6, `"no" answers count as filled without adding conditionals (got ${nc.filled}/${nc.total})`);
+    assert(nc.total === 27 && nc.filled === 7, `"no" answers count as filled without adding conditionals (got ${nc.filled}/${nc.total})`);
   }
   {
     const full = fullIntake();
@@ -129,7 +142,7 @@ async function main(): Promise<void> {
     const s0 = describeTcIntakeStatus(null);
     assert(s0.text === 'Not started' && !s0.started && !s0.complete, 'no saved row -> "Not started"');
     const s1 = describeTcIntakeStatus(emptyTcIntake());
-    assert(s1.text === '2 of 23 filled' && s1.started && !s1.complete, 'saved partial row -> "X of Y filled"');
+    assert(s1.text === '2 of 27 filled' && s1.started && !s1.complete, 'saved partial row -> "X of Y filled"');
     const s2 = describeTcIntakeStatus(fullIntake());
     assert(s2.text === 'Complete' && s2.complete, 'saved full row -> "Complete"');
   }
@@ -172,9 +185,17 @@ async function main(): Promise<void> {
     const comm = sections[3];
     const fee = comm.rows.find((r) => r.label === 'TC / Broker fee');
     assert(fee?.value === '$500 + $995', 'fees join as "$500 + $995"');
+    assert(comm.rows.find((r) => r.label === "Seller's agent")?.value === '2.5%', 'seller agent % renders with % (Oct 14, 2026)');
     const det = sections[4];
     assert(det.rows.find((r) => r.label === 'HOA')?.value === 'Yes, $450/mo', 'HOA renders "Yes, $450/mo"');
     assert(det.rows.find((r) => r.label === 'Solar')?.value === 'Owned, $18,000, SunPower', 'solar renders "Owned, $18,000, SunPower"');
+    assert(det.rows.find((r) => r.label === 'Water softener')?.value === 'Yes, Leased', 'water softener renders "Yes, Leased" (Oct 14, 2026)');
+    const vendors = sections[5];
+    assert(vendors.rows.find((r) => r.label === 'Escrow officer name')?.value === 'Dana Officer', 'escrow officer name row');
+    assert(
+      vendors.rows.find((r) => r.label === 'Officer contact info')?.value === 'dana@escrow.example · (555) 111-2222',
+      'officer contact info row',
+    );
     const terms = sections[2];
     assert(terms.rows.find((r) => r.label === 'Contract')?.value === 'Jan 1, 2025 - Dec 31, 2025', 'contract range uses a plain hyphen');
     assert(terms.rows.find((r) => r.label === 'Home of choice contingency')?.value === 'Yes', 'conditional row appears when buyingAnother=yes');
@@ -201,6 +222,9 @@ async function main(): Promise<void> {
   {
     const text = buildTcIntakeShareText(fullIntake(), '26207 Benito Ct');
     assert(text.includes('TC / Broker fee: $500 + $995'), 'share carries the fee line');
+    assert(text.includes("Seller's agent: 2.5%"), 'share carries the seller agent % (Oct 14, 2026)');
+    assert(text.includes('Water softener: Yes, Leased'), 'share carries the water softener');
+    assert(text.includes('Escrow officer name: Dana Officer'), 'share carries the escrow officer');
     assert(text.includes('Trustees: Anaya Sharma, Vikram Sharma'), 'share joins multi-line values with commas');
     assert(text.includes('Contract: Jan 1, 2025 - Dec 31, 2025'), 'share contract range uses a hyphen');
     assert(!text.includes('—') && !text.includes('–'), 'share text has no em/en dashes');
@@ -212,6 +236,45 @@ async function main(): Promise<void> {
       'empty share marks every value "Not provided" except the prefilled fee defaults',
     );
     assert(emptyText.includes('Property · 123 Main St'), 'share is sectioned with the address');
+  }
+
+  // --------------------------------- water softener validation (Oct 14) ---
+  {
+    // The buyer intake's conditional rules: Yes + unanswered follow-up is
+    // blocked on save; everything else passes.
+    const yesEmpty = emptyTcIntake();
+    yesEmpty.waterSoftener = 'yes';
+    assert(
+      validateTcIntakeConditional(yesEmpty).waterSoftenerLeasedOwned ===
+        'Say whether the water softener is leased or owned.',
+      'water softener yes + empty Owned/Leased -> error',
+    );
+    const yesLeased = emptyTcIntake();
+    yesLeased.waterSoftener = 'yes';
+    yesLeased.waterSoftenerLeasedOwned = 'leased';
+    assert(Object.keys(validateTcIntakeConditional(yesLeased)).length === 0, 'yes + leased -> valid');
+    const yesOwned = emptyTcIntake();
+    yesOwned.waterSoftener = 'yes';
+    yesOwned.waterSoftenerLeasedOwned = 'owned';
+    assert(Object.keys(validateTcIntakeConditional(yesOwned)).length === 0, 'yes + owned -> valid');
+    const noStale = emptyTcIntake();
+    noStale.waterSoftener = 'no';
+    assert(Object.keys(validateTcIntakeConditional(noStale)).length === 0, 'no -> no violations');
+    const untouched = emptyTcIntake();
+    assert(Object.keys(validateTcIntakeConditional(untouched)).length === 0, 'unanswered -> no violations');
+    // Summary formats: "Yes, Owned" / "No" mirror Solar's family.
+    const ownedData = emptyTcIntake();
+    ownedData.waterSoftener = 'yes';
+    ownedData.waterSoftenerLeasedOwned = 'owned';
+    const ownedRow = buildTcIntakeSections(ownedData, '123 Main St')
+      .find((s) => s.title === 'Property details')!.rows.find((r) => r.label === 'Water softener')!;
+    assert(ownedRow.value === 'Yes, Owned', 'water softener summary: "Yes, Owned"');
+    const noRow = buildTcIntakeSections(noStale, '123 Main St')
+      .find((s) => s.title === 'Property details')!.rows.find((r) => r.label === 'Water softener')!;
+    assert(noRow.value === 'No', 'water softener summary: "No"');
+    // Normalize coerces the new enums defensively.
+    assert(normalizeTcIntake({ waterSoftenerLeasedOwned: 'rented' }).waterSoftenerLeasedOwned === '', 'normalize drops an unknown water-softener value');
+    assert(normalizeTcIntake({ waterSoftener: 'yes', waterSoftenerLeasedOwned: 'owned' }).waterSoftenerLeasedOwned === 'owned', 'normalize keeps owned');
   }
 
   // --------------------------------------------------------- date format ---

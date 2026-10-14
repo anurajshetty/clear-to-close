@@ -15,6 +15,7 @@ import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import { Kicker, PrimaryButton, TextLink, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
+import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
 import { colors } from '../src/theme';
 
 export default function ProfileCreate() {
@@ -25,6 +26,8 @@ export default function ProfileCreate() {
   const kbHeight = useKeyboardHeight();
   const [draft, setDraft] = useState<ProfileDraft>(EMPTY_PROFILE_DRAFT);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [brokerError, setBrokerError] = useState<string | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile is not confirmed on the server — the failure must be visible
@@ -39,6 +42,7 @@ export default function ProfileCreate() {
     (p: Partial<ProfileDraft>) => {
       setDraft((d) => ({ ...d, ...p }));
       if (p.name !== undefined) setNameError(null);
+      if (p.realty_group !== undefined) setBrokerError(null);
     },
     [],
   );
@@ -70,9 +74,16 @@ export default function ProfileCreate() {
 
   const finish = async (skipped: boolean) => {
     if (busy) return;
-    if (!skipped && !draft.name.trim()) {
-      setNameError('Required');
-      return;
+    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
+    // phone, broker — on Continue only. The Skip path never validates.
+    if (!skipped) {
+      const errors = profileFieldErrors(draft);
+      setNameError(errors.name);
+      setBrokerError(errors.broker);
+      if (hasProfileFieldErrors(errors)) {
+        setSubmitAttempted(true);
+        return;
+      }
     }
     setBusy(true);
     setSaveError(null);
@@ -132,7 +143,13 @@ export default function ProfileCreate() {
           One profile, shown on every client&apos;s home view. You can edit it anytime later in your profile.
         </Text>
 
-        <ProfileForm value={draft} onChange={patch} nameError={nameError} />
+        <ProfileForm
+          value={draft}
+          onChange={patch}
+          nameError={nameError}
+          brokerError={brokerError}
+          submitAttempted={submitAttempted}
+        />
 
         {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>

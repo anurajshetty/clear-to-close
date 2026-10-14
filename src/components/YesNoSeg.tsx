@@ -74,6 +74,50 @@ export const LEASED_OWNED: SegOption[] = [
   { label: 'Owned', value: 'owned' },
 ];
 
+/**
+ * Single-select chips (Oct 14, 2026 — buyer intake "Type of loan"): the
+ * same control language as YesNoSeg (same label, track-color pills, the
+ * selected option on a white card) but wrapping auto-width chips, for
+ * option sets too long for one segmented row. Starts unanswered; tapping
+ * a chip selects it (no toggle-off, like the segments).
+ */
+export function OptionChips({
+  label,
+  value,
+  onChange,
+  options,
+  testID,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: SegOption[];
+  testID?: string;
+}) {
+  return (
+    <View style={styles.segWrap} testID={testID}>
+      <Text style={styles.segLabel}>{label}</Text>
+      <View style={styles.chipRow} accessibilityRole="radiogroup" accessibilityLabel={label}>
+        {options.map((o) => {
+          const on = value === o.value;
+          return (
+            <Pressable
+              key={o.value}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={o.label}
+              onPress={() => onChange(o.value)}
+              style={[styles.chipBtn, on && styles.chipBtnOn]}
+            >
+              <Text style={[styles.segBtnText, on && styles.segBtnTextOn]}>{o.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   segWrap: {
     marginBottom: 10,
@@ -121,5 +165,25 @@ const styles = StyleSheet.create({
     color: colors.red,
     marginTop: 6,
     lineHeight: 18,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  chipBtn: {
+    minHeight: 44,
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.tabBg,
+  },
+  chipBtnOn: {
+    backgroundColor: colors.card,
+    shadowColor: '#1E190F',
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
   },
 });

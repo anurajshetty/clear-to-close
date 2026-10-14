@@ -3,10 +3,12 @@
 // The profile body shared by the PUBLIC profile page (app/realtor/[id].tsx)
 // and the IN-APP realtor profile (app/realtor-profile.tsx, opened from the
 // redeem celebration): photo, name, branded subline, about, areas served,
-// and — on the public page — the public stats (Years in / Client rating)
-// and client reviews. The in-app profile (APPROVED v3, Sept 2026) renders the `inApp` variant: big photo overlapping the
-// banner strip, stats pared to Years in only, no reviews section. Built
-// ONCE and reused — never a divergent copy.
+// and — on the public page — the Client rating stat and client reviews.
+// (Years-of-experience display and form field were both removed Oct 14,
+// 2026, Anuraj — the stored data remains, dormant.) The in-app profile (APPROVED v3, Sept
+// 2026) renders the `inApp` variant: big photo overlapping the banner
+// strip, no stats row, no reviews section. Built ONCE and reused — never a
+// divergent copy.
 //
 // The two surfaces differ only in their chrome: the public page wraps this
 // in its responsive column with Share / Start-your-escrow buttons; the
@@ -72,14 +74,14 @@ export function RealtorProfileView({
   testID?: string;
   /**
    * 'public' — the full public profile: photo, name, subline, about, the
-   * public stats (Years in / Client rating), areas, and client reviews.
+   * Client rating stat, areas, and client reviews.
    *
    * 'inApp' — the in-app profile opened from the redeem celebration
    * (APPROVED v3, Sept 2026): the route renders a banner strip above this
    * content, so the hero photo is big (140px) and overlaps below the
-   * banner; stats are pared to Years in only; the "What clients say"
-   * reviews section is removed. Name, subline, about, and areas are
-   * unchanged from the public profile.
+   * banner; no stats row; the "What clients say" reviews section is
+   * removed. Name, subline, about, and areas are unchanged from the
+   * public profile.
    */
   variant?: 'public' | 'inApp';
 }) {
@@ -99,12 +101,22 @@ export function RealtorProfileView({
       {header}
       <View style={[styles.hero, inApp && styles.heroOverlap]}>
         {profile.photoUri ? (
-          <Image
-            source={{ uri: profile.photoUri }}
+          // The circle style (borderRadius + overflow hidden) sits on a
+          // wrapping View and the Image fills it. The Sept 2026 approach —
+          // radius + clip on the Image itself — rendered as a RECTANGLE on
+          // web Safari (Anuraj, Oct 14, 2026): react-native-web's Image does
+          // not visually clip its absolutely-positioned inner <img> there,
+          // while a plain View clips its children on every engine.
+          <View
             style={inApp ? styles.photoLarge : styles.photo}
             testID="realtor-profile-photo"
-            accessibilityLabel={`${profile.name}'s photo`}
-          />
+          >
+            <Image
+              source={{ uri: profile.photoUri }}
+              style={styles.photoFill}
+              accessibilityLabel={`${profile.name}'s photo`}
+            />
+          </View>
         ) : (
           <View
             style={[inApp ? styles.photoLarge : styles.photo, styles.photoFallback]}
@@ -130,21 +142,16 @@ export function RealtorProfileView({
         ) : null}
       </View>
 
-      {inApp ? (
-        <View style={styles.section} testID="realtor-profile-stats">
-          <Text style={styles.sectionTitle}>Years of experience</Text>
-          <View style={styles.chips}>
-            <View style={styles.chip}>
-              <Text style={styles.chipText}>{profile.yearsExperience.trim() || '·'}</Text>
-            </View>
-          </View>
-        </View>
-      ) : (
+      {/* Years-of-experience display removed (Anuraj, Oct 14, 2026): the
+          in-app "Years of experience" section and the public "Years in"
+          stat are gone, and the ProfileForm field went in the same pass.
+          The public profile keeps its Client rating stat. Stored data and
+          sync are untouched — the value is dormant. */}
+      {!inApp ? (
         <View style={styles.statRow} testID="realtor-profile-stats">
-          <Stat value={profile.yearsExperience.trim()} label="Years in" />
           <Stat value={ratingText} label="Client rating" />
         </View>
-      )}
+      ) : null}
 
       {areas.length > 0 ? (
         <View style={styles.section} testID="realtor-profile-areas">
@@ -180,9 +187,9 @@ const styles = StyleSheet.create({
   // In-app profile (v3): the hero pulls up over the banner strip rendered
   // above by the route, and the photo is big (140px).
   heroOverlap: { marginTop: -52, zIndex: 1 },
-  // Clipped inside the circle: borderRadius + overflow hidden on the image
-  // itself (Sept 2026 fix — the photo rendered as a square overflowing its
-  // circular frame without the clip).
+  // The circular frame: borderRadius + overflow hidden on the WRAPPING
+  // View (the Image fills it via photoFill). Radius/clip on the Image
+  // itself did not clip on web Safari — see the render site above.
   photo: {
     width: 96,
     height: 96,
@@ -204,6 +211,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 4,
   },
+  photoFill: { width: '100%', height: '100%' },
   photoFallback: { alignItems: 'center', justifyContent: 'center' },
   initials: { fontSize: 32, fontWeight: '800', color: colors.accent },
   initialsLarge: { fontSize: 52, fontWeight: '800', color: colors.accent },

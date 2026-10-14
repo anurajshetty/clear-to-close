@@ -111,11 +111,26 @@ central user; the buyers and sellers they represent are the other parties.
     checklists are fully separate, each with its own ring and edit draft;
     rows carry Buyer/Seller tags.
 - **Realtor profile** — fields in this order: profile pic, banner image,
-  full name, email (optional), phone (optional), **broker** (optional, e.g.
+  full name, email, phone, **broker** (e.g.
   "Compass Realty", shown on the branded client
-  surfaces as "Compass Realty · DRE #01998877"), about/bio, years of
-  experience, areas served, and optional license number (shown on the
-  client-facing profile only if entered). The phone number powers the
+  surfaces as "Compass Realty · DRE #01998877"), about/bio, areas served,
+  and optional license number (shown on the
+  client-facing profile only if entered). Full name, email, phone, and
+  broker are **required** (Anuraj, Oct 14, 2026): saving with any of them
+  empty shows an inline "Required" error under each empty field and
+  blocks the save, on all three form screens (profile setup, onboarding
+  profile creation, profile update); onboarding's Skip path never
+  validates. Email and phone also carry basic **format validation**
+  (same day): a malformed email ("Enter a valid email address" — no
+  spaces, one @, a dot in the domain) or phone ("Enter a valid phone
+  number" — 10 digits, or 11 starting with 1, ignoring spaces, dashes,
+  parentheses, and a leading +) blocks the save; the error appears on
+  blur or on a save attempt, and values are stored exactly as typed.
+  Profiles
+  saved earlier with empty values keep working until their next edit.
+  (Years of experience was a form
+  field until Oct 14, 2026 — removed from the form and from every display;
+  the stored value stays dormant on the profile.) The phone number powers the
   **Call** and **Text** buttons on the client-facing profile (dialer /
   SMS); email stays on the realtor side. Profile
   photos are auto-downscaled at pick time (long edge ≤ 1024px, JPEG ~0.8,
@@ -224,7 +239,11 @@ central user; the buyers and sellers they represent are the other parties.
   (Property, Sellers, Terms, Commission, Details, Vendors) with up to three
   sellers, conditional fields (trust details, home-of-choice contingency, HOA
   amount, solar details), and the TC/broker fees prefilled at **$500 /
-  $995** (editable). Drafts stay local until **Save**, which waits for
+  $995** (editable). Oct 14, 2026 additions: a **Seller's agent %** in
+  Commission, a **Water softener** Yes/No in Property details (Yes reveals
+  an Owned/Leased segment that is required on save — the buyer intake's
+  conditional rules, now on this form too), and **Escrow officer name** +
+  **Officer contact info** fields under Escrow company in Vendors. Drafts stay local until **Save**, which waits for
   server confirmation (`tc_intakes` table, migration 0031) — a failed save
   throws a plain-language error and keeps the last confirmed snapshot
   untouched; **Share** copies a plain-text summary of the current form.
@@ -235,10 +254,16 @@ central user; the buyers and sellers they represent are the other parties.
 - **Buyer intake (Oct 2026)** — the full mirror of TC intake for the buy
   side. On buyer-side escrows a **Buyer intake** row sits below the
   time-tracker card (buy side always; dual-agency on the buyer tab only;
-  sell side never): a full-screen six-section form (**Agent**, **Buyers**,
-  **Offer terms**, **Dates**, **Contingencies**, **Property details**, in that
-  order) with up to three buyers and conditional fields (contingency days
-  fields revealed on Yes; HOA amount, solar leased/owned + amount). The
+  sell side never): a full-screen form (**Agent**, **Buyers**,
+  **Offer terms**, **Commission**, **Dates**, **Contingencies**, **Property
+  details**, in that order) with up to three buyers and conditional fields
+  (contingency days
+  fields revealed on Yes; HOA amount, solar leased/owned + amount). Oct 14,
+  2026 additions: Offer terms gains **Type of loan** (single-select chips:
+  Conventional / FHA / VA / Cash / Other), **Buyer credit** (Yes reveals a
+  Credit amount that is required on save; No clears it), and **BRBC
+  signed**; a new **Commission** section (Buyer's agent % / Seller's
+  agent %) follows Offer terms. The
   **offer address is an editable field** (not pulled from the escrow), both
   dates (close of escrow, possession) are optional with clear controls
   (never native date inputs), Yes/No segments always start unanswered, and a
@@ -388,9 +413,22 @@ central user; the buyers and sellers they represent are the other parties.
     card (the shared `ConfettiBurst`, reduced-motion aware). There is no
     separate 100% triumph card (removed, Anuraj, Sept 2026): no
     "Just closed!" card, no pace or completion pill in any state.
-- **Below the top card (100% and not cancelled)** — the **review-links
+- **Below the top card (100% and not cancelled)** — the two celebration
+  cards, moved to the top Oct 14, 2026 and **highlighted** (completion-gold
+  border `#E3B95C` + warm tint, so they stand apart from the plain white
+  cards). First the **share-profile card** (`ShareProfileCard` in
+  `src/components/ClientTriumph.tsx`): the **"Share {FirstName}'s
+  profile"** button and the referral line "Know someone buying or
+  selling? Send them your realtor." inside it. Sharing uses the native
+  share sheet where available, `navigator.share` on web, and clipboard
+  copy as the graceful fallback ("Copied to clipboard"), with the
+  approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
+  URL `https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id>`.
+  Share copy never uses gendered pronouns, never uses em dashes, and never
+  mentions a deals-closed count. Directly below it, the **review-links
   card** (Oct 2026, approved mockup 07): "Leave a review to {FirstName}" on
-  the left, the Google and realtor.com logos side by side on the right.
+  the left, the Google logo and a generic gold-star tile (the "Other"
+  link) side by side on the right.
   Tapping a logo opens that review page in the **external browser**
   (`Linking.openURL`, Safari on iOS — never an in-app webview). One link set
   means one logo, both set means both, no links means no card at all. The
@@ -399,21 +437,17 @@ central user; the buyers and sellers they represent are the other parties.
   link (`shouldShowReviewLinksCard` in `src/lib/reviewLinks.ts`), on the
   buyer and seller homes only (never the TC view). The realtor saves the
   links once on the profile-update screen's **"Review links"** section
-  (Google review link + realtor.com review link, both optional; invalid
-  links show an inline error and block save). The in-app review button and
+  (Google review link + Other review link, both optional; invalid
+  links show an inline error and block save). The Other link was
+  realtor.com-specific until Oct 14, 2026 — it is generic now but stored
+  in the same field, so existing saved links keep working. The in-app review button and
   review sheet were **removed** (Anuraj, Oct 2026 — REPLACE); the review
   RPCs and stored reviews stay dormant.
-- **Below the checklist (100% and not cancelled)** — the triumph section
+- **At the bottom (100% and not cancelled)** — the triumph section
   (`ClientTriumphSection` in `src/components/ClientTriumph.tsx`): the
   checklist collapses to one tappable row ("{N} of {N} steps complete") that
-  expands inline; a **"Share {FirstName}'s profile"** button, and the
-  referral line "Know someone buying or selling? Send them your realtor."
-  Sharing uses the native share sheet where available,
-  `navigator.share` on web, and clipboard copy as the graceful fallback, with
-  the approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
-  URL `https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id>`.
-  Share copy never uses gendered pronouns, never uses em dashes, and never
-  mentions a deals-closed count.
+  expands inline. (The share block that used to sit here moved up into
+  the share-profile card, Oct 14, 2026.)
 - **Realtor profile (client view)** — hero card with the 96px photo, name,
   the branded brokerage/license line ("Compass Realty · DRE #01998877";
   realty group and license each shown only when entered, no dangling
@@ -424,9 +458,11 @@ central user; the buyers and sellers they represent are the other parties.
   screen. No Call / Message actions.
 - **Public realtor profile** — a shareable page
   (`/realtor/<id>`, opens with no login) with the banner, photo, name,
-  branded subline, About, and the public stats: **Years in** and
-  **Client rating** (the average of that realtor's client reviews,
-  shown only when reviews exist).
+  branded subline, About, and the **Client rating** stat (the average of
+  that realtor's client reviews, shown only when reviews exist).
+  Years of experience is not displayed and no longer collected
+  (removed Oct 14, 2026 — display and form field both went away; the
+  stored value stays dormant on the profile).
 - **In-app realtor profile** (`/realtor-profile`, approved v3, Sept 2026) —
   opened by tapping the realtor's photo on the redeem celebration AND on the
   client-home banner photo, always as an
@@ -440,10 +476,11 @@ central user; the buyers and sellers they represent are the other parties.
   banner (cover-cropped, synced Storage `banner.jpg` first, device-local
   file offline; the teal gradient renders only when no banner is uploaded).
   The big 140px profile photo overlapping
-  below the banner (clipped inside its circular frame), then the shared
+  below the banner (clipped inside its circular frame by a wrapping view,
+  so it renders round on web Safari as well as native), then the shared
   profile content pared down: name,
-  branded subline, About, **Years of experience** (section title + chip,
-  same styling as Areas I serve — no white card), and Areas I serve — no "What
+  branded subline, About, and Areas I serve — no stats row (Years of
+  experience display removed Oct 14, 2026) and no "What
   clients say" reviews section. **Call** and **Text** buttons below (dialer /
   SMS). The profile body is the shared `RealtorProfileView`
   (`src/components/RealtorProfileView.tsx`) in its `inApp` variant, the same

@@ -3,6 +3,7 @@
 export const colors = {
   paper:'#F5F1EA', card:'#FFFFFF', ink:'#211D17', body:'#5F574C', muted:'#8A8175',
   line:'#E7E0D3', accent:'#175E54', accentSoft:'#E2EEEA',
+  gold:'#E3B95C', goldTint:'#FBF3DC',
   amber:'#A86A12', amberSoft:'#F8ECD7', sage:'#5F7A5E', sageSoft:'#E7EFE4', red:'#B23B3B',
   sellBrown:'#7A5A1E', sellSoft:'#F3E8D2', bothInk:'#3F3A30', bothSoft:'#E4DCCB',
   inputBg:'#FBFAF7', gripDot:'#B9AE9C', photoBorder:'#CFC6B4', tabBg:'#E9E2D2',

@@ -1,11 +1,16 @@
 // Clear to Close — review-links card (client home, Oct 2026).
 //
 // APPROVED mockup 07 "Review links v1" (Oct 2026). After the escrow closes,
-// the client sees this card directly below the main card, above the
-// LATEST FROM card: "Leave a review to {first}" on the left, the Google and
-// realtor.com logos side by side on the right. One link set = one logo,
-// both = both, none = no card. Tapping a logo opens the link in the EXTERNAL
-// browser (Linking.openURL — Safari on iOS), never an in-app webview.
+// the client sees this card on the home: at 100% it sits directly below
+// the highlighted share-profile card (Oct 14, 2026 — the two celebration
+// actions moved to the top together, both with the gold border + warm
+// tint), above the LATEST FROM card: "Leave a review to {first}" on the
+// left, the Google logo and the Other-link tile side by side on the
+// right. One link set = one logo, both = both, none = no card. Tapping a
+// logo opens the link in the EXTERNAL browser (Linking.openURL — Safari
+// on iOS), never an in-app webview. (The second link was realtor.com-branded until Oct 14, 2026,
+// when Anuraj made it a generic "Other" link with a star tile; the stored
+// field keeps its name and existing links keep working.)
 import React from 'react';
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -39,15 +44,17 @@ function GoogleLogo() {
   );
 }
 
-// realtor.com badge: red rounded square with a white house (copied from the
-// approved mockup).
-function RealtorComLogo() {
+// "Other" review link tile mark: a generic gold star (the app's review
+// gold) in the same bare-SVG treatment as the Google G. Replaced the
+// realtor.com house badge Oct 14, 2026 when the link went generic.
+function OtherReviewLogo() {
   return (
-    <View style={styles.rdcBadge}>
-      <Svg viewBox="0 0 24 24" width={16} height={16}>
-        <Path fill="#fff" d="M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z" />
-      </Svg>
-    </View>
+    <Svg viewBox="0 0 24 24" width={26} height={26}>
+      <Path
+        fill="#E8A93D"
+        d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"
+      />
+    </Svg>
   );
 }
 
@@ -78,12 +85,12 @@ export function ReviewLinksCard({
           <Pressable
             key={t.key}
             accessibilityRole="button"
-            accessibilityLabel={t.key === 'google' ? 'Review on Google' : 'Review on realtor.com'}
+            accessibilityLabel={t.key === 'google' ? 'Review on Google' : 'Review on other site'}
             testID={`review-link-${t.key}`}
             onPress={() => openReviewLink(t.url)}
             style={({ pressed }) => [styles.logoBtn, pressed && { opacity: 0.75 }]}
           >
-            {t.key === 'google' ? <GoogleLogo /> : <RealtorComLogo />}
+            {t.key === 'google' ? <GoogleLogo /> : <OtherReviewLogo />}
           </Pressable>
         ))}
       </View>
@@ -98,6 +105,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     // Match the mockup's review row: 12px gap between text and logos.
     columnGap: 12,
+    // Celebration highlight (Oct 14, 2026): completion-gold border + soft
+    // warm tint — shared with the share-profile card above it.
+    borderWidth: 1.5,
+    borderColor: colors.gold,
+    backgroundColor: colors.goldTint,
   },
   text: {
     flex: 1,
@@ -120,14 +132,6 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#E7E0D3',
     backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rdcBadge: {
-    width: 27,
-    height: 27,
-    borderRadius: 8,
-    backgroundColor: '#D4232F',
     alignItems: 'center',
     justifyContent: 'center',
   },

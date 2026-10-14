@@ -1,16 +1,20 @@
-// Clear to Close — client home 100% below-card section.
+// Clear to Close — client home 100% celebration pieces.
 //
-// APPROVED mockup screen 10 "Home at 100% · realtor triumph" (Sept 26, 2026).
-// Below the top card:
-//   - the checklist collapses to one tappable row ("{N} of {N} steps
-//     complete · View") that expands inline to the full read-only list;
-//   - "Share {Name}'s profile" button;
-//   - the line "Know someone buying or selling? Send them your realtor."
+// APPROVED mockup screen 10 "Home at 100% · realtor triumph" (Sept 26, 2026),
+// rearranged Oct 14, 2026 (Anuraj): at 100% (not cancelled) the two
+// celebration actions move to the TOP of the home, directly below the top
+// card, both highlighted with the completion-gold border + warm tint:
+//   - ShareProfileCard — a proper Card holding the "Share {Name}'s
+//     profile" action and the referral line;
+//   - the review-links card (src/components/ReviewLinksCard.tsx),
+//     directly below it.
+// The collapsible checklist ("{N} of {N} steps complete") stays at the
+// bottom where the triumph section was (ClientTriumphSection below).
 //
 // REVIEW (Oct 2026, Anuraj): the in-app "Leave a review" button is REMOVED —
-// replaced by the external review-links card (Google / realtor.com logos)
-// that sits below the main client card. The in-app ReviewSheet entry is
-// gone; server-side review RPCs and stored reviews stay dormant.
+// replaced by the external review-links card (Google / Other logos).
+// The in-app ReviewSheet entry is gone; server-side review RPCs and
+// stored reviews stay dormant.
 //
 // Share opens the native share sheet with the message version of the
 // approved share copy (see src/lib/shareCopy.ts + src/lib/share.ts).
@@ -86,27 +90,31 @@ export function CollapsibleChecklist({ steps, role }: { steps: StepT[]; role: Cl
   );
 }
 
-export type ClientTriumphSectionProps = {
-  steps: StepT[];
+export type ShareProfileCardProps = {
   profile: RealtorProfile | null;
-  /** Client role — drives step-explainer copy in the collapsed checklist. */
-  role: ClientRole;
   /** The client's name (from this device's link) — signs the share email. */
   clientName: string;
   /** Days from today to the target close date — feeds "N days early". */
   daysToClose: number;
   /** The realtor's id — feeds the public profile URL in share copy. */
   realtorId?: string;
+  /** Checklist length — feeds the share copy's step count. */
+  stepCount: number;
 };
 
-export function ClientTriumphSection({
-  steps,
+/**
+ * The 100% share card (Oct 14, 2026): a highlighted Card directly below
+ * the top card holding the share action, the "Copied to clipboard" note,
+ * and the referral line. Highlight = the celebration treatment shared
+ * with the review-links card (gold border + warm tint).
+ */
+export function ShareProfileCard({
   profile,
-  role,
   clientName,
   daysToClose,
   realtorId,
-}: ClientTriumphSectionProps) {
+  stepCount,
+}: ShareProfileCardProps) {
   const [shareNote, setShareNote] = useState<string | null>(null);
   const name = (profile?.name ?? '').trim();
   const first = firstNameOf(name) || 'your realtor';
@@ -120,7 +128,7 @@ export function ClientTriumphSection({
       yearsExperience: profile?.yearsExperience ?? null,
       rating: profile?.rating ?? null,
       tagline: (profile?.about ?? '').trim() || null,
-      stepCount: steps.length,
+      stepCount,
       daysToClose,
       profileUrl: profileUrlFor(realtorId),
       clientName,
@@ -131,17 +139,13 @@ export function ClientTriumphSection({
   };
 
   return (
-    <View testID="triumph-section">
-      <CollapsibleChecklist steps={steps} role={role} />
-
-      <View style={styles.btnWrap}>
-        <GhostButton
-          title={`Share ${first}'s profile`}
-          accessibilityLabel={`Share ${name}'s profile`}
-          testID="triumph-share"
-          onPress={onShare}
-        />
-      </View>
+    <Card style={styles.celebrationCard} testID="share-profile-card">
+      <GhostButton
+        title={`Share ${first}'s profile`}
+        accessibilityLabel={`Share ${name}'s profile`}
+        testID="triumph-share"
+        onPress={onShare}
+      />
       {shareNote ? (
         <Text style={styles.shareNote} testID="triumph-share-note">
           {shareNote}
@@ -151,6 +155,24 @@ export function ClientTriumphSection({
       <Text style={styles.referral} testID="triumph-referral">
         {'Know someone buying or selling?\nSend them your realtor.'}
       </Text>
+    </Card>
+  );
+}
+
+export type ClientTriumphSectionProps = {
+  steps: StepT[];
+  /** Client role — drives step-explainer copy in the collapsed checklist. */
+  role: ClientRole;
+};
+
+/**
+ * What remains at the bottom of the 100% home: the collapsible checklist
+ * alone. (The share block moved up into ShareProfileCard, Oct 14, 2026.)
+ */
+export function ClientTriumphSection({ steps, role }: ClientTriumphSectionProps) {
+  return (
+    <View testID="triumph-section">
+      <CollapsibleChecklist steps={steps} role={role} />
     </View>
   );
 }
@@ -197,8 +219,14 @@ const styles = StyleSheet.create({
     marginTop: -6,
     marginBottom: 14,
   },
-  btnWrap: {
-    marginBottom: 12,
+  // The celebration highlight (Oct 14, 2026): completion-gold border +
+  // soft warm tint — shared with the review-links card so the two 100%
+  // actions read as a pair, apart from the plain white cards.
+  celebrationCard: {
+    marginTop: 14,
+    borderWidth: 1.5,
+    borderColor: colors.gold,
+    backgroundColor: colors.goldTint,
   },
   ghostBtn: {
     borderRadius: 12,
@@ -217,8 +245,7 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     color: colors.muted,
     textAlign: 'center',
-    marginTop: -4,
-    marginBottom: 8,
+    marginTop: 8,
   },
   referral: {
     fontSize: 12,

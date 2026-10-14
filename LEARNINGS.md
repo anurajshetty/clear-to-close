@@ -3,6 +3,56 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Intake additions + seller steps (Oct 14, 2026)
+
+**What happened:** Buyer intake gained Type of loan (chips), Buyer credit
+(conditional amount), BRBC signed, and a Commission section; TC intake
+gained Seller's agent %, Water softener (conditional Owned/Leased), and
+escrow officer fields; the seller template gained two steps (12 -> 14).
+
+**Lessons:**
+- **Schemaless intake JSON makes fields cheap, not free.** The intakes
+  persist as one `data` jsonb object, so new fields need NO migration —
+  but every consumer of the shape moves together: data type, empty,
+  normalize, completion count, conditional validation, section builder,
+  share text, form, and every typed test fixture. TypeScript's literal
+  fixtures failing across suites is the safety net that proves you found
+  them all.
+- **Completion totals are a cross-file contract.** The "N of M filled"
+  numbers live in lib doc comments, two test files, and status strings;
+  adding fields means hunting every pinned total (buyer 23 -> 28, TC
+  23 -> 27) — grep for the old number before calling it done.
+- **Template additions apply at creation only, and that needs a test,**
+  not an assumption: a legacy-seed load test (12 old seller steps in KV)
+  proves existing escrows keep their steps while new escrows get 14.
+
+## Profile photo rectangle on web Safari (Oct 14, 2026)
+
+- **Pinning the implementation is not pinning the outcome.** The Sept
+  2026 fix for the square profile photo put `borderRadius` +
+  `overflow: 'hidden'` on the `Image` and the regression test pinned
+  exactly that style. Chromium clipped fine; web Safari rendered a
+  rectangle anyway — react-native-web's Image does not visually clip its
+  absolutely-positioned inner `<img>` there. Anuraj caught it twice.
+  Practice: visual fixes get a rendered-outcome guard (pixel-sampled
+  screenshot), never a style assertion alone.
+- **The reliable circular clip is a wrapping View.** Circle style
+  (borderRadius + overflow hidden) on a plain View, Image filling it via
+  `width/height: '100%'` — a plain View clips its children on every
+  engine. The initials fallback (already a View with the same style) was
+  the in-codebase proof this pattern worked everywhere.
+- **Chromium is not Safari.** The bug was invisible in the local Chromium
+  harness (perfect circle) while broken in Safari. When a report names a
+  specific browser, a green render in another engine is not a
+  reproduction — or a disproof.
+- **Retirements go dormant, never destructive.** The same day's cleanup
+  removed years-of-experience from every display AND the profile form,
+  and turned the realtor.com review link into a generic "Other" link —
+  all without touching stored fields, columns, or sync. Relabel at the
+  surface (form label, client tile icon), keep the contract underneath,
+  and existing user data (saved links, stored years) keeps working
+  untouched.
+
 ## Review links replace in-app reviews (Oct 1, 2026)
 
 - **A REPLACE decision rewrites the on-hold tests, not just the code.**

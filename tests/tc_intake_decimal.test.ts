@@ -25,6 +25,7 @@ function fieldLine(testID: string): string | null {
 for (const testID of [
   'tc-total-pct',
   'tc-buyer-pct',
+  'tc-seller-pct',
   // Sept 30, 2026: the six remaining amount fields.
   'tc-list-price',
   'tc-tc-fee',

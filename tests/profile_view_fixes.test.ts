@@ -2,19 +2,24 @@
 // on the live in-app realtor profile (Sept 2026, user-verified).
 //
 //  1. Photo clipping BUG: the profile photo rendered as a square
-//     overflowing its circular frame. The clip is borderRadius +
-//     overflow: hidden applied to the IMAGE itself (not just a wrapper)
-//     on both the 96px and the in-app 140px photo styles
-//     (src/components/RealtorProfileView.tsx).
+//     overflowing its circular frame. The Sept 2026 fix put borderRadius +
+//     overflow: hidden on the IMAGE itself — which Anuraj caught AGAIN on
+//     web Safari (Oct 14, 2026): RNW's Image does not visually clip its
+//     inner <img> there. The clip now sits on a WRAPPING View carrying the
+//     circle style, with the Image filling it (photoFill), on both the
+//     96px and the in-app 140px photos (src/components/
+//     RealtorProfileView.tsx). The rendered-outcome guard (pixel-sampled
+//     corners) is tests/rendered/profile_photo_circle.py.
 //  2. Banner BUG: the banner strip rendered a plain teal gradient even
 //     when a banner was uploaded. It now loads the realtor's ACTUAL
 //     banner via displayBannerUri (synced Storage banner.jpg first,
 //     device-local file offline — the same contract the client home top
 //     card uses) and falls back to the teal gradient only when no banner
 //     exists (app/realtor-profile.tsx).
-//  3. Years of experience STYLING: the white box around "Years in" is
-//     gone; the section is styled exactly like "Areas I serve" — section
-//     title + chip, no white card (src/components/RealtorProfileView.tsx).
+//  3. Years of experience: styled as section title + chip in Sept 2026;
+//     the DISPLAY was removed entirely by Anuraj (Oct 14, 2026) — no
+//     in-app years section, no public "Years in" stat. The ProfileForm
+//     field and stored data are untouched.
 //
 // RN components are not importable in the node suite, so the component/
 // route sources are pinned statically (repo root via CTC_REPO_ROOT,
@@ -40,19 +45,29 @@ const route = src('app/realtor-profile.tsx');
 const libProfile = src('src/lib/profile.ts');
 
 // ---------------------------------------------------------------------------
-// 1. Photo clipped inside the circular frame (borderRadius + overflow hidden
-//    on the image itself).
+// 1. Photo clipped inside the circular frame: the circle style (borderRadius
+//    + overflow hidden) sits on a WRAPPING View; the Image fills it. The
+//    rendered-outcome guard is tests/rendered/profile_photo_circle.py —
+//    these static pins only lock the structure that produces it.
 // ---------------------------------------------------------------------------
 assert(profileView.includes('overflow: \'hidden\''), 'photo styles set overflow hidden');
 assert(
   /photoLarge: \{[^}]*borderRadius: 70[^}]*overflow: 'hidden'/s.test(profileView) ||
     /photoLarge: \{[^}]*overflow: 'hidden'[^}]*borderRadius: 70/s.test(profileView),
-  'in-app 140px photo clips inside its circle (borderRadius + overflow hidden)',
+  'in-app 140px photo frame clips inside its circle (borderRadius + overflow hidden)',
 );
 assert(
   /photo: \{[^}]*borderRadius: 48[^}]*overflow: 'hidden'/s.test(profileView) ||
     /photo: \{[^}]*overflow: 'hidden'[^}]*borderRadius: 48/s.test(profileView),
-  '96px photo clips inside its circle (borderRadius + overflow hidden)',
+  '96px photo frame clips inside its circle (borderRadius + overflow hidden)',
+);
+assert(
+  profileView.includes("photoFill: { width: '100%', height: '100%' }"),
+  'the Image fills its circular wrapping View (photoFill)',
+);
+assert(
+  profileView.includes('style={styles.photoFill}'),
+  'the photo Image renders with the fill style inside the wrapper',
 );
 
 // ---------------------------------------------------------------------------
@@ -86,31 +101,30 @@ assert(
 );
 
 // ---------------------------------------------------------------------------
-// 3. Years of experience: section title + chip, no white box.
+// 3. Years of experience DISPLAY removed (Anuraj, Oct 14, 2026): no in-app
+//    years section, no public "Years in" stat; Client rating stays.
 // ---------------------------------------------------------------------------
 assert(
-  profileView.includes('>Years of experience</Text>'),
-  'years section uses the "Years of experience" section title',
+  !profileView.includes('>Years of experience</Text>'),
+  'the in-app "Years of experience" section is removed',
 );
 for (const gone of ['statSingle', 'statSingleRow', 'statSingleValue', 'statSingleLabel']) {
   assert(
     !profileView.includes(gone),
-    `white-box "${gone}" styling is gone from the years section`,
+    `white-box "${gone}" styling stays gone`,
   );
 }
 assert(
-  !profileView.includes('>Years in</Text>'),
-  'the old "Years in" stat label is gone from the in-app profile',
+  !profileView.includes('label="Years in"'),
+  'the public "Years in" stat is removed',
 );
-const statsBlock = profileView.slice(
-  profileView.indexOf('testID="realtor-profile-stats"'),
-  profileView.indexOf('testID="realtor-profile-stats"') + 500,
+assert(
+  profileView.includes('label="Client rating"'),
+  'the public "Client rating" stat is kept',
 );
-assert(statsBlock.includes('styles.sectionTitle'), 'years section uses the shared section title style');
-assert(statsBlock.includes('styles.chip'), 'years value renders in the shared chip');
 assert(
   profileView.includes('testID="realtor-profile-stats"'),
-  'stats testID is preserved for the years section',
+  'stats testID is preserved on the public stat row',
 );
 
 // ---------------------------------------------------------------------------

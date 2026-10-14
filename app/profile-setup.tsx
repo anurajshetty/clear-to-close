@@ -12,6 +12,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { store } from '../src/lib/store-instance';
 import { Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
+import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
@@ -32,6 +33,8 @@ export default function ProfileSetup() {
   const [keptPhotoRemoteUrl, setKeptPhotoRemoteUrl] = useState<string | null>(null);
   const [keptBannerRemoteUrl, setKeptBannerRemoteUrl] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [brokerError, setBrokerError] = useState<string | null>(null);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile (and its photo/banner) is not confirmed on the server — the
@@ -42,6 +45,7 @@ export default function ProfileSetup() {
     (p: Partial<ProfileDraft>) => {
       setDraft((d) => ({ ...d, ...p }));
       if (p.name !== undefined) setNameError(null);
+      if (p.realty_group !== undefined) setBrokerError(null);
     },
     [],
   );
@@ -72,6 +76,7 @@ export default function ProfileSetup() {
           setKeptPhotoRemoteUrl(p.photoRemoteUrl ?? null);
           setKeptBannerRemoteUrl(p.bannerRemoteUrl ?? null);
           setNameError(null);
+          setBrokerError(null);
         })
         .catch(() => {});
       return () => {
@@ -81,8 +86,14 @@ export default function ProfileSetup() {
   );
 
   const onSave = async () => {
-    if (!draft.name.trim()) {
-      setNameError('Required');
+    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
+    // phone, broker — every error surfaces together on this one attempt
+    // and any error blocks the save.
+    const errors = profileFieldErrors(draft);
+    setNameError(errors.name);
+    setBrokerError(errors.broker);
+    if (hasProfileFieldErrors(errors)) {
+      setSubmitAttempted(true);
       return;
     }
     setSaving(true);
@@ -130,7 +141,13 @@ export default function ProfileSetup() {
         and brief.
       </Text>
 
-      <ProfileForm value={draft} onChange={patch} nameError={nameError} />
+      <ProfileForm
+        value={draft}
+        onChange={patch}
+        nameError={nameError}
+        brokerError={brokerError}
+        submitAttempted={submitAttempted}
+      />
 
       {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
       <View style={styles.saveWrap}>

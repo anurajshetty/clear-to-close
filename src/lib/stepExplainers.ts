@@ -54,6 +54,8 @@ const BUYER_EXPLAINERS: Record<string, string> = {
 
 const SELLER_EXPLAINERS: Record<string, string> = {
   'escrow-open': 'Your sale is officially underway. The countdown to closing starts now.',
+  'escrow-officer-contact-confirmed':
+    'The escrow officer handling your sale. Your realtor keeps their contact details on file.',
   'wire-received': "The buyer's earnest money deposit has arrived in escrow.",
   'property-inspection-scheduled':
     'The buyer is having the property inspected. The report can trigger repair requests.',
@@ -68,6 +70,8 @@ const SELLER_EXPLAINERS: Record<string, string> = {
   'schedule-utilities':
     'Shut-off dates for power, water, and gas at this home. Your realtor coordinates the final reads.',
   'final-walkthrough-scheduled': "The buyer takes one last look to confirm the home's condition.",
+  'remind-seller-possession-5-days':
+    'Your realtor will remind you five days before the buyer takes possession, so you can plan your move-out.',
   'close-escrow': 'Funding is complete and ownership transfers to the buyer.',
   'record-deed': 'The county records the sale, making the transfer official.',
 };

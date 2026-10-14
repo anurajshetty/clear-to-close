@@ -109,6 +109,9 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/account_isolation.test.ts" \
   "$ROOT/tests/photo_cropper.test.ts" \
   "$ROOT/tests/profile_form_fields.test.ts" \
+  "$ROOT/tests/profile_required.test.ts" \
+  "$ROOT/tests/client_home_celebration.test.ts" \
+  "$ROOT/tests/tc_intake_additions.test.ts" \
   "$ROOT/tests/photo_stale_client_chain.test.ts" \
   "$ROOT/tests/sync_chain_broad.test.ts" \
   "$ROOT/tests/client_refresh_foreground.test.ts" \
@@ -223,6 +226,9 @@ node "$OUT/tests/cancel_sync_writes.test.js"
 node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
+node "$OUT/tests/profile_required.test.js"
+node "$OUT/tests/client_home_celebration.test.js"
+node "$OUT/tests/tc_intake_additions.test.js"
 node "$OUT/tests/photo_stale_client_chain.test.js"
 node "$OUT/tests/sync_writes.test.js"
 node "$OUT/tests/sync_chain_broad.test.js"

@@ -27,8 +27,9 @@ function step(id: string, title: string, key: string | null, custom: boolean, do
 }
 
 async function main(): Promise<void> {
-  // Template: 12 seller steps, no pool row, no pool explainer.
-  assert(SELL_STEPS.length === 12, `seller template = 12 (got ${SELL_STEPS.length})`);
+  // Template: 14 seller steps (12 + the two Oct 14, 2026 additions), no
+  // pool row, no pool explainer.
+  assert(SELL_STEPS.length === 14, `seller template = 14 (got ${SELL_STEPS.length})`);
   assert(
     !SELL_STEPS.some((s) => s.key === 'pool-equipment-inspection'),
     'pool-equipment-inspection absent from seller template',

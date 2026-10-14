@@ -15,8 +15,9 @@
 //     Call/Text buttons, and the same profile data wiring as the
 //     celebration.
 //  4. Shared profile content (src/components/RealtorProfileView.tsx):
-//     photo, name, subline, about, Years in / Client rating, areas,
-//     reviews — the same content as the public profile.
+//     photo, name, subline, about, Client rating, areas, reviews — the
+//     same content as the public profile. (Years-of-experience display
+//     removed Oct 14, 2026.)
 //
 // RN components are not importable in the node suite, so parts 2-4 pin the
 // component/route sources statically (repo root via CTC_REPO_ROOT, exported
@@ -192,7 +193,8 @@ assert(layout.includes("pathname === '/realtor-profile'"), 'boot redirect skips 
 // ---------------------------------------------------------------------------
 // 4. Shared profile content: every public-profile field is present, and the
 //    inApp variant (approved v3) pares it down — big overlapping photo,
-//    Years in only, no reviews.
+//    no stats row, no reviews. (Years-of-experience display removed from
+//    both variants Oct 14, 2026, Anuraj; Client rating stays public-only.)
 // ---------------------------------------------------------------------------
 const shared = src('src/components/RealtorProfileView.tsx');
 for (const field of [
@@ -200,23 +202,22 @@ for (const field of [
   'testID="realtor-profile-name"',
   'testID="realtor-profile-subline"',
   'testID="realtor-profile-about"',
-  'Years in',
   'Client rating',
   'Areas I serve',
   'What clients say',
 ]) {
   assert(shared.includes(field), `shared profile content has ${field}`);
 }
+assert(!shared.includes('label="Years in"'), 'years-of-experience display is removed (no "Years in" stat)');
+assert(!shared.includes('>Years of experience</Text>'), 'years-of-experience display is removed (no in-app section)');
 assert(shared.includes("variant?: 'public' | 'inApp'"), 'variant prop declared');
 assert(shared.includes("variant = 'public'"), 'public is the default variant');
 // In-app variant: big photo overlapping below the banner.
 assert(shared.includes('photoLarge'), 'inApp variant has the big photo style');
 assert(shared.includes('width: 140'), 'in-app photo is 140px');
 assert(shared.includes('marginTop: -52'), 'in-app photo overlaps below the banner');
-// In-app variant: stats pared to Years in only — styled exactly like
-// "Areas I serve" (section title + chip, no white card; Sept 2026 fix for
-// the white box Anuraj caught on the live profile).
-assert(shared.includes('>Years of experience</Text>'), 'inApp variant titles the years section "Years of experience"');
+// In-app variant: no stats row at all (the years section was removed
+// Oct 14, 2026) — and no white-box single-stat card anywhere.
 assert(!shared.includes('statSingle'), 'inApp variant has no white-box single-stat card');
 // In-app variant: the "What clients say" reviews section is removed.
 assert(shared.includes('{!inApp && ('), 'reviews section only renders for the public variant');

@@ -1,10 +1,11 @@
 // review_links.test.ts — external review links (Oct 2026, Anuraj).
 //
 // Anuraj's REPLACE decision: the in-app "Leave a review" button and the
-// ReviewSheet are GONE. The realtor saves optional Google / realtor.com
-// review links on the profile-update screen; after the escrow closes, the
-// client home shows a logo card (tapping a logo opens the link in the
-// EXTERNAL browser).
+// ReviewSheet are GONE. The realtor saves optional Google / Other review
+// links on the profile-update screen (the second field was realtor.com
+// until Oct 14, 2026, when it went generic — same stored field); after
+// the escrow closes, the client home shows a logo card (tapping a logo
+// opens the link in the EXTERNAL browser).
 //
 // Covered here:
 //  1. isValidReviewLink: empty/whitespace → true (optional); http/https →
@@ -118,6 +119,13 @@ assert(
 //   export function openReviewLink(url: string): void { void Linking.openURL(url); }
 // i.e. the EXACT link URL reaches the EXTERNAL browser (never a webview).
 const card = srcFile('src/components/ReviewLinksCard.tsx');
+// The ProfileForm section: the second field is the generic "Other" link
+// (Oct 14, 2026) writing to the SAME stored field; Google is unchanged.
+const formSrc = srcFile('src/components/ProfileForm.tsx');
+assert(formSrc.includes('label="Other review link · optional"'), 'form: second field is labeled "Other review link · optional"');
+assert(formSrc.includes('label="Google review link · optional"'), 'form: Google field label unchanged');
+assert(!formSrc.includes('label="realtor.com review link · optional"'), 'form: realtor.com field label is gone');
+assert(formSrc.includes("set('realtorComReviewLink')"), 'form: Other field still writes the stored realtorComReviewLink field');
 assert(
   /import \{[^}]*Linking[^}]*\} from 'react-native'/.test(card),
   'card: Linking is imported from react-native',
@@ -134,13 +142,18 @@ assert(
   card.includes('onPress={() => openReviewLink(t.url)}'),
   'card: each logo button passes its exact target URL to the press handler',
 );
-// Mockup contract: the two SVGs are copied from the approved mockup.
+// Mockup contract: the Google SVG is copied from the approved mockup; the
+// Other tile is a generic gold star (Oct 14, 2026 — the realtor.com house
+// badge is gone).
 assert(card.includes('viewBox="0 0 48 48"'), 'card: Google G SVG viewBox intact');
 assert(
-  card.includes('M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z'),
-  'card: realtor.com house SVG path intact',
+  card.includes('M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z'),
+  'card: generic star SVG path for the Other link',
 );
-assert(card.includes("backgroundColor: '#D4232F'"), 'card: realtor.com badge red intact');
+assert(card.includes("fill=\"#E8A93D\""), 'card: Other star uses the review gold');
+assert(!card.includes('M12 3l9 8h-3v9h-4v-6h-4v6H6v-9H3z'), 'card: realtor.com house SVG is gone');
+assert(!card.includes("'#D4232F'"), 'card: realtor.com badge red is gone');
+assert(card.includes("'Review on other site'"), 'card: Other tile accessibility label is generic');
 
 // ---- 5. The in-app review entry is removed (static pin — see header) -----
 const triumph = srcFile('src/components/ClientTriumph.tsx');
