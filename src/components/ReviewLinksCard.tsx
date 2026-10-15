@@ -107,7 +107,14 @@ export function ReviewLinksCard({
 
 const styles = StyleSheet.create({
   card: {
-    marginTop: 14,
+    // No marginTop: the gap above this card is owned by the share card
+    // above it (its marginBottom 14) — owning it here too would double
+    // the junction to 28. The gap BELOW is this card's marginBottom 14
+    // (bottom-margin ownership, like the top card and LatestFrom), so
+    // review -> LATEST FROM equals Refer -> review. This card renders
+    // only directly below the share card at 100%, so no other junction
+    // moves (Anuraj, Oct 14, 2026).
+    marginBottom: 14,
     flexDirection: 'row',
     alignItems: 'center',
     // Match the mockup's review row: 12px gap between text and logos.

@@ -15,7 +15,17 @@ import sys
 import urllib.request
 import urllib.error
 
-sys.path.insert(0, "/opt/hatch/skills/skill-creator/bin")
+# dynamic_credentials has moved with runtime updates (Oct 14, 2026: now
+# under /opt/hatch/workflow-skills/custom-connector-setup/bin). Add every
+# known location that exists instead of trusting one hardcoded path.
+for _cand in (
+    "/opt/hatch/workflow-skills/custom-connector-setup/bin",
+    "/opt/muse/skills/custom-connector-setup/templates/skill/bin",
+    "/opt/hatch/skills/skill-creator/bin",
+    "/opt/hatch/skills/custom-connector-setup/templates/skill/bin",
+):
+    if os.path.isdir(_cand):
+        sys.path.insert(0, _cand)
 from dynamic_credentials import add_surrogate_to_request, read_json_response
 
 REPO = "anurajshetty/clear-to-close"

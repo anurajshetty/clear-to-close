@@ -5,7 +5,8 @@
 // celebration actions move to the TOP of the home, directly below the top
 // card, both on SOLID completion gold (the 100% ring / timeline gold):
 //   - ShareProfileCard — a proper Card holding the "Refer {Name} to
-//     friends & family" action (white filled button) and the referral line;
+//     friends & family" action (check-green filled button, white label)
+//     and the referral line;
 //   - the review-links card (src/components/ReviewLinksCard.tsx),
 //     directly below it.
 // The collapsible checklist ("{N} of {N} steps complete") stays at the
@@ -221,21 +222,27 @@ const styles = StyleSheet.create({
   // The celebration treatment (Oct 14, 2026): SOLID completion gold —
   // the same gold as the top card's 100% ring / timeline fill — shared
   // with the review-links card so the two 100% actions read as a pair.
+  // Spacing ownership: this card owns the gap BELOW it (marginBottom
+  // 14, the pair rhythm) — the review card under it has no top margin,
+  // so Refer -> review is 14, and when no review links exist Refer ->
+  // LATEST FROM is the same 14 (Anuraj, Oct 14, 2026).
   celebrationCard: {
     marginTop: 14,
+    marginBottom: 14,
     backgroundColor: colors.gold,
   },
   ghostBtn: {
     borderRadius: 12,
-    // White filled button so the action pops on the solid-gold card.
-    backgroundColor: '#FFFFFF',
+    // Check-green filled button (colors.accent — the completed-check
+    // token) so the action pops on the solid-gold card; white label.
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
     minHeight: 52,
   },
   ghostBtnText: {
-    color: colors.ink,
+    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '700',
   },

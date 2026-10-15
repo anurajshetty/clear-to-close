@@ -10,6 +10,9 @@ real DOM at phone size —
     "Refer {First} to friends & family";
   * the "or" appears between the review tiles only when BOTH links are
     set (one tile = no "or");
+  * spacing: at 100% the computed review -> LATEST FROM gap equals the
+    Refer -> review gap (14px); below 100% the top card -> LATEST FROM
+    gap stays 18px (the pre-existing junction, byte-for-byte);
   * gates: at 100% with no review links, the review card is absent but
     the share card is present; below 100% both are absent.
 
@@ -36,6 +39,8 @@ os.makedirs(OUT, exist_ok=True)
 FAILS = []
 JS_ERRORS = []
 GOLD = "rgb(227, 185, 92)"
+CHECK_GREEN = "rgb(23, 94, 84)"
+WHITE = "rgb(255, 255, 255)"
 
 
 def check(name, cond, detail=""):
@@ -113,15 +118,25 @@ PROBE_JS = """() => {
     if (!el) return null;
     const cs = getComputedStyle(el);
     const r = el.getBoundingClientRect();
-    return { top: r.top + window.scrollY, bg: cs.backgroundColor };
+    return { top: r.top + window.scrollY, bottom: r.bottom + window.scrollY, bg: cs.backgroundColor };
   };
   const shareBtn = document.querySelector('[data-testid="triumph-share"]');
+  let shareBtnBg = null, shareBtnColor = null;
+  if (shareBtn) {
+    shareBtnBg = getComputedStyle(shareBtn).backgroundColor;
+    const walker = document.createTreeWalker(shareBtn, NodeFilter.SHOW_TEXT);
+    const tn = walker.nextNode();
+    if (tn) shareBtnColor = getComputedStyle(tn.parentElement).color;
+  }
   return {
+    topcard: probe('client-topcard'),
     share: probe('share-profile-card'),
     review: probe('review-links-card'),
     latest: probe('latest-from-card'),
     triumph: probe('triumph-section'),
     shareBtnText: shareBtn ? shareBtn.textContent.trim() : null,
+    shareBtnBg,
+    shareBtnColor,
     referral: !!document.querySelector('[data-testid="triumph-referral"]'),
     orPresent: !!document.querySelector('[data-testid="review-links-or"]'),
   };
@@ -157,6 +172,9 @@ def main():
             check("100%: referral line present", v["referral"])
             check("100%: action label is the Refer copy",
                   v["shareBtnText"] == "Refer Maya to friends & family", str(v["shareBtnText"]))
+            check("100%: Refer button is check-green with a white label",
+                  v["shareBtnBg"] == CHECK_GREEN and v["shareBtnColor"] == WHITE,
+                  f"bg={v['shareBtnBg']} color={v['shareBtnColor']}")
             check("100%: 'or' present between the two tiles", v["orPresent"])
             if v["share"] and v["review"] and v["latest"] and v["triumph"]:
                 check("100%: order share < review < latest < triumph",
@@ -166,6 +184,11 @@ def main():
                 check("100%: share card solid gold", v["share"]["bg"] == GOLD, v["share"]["bg"])
             if v["review"]:
                 check("100%: review card solid gold", v["review"]["bg"] == GOLD, v["review"]["bg"])
+            if v["share"] and v["review"] and v["latest"]:
+                gap_pair = round(v["review"]["top"] - v["share"]["bottom"], 1)
+                gap_latest = round(v["latest"]["top"] - v["review"]["bottom"], 1)
+                check("100%: review -> LATEST FROM gap equals Refer -> review gap",
+                      gap_latest == gap_pair == 14.0, f"pair={gap_pair} latest={gap_latest}")
             pg.screenshot(path=os.path.join(OUT, "closed-with-links.png"), full_page=True)
             pg.close()
 
@@ -176,11 +199,16 @@ def main():
             check("100% one link: no 'or'", not v["orPresent"])
             pg.close()
 
-            # 100% without links: share present, review absent.
+            # 100% without links: share present, review absent, and the
+            # Refer -> LATEST FROM gap is the same 14 (share owns it).
             pg = load(b, 5, 5, "none")
             v = pg.evaluate(PROBE_JS)
             check("100% no links: share card present", v["share"] is not None)
             check("100% no links: review card absent", v["review"] is None)
+            if v["share"] and v["latest"]:
+                gap_nl = round(v["latest"]["top"] - v["share"]["bottom"], 1)
+                check("100% no links: Refer -> LATEST FROM gap is 14",
+                      gap_nl == 14.0, f"gap={gap_nl}")
             pg.close()
 
             # Below 100%: both absent.
@@ -189,6 +217,10 @@ def main():
             check("60%: share card absent", v["share"] is None)
             check("60%: review card absent", v["review"] is None)
             check("60%: latest-from still present", v["latest"] is not None)
+            if v["topcard"] and v["latest"]:
+                gap60 = round(v["latest"]["top"] - v["topcard"]["bottom"], 1)
+                check("60%: top card -> LATEST FROM gap unchanged (18)",
+                      gap60 == 18.0, f"gap={gap60}")
             pg.close()
             b.close()
     finally:

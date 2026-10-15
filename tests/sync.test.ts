@@ -8,7 +8,10 @@ declare const process: { exitCode?: number };
 async function main(): Promise<void> {
   const store = createStore(memoryKV());
 
-  // Both-sides escrow.
+  // Both-sides escrow. Close date is relative to today — a hardcoded
+  // '2026-10-15' went permanently stale when the date passed
+  // (daysToClose hit 0 and the suite could never pass again).
+  const closeDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
   const escrow = await store.createEscrow({
     address: '456 Oak Ave',
     city: 'Valencia',
@@ -16,7 +19,7 @@ async function main(): Promise<void> {
     buyerName: 'Alice Buyer',
     sellerName: 'Bob Seller',
     openDate: '2026-09-01',
-    closeDate: '2026-10-15',
+    closeDate,
   });
   assert(escrow.buyerSteps.length === 14, `both-side escrow builds 14 buyer steps (got ${escrow.buyerSteps.length})`);
   assert(escrow.sellerSteps.length === 14, `both-side escrow builds 14 seller steps (got ${escrow.sellerSteps.length})`);

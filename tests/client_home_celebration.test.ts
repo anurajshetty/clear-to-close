@@ -93,6 +93,14 @@ for (const [rel, name] of [
   assert(!s.includes('borderColor: colors.gold'), `${name}: the old gold-border treatment is gone`);
 }
 
+// --- 4b. Refer button: check-green fill, white label -------------------------
+{
+  const btnBlock = triumph.slice(triumph.indexOf('ghostBtn:'));
+  assert(btnBlock.includes('backgroundColor: colors.accent'), 'share button: filled with the check-green token (colors.accent)');
+  const textBlock = triumph.slice(triumph.indexOf('ghostBtnText:'));
+  assert(textBlock.includes("color: '#FFFFFF'"), 'share button: white label for contrast on the green');
+}
+
 // --- 4. Copy: "Refer {First} to friends & family"; "or" between tiles ------
 assert(
   triumph.includes('title={`Refer ${first} to friends & family`}'),
@@ -106,5 +114,18 @@ assert(!triumph.includes("Share ${first}'s profile"), 'share card: the old label
 const reviewCard = srcFile('src/components/ReviewLinksCard.tsx');
 assert(reviewCard.includes('testID="review-links-or"'), 'review card: the "or" element exists');
 assert(reviewCard.includes('{i > 0 ? ('), 'review card: "or" renders only between tiles (never with one tile)');
+assert(
+  reviewCard.includes('marginBottom: 14'),
+  'review card: owns the gap below it (14, the pair rhythm) so LATEST FROM does not sit flush at 100%',
+);
+{
+  // Bottom-margin ownership across the pair (Oct 14, 2026): the share
+  // card owns the gap below it; the review card must NOT also own a top
+  // margin (that junction would double to 28).
+  const shareBlock = triumph.slice(triumph.indexOf('celebrationCard:'));
+  assert(shareBlock.includes('marginBottom: 14'), 'share card: owns the gap below it (marginBottom 14)');
+  const reviewBlock = reviewCard.slice(reviewCard.indexOf('card: {'));
+  assert(!reviewBlock.slice(0, 700).includes('marginTop: 14'), 'review card: no top margin (gap above is owned by the share card)');
+}
 
 summary('client-home-celebration');

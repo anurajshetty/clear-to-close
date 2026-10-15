@@ -417,10 +417,10 @@ central user; the buyers and sellers they represent are the other parties.
   cards, moved to the top Oct 14, 2026 on **solid completion gold**
   (`#E3B95C`, the same gold as the 100% ring / timeline fill). First the
   **share-profile card** (`ShareProfileCard` in
-  `src/components/ClientTriumph.tsx`): a white filled **"Refer
-  {FirstName} to friends & family"** button and the referral line "Know
-  someone buying or selling? Send them your realtor." inside it, all text
-  in dark ink. Sharing uses the native
+  `src/components/ClientTriumph.tsx`): a check-green filled **"Refer
+  {FirstName} to friends & family"** button (white label; the green is
+  `colors.accent`, the completed-check token) and the referral line "Know
+  someone buying or selling? Send them your realtor." inside it, in dark ink. Sharing uses the native
   share sheet where available, `navigator.share` on web, and clipboard
   copy as the graceful fallback ("Copied to clipboard"), with the
   approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
