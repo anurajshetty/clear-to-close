@@ -224,7 +224,10 @@ central user; the buyers and sellers they represent are the other parties.
   combined progress), on a single-side escrow the active side's — reusing
   the same top card and read-only checklist as the client views.
 - **Onboarding / auth** — first launch shows a role picker
-  ("I'm a Realtor" / "I'm a client — I have an invite code"). Realtors sign up
+  ("I'm a Realtor" / "I'm a client — I have an invite code"), headed by the
+  app description line (Anuraj's wording, Oct 14, 2026): "Your escrow, step
+  by step. Clear to Close keeps you and your realtor connected and up to
+  date, from accepted offer to closing." Realtors sign up
   with email + password in two steps: account creation, then profile creation
   (skippable — "Skip for now" goes straight to the deal list). Login is email
   + password; password reset via email — the emailed link opens a

@@ -83,6 +83,9 @@ export default function RolePicker() {
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <Kicker>Clear to Close</Kicker>
+        <Text style={styles.sub}>
+          Your escrow, step by step. Clear to Close keeps you and your realtor connected and up to date, from accepted offer to closing.
+        </Text>
         <Text style={styles.h1}>How are you joining?</Text>
         <Text style={styles.sub}>
           Pick the path that fits. You only see this once. The app remembers.
