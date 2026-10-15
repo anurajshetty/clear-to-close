@@ -3,9 +3,9 @@
 // APPROVED mockup screen 10 "Home at 100% · realtor triumph" (Sept 26, 2026),
 // rearranged Oct 14, 2026 (Anuraj): at 100% (not cancelled) the two
 // celebration actions move to the TOP of the home, directly below the top
-// card, both highlighted with the completion-gold border + warm tint:
-//   - ShareProfileCard — a proper Card holding the "Share {Name}'s
-//     profile" action and the referral line;
+// card, both on SOLID completion gold (the 100% ring / timeline gold):
+//   - ShareProfileCard — a proper Card holding the "Refer {Name} to
+//     friends & family" action (white filled button) and the referral line;
 //   - the review-links card (src/components/ReviewLinksCard.tsx),
 //     directly below it.
 // The collapsible checklist ("{N} of {N} steps complete") stays at the
@@ -103,10 +103,9 @@ export type ShareProfileCardProps = {
 };
 
 /**
- * The 100% share card (Oct 14, 2026): a highlighted Card directly below
- * the top card holding the share action, the "Copied to clipboard" note,
- * and the referral line. Highlight = the celebration treatment shared
- * with the review-links card (gold border + warm tint).
+ * The 100% share card (Oct 14, 2026): a solid-gold Card directly below
+ * the top card holding the refer action, the "Copied to clipboard" note,
+ * and the referral line. Treatment shared with the review-links card.
  */
 export function ShareProfileCard({
   profile,
@@ -141,8 +140,8 @@ export function ShareProfileCard({
   return (
     <Card style={styles.celebrationCard} testID="share-profile-card">
       <GhostButton
-        title={`Share ${first}'s profile`}
-        accessibilityLabel={`Share ${name}'s profile`}
+        title={`Refer ${first} to friends & family`}
+        accessibilityLabel={`Refer ${name} to friends & family`}
         testID="triumph-share"
         onPress={onShare}
       />
@@ -219,37 +218,36 @@ const styles = StyleSheet.create({
     marginTop: -6,
     marginBottom: 14,
   },
-  // The celebration highlight (Oct 14, 2026): completion-gold border +
-  // soft warm tint — shared with the review-links card so the two 100%
-  // actions read as a pair, apart from the plain white cards.
+  // The celebration treatment (Oct 14, 2026): SOLID completion gold —
+  // the same gold as the top card's 100% ring / timeline fill — shared
+  // with the review-links card so the two 100% actions read as a pair.
   celebrationCard: {
     marginTop: 14,
-    borderWidth: 1.5,
-    borderColor: colors.gold,
-    backgroundColor: colors.goldTint,
+    backgroundColor: colors.gold,
   },
   ghostBtn: {
     borderRadius: 12,
-    backgroundColor: '#EDE7DA',
+    // White filled button so the action pops on the solid-gold card.
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
     minHeight: 52,
   },
   ghostBtnText: {
-    color: colors.accent,
+    color: colors.ink,
     fontSize: 15,
     fontWeight: '700',
   },
   shareNote: {
     fontSize: 12.5,
-    color: colors.muted,
+    color: colors.ink,
     textAlign: 'center',
     marginTop: 8,
   },
   referral: {
     fontSize: 12,
-    color: '#8A7F6E',
+    color: colors.ink,
     textAlign: 'center',
     lineHeight: 17,
     marginTop: 12,

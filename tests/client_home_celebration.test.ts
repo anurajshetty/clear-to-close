@@ -1,5 +1,8 @@
 // client_home_celebration.test.ts — at 100% the share + review cards move
-// to the TOP of the client home, highlighted (Anuraj, Oct 14, 2026).
+// to the TOP of the client home, on solid completion gold (Anuraj,
+// Oct 14, 2026; treatment refined the same day from Anuraj's live
+// screenshot: solid gold like the progress bar, white share button,
+// "Refer {First} to friends & family" label, "or" between review tiles).
 //
 // Buyer + seller homes only, and only in the showTriumphActions state
 // (100% complete, not cancelled — the gates themselves are unchanged):
@@ -76,18 +79,32 @@ assert(section.includes('<CollapsibleChecklist'), 'triumph section: renders the 
 assert(!section.includes('triumph-share'), 'triumph section: the share block is gone from the bottom section');
 assert(!section.includes('GhostButton'), 'triumph section: no share button remains at the bottom');
 
-// --- 3. The highlight: gold border + warm tint on BOTH cards ----------------
+// --- 3. The treatment: SOLID gold on BOTH cards (Oct 14 refinement) --------
 const theme = srcFile('src/theme.ts');
 assert(theme.includes("gold:'#E3B95C'"), 'theme: completion gold token (#E3B95C, the top-card gold)');
-assert(theme.includes("goldTint:'#FBF3DC'"), 'theme: warm tint token for the celebration cards');
+assert(!theme.includes('goldTint'), 'theme: the retired pale-tint token is gone');
 for (const [rel, name] of [
   ['src/components/ClientTriumph.tsx', 'share card'],
   ['src/components/ReviewLinksCard.tsx', 'review-links card'],
 ] as const) {
   const s = srcFile(rel);
-  assert(s.includes('borderColor: colors.gold'), `${name}: gold border`);
-  assert(s.includes('backgroundColor: colors.goldTint'), `${name}: warm tint background`);
-  assert(s.includes('borderWidth: 1.5'), `${name}: emphasized border width`);
+  assert(s.includes('backgroundColor: colors.gold'), `${name}: solid gold background`);
+  assert(!s.includes('goldTint'), `${name}: no pale tint remains`);
+  assert(!s.includes('borderColor: colors.gold'), `${name}: the old gold-border treatment is gone`);
 }
+
+// --- 4. Copy: "Refer {First} to friends & family"; "or" between tiles ------
+assert(
+  triumph.includes('title={`Refer ${first} to friends & family`}'),
+  'share card: action label is "Refer {First} to friends & family"',
+);
+assert(
+  triumph.includes('accessibilityLabel={`Refer ${name} to friends & family`}'),
+  'share card: accessibility label matches the new copy',
+);
+assert(!triumph.includes("Share ${first}'s profile"), 'share card: the old label is gone');
+const reviewCard = srcFile('src/components/ReviewLinksCard.tsx');
+assert(reviewCard.includes('testID="review-links-or"'), 'review card: the "or" element exists');
+assert(reviewCard.includes('{i > 0 ? ('), 'review card: "or" renders only between tiles (never with one tile)');
 
 summary('client-home-celebration');

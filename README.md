@@ -414,12 +414,13 @@ central user; the buyers and sellers they represent are the other parties.
     separate 100% triumph card (removed, Anuraj, Sept 2026): no
     "Just closed!" card, no pace or completion pill in any state.
 - **Below the top card (100% and not cancelled)** — the two celebration
-  cards, moved to the top Oct 14, 2026 and **highlighted** (completion-gold
-  border `#E3B95C` + warm tint, so they stand apart from the plain white
-  cards). First the **share-profile card** (`ShareProfileCard` in
-  `src/components/ClientTriumph.tsx`): the **"Share {FirstName}'s
-  profile"** button and the referral line "Know someone buying or
-  selling? Send them your realtor." inside it. Sharing uses the native
+  cards, moved to the top Oct 14, 2026 on **solid completion gold**
+  (`#E3B95C`, the same gold as the 100% ring / timeline fill). First the
+  **share-profile card** (`ShareProfileCard` in
+  `src/components/ClientTriumph.tsx`): a white filled **"Refer
+  {FirstName} to friends & family"** button and the referral line "Know
+  someone buying or selling? Send them your realtor." inside it, all text
+  in dark ink. Sharing uses the native
   share sheet where available, `navigator.share` on web, and clipboard
   copy as the graceful fallback ("Copied to clipboard"), with the
   approved copy (`src/lib/shareCopy.ts`) pointing at the public profile
@@ -428,7 +429,8 @@ central user; the buyers and sellers they represent are the other parties.
   mentions a deals-closed count. Directly below it, the **review-links
   card** (Oct 2026, approved mockup 07): "Leave a review to {FirstName}" on
   the left, the Google logo and a generic gold-star tile (the "Other"
-  link) side by side on the right.
+  link) side by side on the right, with a small "or" between them when
+  both show.
   Tapping a logo opens that review page in the **external browser**
   (`Linking.openURL`, Safari on iOS — never an in-app webview). One link set
   means one logo, both set means both, no links means no card at all. The

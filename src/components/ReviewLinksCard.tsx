@@ -2,11 +2,12 @@
 //
 // APPROVED mockup 07 "Review links v1" (Oct 2026). After the escrow closes,
 // the client sees this card on the home: at 100% it sits directly below
-// the highlighted share-profile card (Oct 14, 2026 — the two celebration
-// actions moved to the top together, both with the gold border + warm
-// tint), above the LATEST FROM card: "Leave a review to {first}" on the
+// the solid-gold share-profile card (Oct 14, 2026 — the two celebration
+// actions moved to the top together, both solid completion gold), above
+// the LATEST FROM card: "Leave a review to {first}" on the
 // left, the Google logo and the Other-link tile side by side on the
-// right. One link set = one logo, both = both, none = no card. Tapping a
+// right (with a small "or" between them when both show). One link set =
+// one logo, both = both, none = no card. Tapping a
 // logo opens the link in the EXTERNAL browser (Linking.openURL — Safari
 // on iOS), never an in-app webview. (The second link was realtor.com-branded until Oct 14, 2026,
 // when Anuraj made it a generic "Other" link with a star tile; the stored
@@ -81,17 +82,23 @@ export function ReviewLinksCard({
         Leave a review to <Text style={styles.name}>{first}</Text>
       </Text>
       <View style={styles.logos}>
-        {targets.map((t) => (
-          <Pressable
-            key={t.key}
-            accessibilityRole="button"
-            accessibilityLabel={t.key === 'google' ? 'Review on Google' : 'Review on other site'}
-            testID={`review-link-${t.key}`}
-            onPress={() => openReviewLink(t.url)}
-            style={({ pressed }) => [styles.logoBtn, pressed && { opacity: 0.75 }]}
-          >
-            {t.key === 'google' ? <GoogleLogo /> : <OtherReviewLogo />}
-          </Pressable>
+        {targets.map((t, i) => (
+          <React.Fragment key={t.key}>
+            {i > 0 ? (
+              <Text style={styles.or} testID="review-links-or">
+                or
+              </Text>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t.key === 'google' ? 'Review on Google' : 'Review on other site'}
+              testID={`review-link-${t.key}`}
+              onPress={() => openReviewLink(t.url)}
+              style={({ pressed }) => [styles.logoBtn, pressed && { opacity: 0.75 }]}
+            >
+              {t.key === 'google' ? <GoogleLogo /> : <OtherReviewLogo />}
+            </Pressable>
+          </React.Fragment>
         ))}
       </View>
     </Card>
@@ -105,11 +112,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     // Match the mockup's review row: 12px gap between text and logos.
     columnGap: 12,
-    // Celebration highlight (Oct 14, 2026): completion-gold border + soft
-    // warm tint — shared with the share-profile card above it.
-    borderWidth: 1.5,
-    borderColor: colors.gold,
-    backgroundColor: colors.goldTint,
+    // Celebration treatment (Oct 14, 2026): SOLID completion gold — the
+    // same gold as the top card's 100% ring / timeline fill — shared with
+    // the share-profile card above it.
+    backgroundColor: colors.gold,
   },
   text: {
     flex: 1,
@@ -122,7 +128,14 @@ const styles = StyleSheet.create({
   },
   logos: {
     flexDirection: 'row',
+    alignItems: 'center',
     columnGap: 10,
+  },
+  /** The "or" between the two tiles (only when both links are set). */
+  or: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.ink,
   },
   // Mockup: 50x50 logo buttons (above the 44pt tap minimum).
   logoBtn: {

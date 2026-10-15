@@ -1,4 +1,4 @@
-// Clear to Close — "Share {Name}'s profile" invocation.
+// Clear to Close — profile share/referral invocation.
 //
 // Opens the native share sheet with the message version of the approved
 // share copy:

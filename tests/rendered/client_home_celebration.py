@@ -1,12 +1,15 @@
 """client_home_celebration — at 100% the share + review cards sit at the
-TOP of the client home, highlighted (Anuraj, Oct 14, 2026).
+TOP of the client home, on solid completion gold (Anuraj, Oct 14, 2026).
 
 Rendered-outcome guard: seeds a local client escrow and asserts, in the
 real DOM at phone size —
   * order: share-profile-card above review-links-card above
     latest-from-card above the bottom triumph section;
-  * highlight: BOTH cards compute to the completion-gold border
-    (#E3B95C) and the warm tint background (#FBF3DC);
+  * treatment: BOTH cards compute to the solid gold background (#E3B95C,
+    the 100% ring / timeline gold); the share action reads
+    "Refer {First} to friends & family";
+  * the "or" appears between the review tiles only when BOTH links are
+    set (one tile = no "or");
   * gates: at 100% with no review links, the review card is absent but
     the share card is present; below 100% both are absent.
 
@@ -33,7 +36,6 @@ os.makedirs(OUT, exist_ok=True)
 FAILS = []
 JS_ERRORS = []
 GOLD = "rgb(227, 185, 92)"
-TINT = "rgb(251, 243, 220)"
 
 
 def check(name, cond, detail=""):
@@ -72,7 +74,8 @@ def iso(delta_days):
     return (date.today() + timedelta(days=delta_days)).isoformat()
 
 
-def seed_js(done_count, total, with_links):
+def seed_js(done_count, total, links):
+    # links: 'both' | 'google' | 'none'
     steps = [
         {"id": f"s{i}", "title": f"Step {i + 1:02d}", "subtitle": "", "done": i < done_count,
          "custom": False, "order": i, "completedAt": None}
@@ -90,8 +93,8 @@ def seed_js(done_count, total, with_links):
         "yearsExperience": "12", "dealsClosed": "240", "areasServed": "Santa Clarita",
         "phone": "555-0100", "dreLicense": "01998877", "email": "maya@compass.com",
         "realty_group": "Compass Realty", "banner_image": None,
-        "googleReviewLink": "https://g.page/r/abc" if with_links else "",
-        "realtorComReviewLink": "https://reviews.example.com/maya" if with_links else "",
+        "googleReviewLink": "https://g.page/r/abc" if links in ("both", "google") else "",
+        "realtorComReviewLink": "https://reviews.example.com/maya" if links == "both" else "",
         "reviews": [], "rating": None,
     }
     link = {"linkId": "link-1", "escrowId": "seed-1", "role": "buyer",
@@ -110,15 +113,17 @@ PROBE_JS = """() => {
     if (!el) return null;
     const cs = getComputedStyle(el);
     const r = el.getBoundingClientRect();
-    return { top: r.top + window.scrollY, borderColor: cs.borderTopColor, bg: cs.backgroundColor };
+    return { top: r.top + window.scrollY, bg: cs.backgroundColor };
   };
+  const shareBtn = document.querySelector('[data-testid="triumph-share"]');
   return {
     share: probe('share-profile-card'),
     review: probe('review-links-card'),
     latest: probe('latest-from-card'),
     triumph: probe('triumph-section'),
-    shareBtn: !!document.querySelector('[data-testid="triumph-share"]'),
+    shareBtnText: shareBtn ? shareBtn.textContent.trim() : null,
     referral: !!document.querySelector('[data-testid="triumph-referral"]'),
+    orPresent: !!document.querySelector('[data-testid="review-links-or"]'),
   };
 }"""
 
@@ -144,34 +149,42 @@ def main():
         with sync_playwright() as p:
             b = p.chromium.launch()
 
-            # 100% with links: order + highlight.
-            pg = load(b, 5, 5, True)
+            # 100% with both links: order + solid gold + "or" + new label.
+            pg = load(b, 5, 5, "both")
             v = pg.evaluate(PROBE_JS)
             check("100%: share card present", v["share"] is not None)
             check("100%: review card present", v["review"] is not None)
-            check("100%: share action + referral inside the flow", v["shareBtn"] and v["referral"])
+            check("100%: referral line present", v["referral"])
+            check("100%: action label is the Refer copy",
+                  v["shareBtnText"] == "Refer Maya to friends & family", str(v["shareBtnText"]))
+            check("100%: 'or' present between the two tiles", v["orPresent"])
             if v["share"] and v["review"] and v["latest"] and v["triumph"]:
                 check("100%: order share < review < latest < triumph",
                       v["share"]["top"] < v["review"]["top"] < v["latest"]["top"] < v["triumph"]["top"],
                       str({k: v[k]["top"] for k in ("share", "review", "latest", "triumph")}))
             if v["share"]:
-                check("100%: share card gold border", v["share"]["borderColor"] == GOLD, v["share"]["borderColor"])
-                check("100%: share card warm tint", v["share"]["bg"] == TINT, v["share"]["bg"])
+                check("100%: share card solid gold", v["share"]["bg"] == GOLD, v["share"]["bg"])
             if v["review"]:
-                check("100%: review card gold border", v["review"]["borderColor"] == GOLD, v["review"]["borderColor"])
-                check("100%: review card warm tint", v["review"]["bg"] == TINT, v["review"]["bg"])
+                check("100%: review card solid gold", v["review"]["bg"] == GOLD, v["review"]["bg"])
             pg.screenshot(path=os.path.join(OUT, "closed-with-links.png"), full_page=True)
             pg.close()
 
+            # 100% with ONE link: review card present, no "or".
+            pg = load(b, 5, 5, "google")
+            v = pg.evaluate(PROBE_JS)
+            check("100% one link: review card present", v["review"] is not None)
+            check("100% one link: no 'or'", not v["orPresent"])
+            pg.close()
+
             # 100% without links: share present, review absent.
-            pg = load(b, 5, 5, False)
+            pg = load(b, 5, 5, "none")
             v = pg.evaluate(PROBE_JS)
             check("100% no links: share card present", v["share"] is not None)
             check("100% no links: review card absent", v["review"] is None)
             pg.close()
 
             # Below 100%: both absent.
-            pg = load(b, 3, 5, True)
+            pg = load(b, 3, 5, "both")
             v = pg.evaluate(PROBE_JS)
             check("60%: share card absent", v["share"] is None)
             check("60%: review card absent", v["review"] is None)

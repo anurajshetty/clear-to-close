@@ -320,7 +320,7 @@ export interface ClientView {
   loanApprovalDate?: string | null;
   /**
    * The realtor's id (auth user id) behind this escrow — feeds the public
-   * profile URL in "Share {Name}'s profile". Present on cloud-linked views
+   * profile URL in the profile share copy. Present on cloud-linked views
    * (the RPC returns the escrow row's user_id); absent on the local-only
    * build, where the share copy then omits the profile link.
    */

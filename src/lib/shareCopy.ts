@@ -1,4 +1,4 @@
-// Clear to Close — "Share {Name}'s profile" copy builders.
+// Clear to Close — profile share/referral copy builders.
 //
 // APPROVED copy spec: mockup "Share summary — approved copy spec" (Sept 26,
 // 2026). Both versions are built dynamically from the realtor's profile +

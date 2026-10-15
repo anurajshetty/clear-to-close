@@ -1,4 +1,4 @@
-// sharecopy.test.ts — REGRESSION: "Share {Name}'s profile" copy builders
+// sharecopy.test.ts — REGRESSION: profile share/referral copy builders
 // (APPROVED mockup "Share summary — approved copy spec", Sept 2026).
 //
 // Both versions are built dynamically from the realtor profile + escrow.
