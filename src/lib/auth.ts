@@ -20,6 +20,20 @@ import type { KV } from './store';
 import type { ClientRole, DeviceClientLink } from './types';
 import { getDefaultKV } from './kv';
 import { getSupabaseClient } from './supabase';
+import { APP_PUBLIC_URL } from './shareCopy';
+
+/**
+ * Where Supabase email links (signup confirmation, resend, password
+ * reset) must land: the app's public web address, on EVERY platform —
+ * the link always opens in a browser, never in the native app.
+ *
+ * This MUST be passed explicitly on every email flow (Oct 20, 2026
+ * bug): Supabase's default resolution drops the Site URL's path, so
+ * links landed on the bare domain root (https://anurajshetty.github.io/)
+ * and hit GitHub's 404. The dashboard Site URL/Redirect URLs were
+ * correct all along; the app simply never passed the redirect.
+ */
+export const AUTH_EMAIL_REDIRECT_URL = APP_PUBLIC_URL;
 
 export type PlatformKind = 'web' | 'native';
 
@@ -109,7 +123,7 @@ export interface AuthClientLike {
     signUp(args: {
       email: string;
       password: string;
-      options?: { data?: Record<string, string> };
+      options?: { data?: Record<string, string>; emailRedirectTo?: string };
     }): Promise<{ data: { user?: { id?: string } | null; session?: unknown } ; error?: { message?: string; status?: number; code?: string } | null }>;
     signInWithPassword(args: {
       email: string;
@@ -117,10 +131,12 @@ export interface AuthClientLike {
     }): Promise<{ data: { user?: { id?: string } | null; session?: unknown }; error?: { message?: string } | null }>;
     resetPasswordForEmail(
       email: string,
+      options?: { redirectTo?: string },
     ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
     resend(args: {
       type: 'signup';
       email: string;
+      options?: { emailRedirectTo?: string };
     }): Promise<{ data?: unknown; error?: { message?: string; status?: number; code?: string } | null }>;
     setSession?(args: {
       access_token: string;
@@ -637,7 +653,10 @@ export function createAuthService(deps: AuthServiceDeps) {
         const { data, error } = await client.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { name: name.trim() } },
+          options: {
+            data: { name: name.trim() },
+            emailRedirectTo: AUTH_EMAIL_REDIRECT_URL,
+          },
         });
         if (error) return { ok: false, code: mapSignUpError(error) };
         if (data?.session) {
@@ -719,14 +738,20 @@ export function createAuthService(deps: AuthServiceDeps) {
      * "unknown email") resolves ok — the UI always shows the same
      * confirmation copy. Only a network failure surfaces a retry error.
      *
-     * Recovery is web-only: the emailed link opens in the browser (the
-     * Supabase dashboard Site URL), so no redirectTo is needed.
+     * The redirectTo is REQUIRED (Oct 20, 2026): without it Supabase's
+     * default resolution drops the Site URL's path and the recovery
+     * link lands on the bare domain root (GitHub 404) instead of the
+     * app — see AUTH_EMAIL_REDIRECT_URL. The link opens in a browser
+     * on every platform; the app parses the recovery fragment there
+     * (parseRecoveryLink) and routes to the reset screen.
      */
     async sendPasswordReset(email: string): Promise<ResetResult> {
       const client = deps.getClient();
       if (!client) return { ok: false, code: 'unconfigured' };
       try {
-        const { error } = await client.auth.resetPasswordForEmail(email.trim());
+        const { error } = await client.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: AUTH_EMAIL_REDIRECT_URL,
+        });
         if (error && isNetworkError(error)) return { ok: false, code: 'network' };
         return { ok: true };
       } catch (e) {
@@ -744,7 +769,11 @@ export function createAuthService(deps: AuthServiceDeps) {
       const client = deps.getClient();
       if (!client) return { ok: false, code: 'unconfigured' };
       try {
-        const { error } = await client.auth.resend({ type: 'signup', email: email.trim() });
+        const { error } = await client.auth.resend({
+          type: 'signup',
+          email: email.trim(),
+          options: { emailRedirectTo: AUTH_EMAIL_REDIRECT_URL },
+        });
         if (!error) return { ok: true };
         if (isNetworkError(error)) return { ok: false, code: 'network' };
         const e = error as { status?: number; code?: string; message?: string };

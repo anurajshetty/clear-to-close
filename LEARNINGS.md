@@ -1581,3 +1581,16 @@ check-off copy; `tests/run.sh` wires both.
   `npm run export:web` (tools/inject_og_tags.js); switching the whole
   rendering model to static for a metadata rider was the rejected
   alternative. Check web.output BEFORE reaching for +html.
+- **Supabase's default email redirect drops the Site URL's path
+  (Oct 20, 2026).** With no emailRedirectTo/redirectTo passed, the
+  confirmation and recovery links resolved to the bare domain root —
+  the /clear-to-close subpath vanished and users hit GitHub's 404,
+  even though the dashboard Site URL + Redirect URLs were exactly
+  right. The dashboard being correct is not evidence the links land
+  correctly: pass the redirect explicitly on EVERY email flow
+  (signUp, resend, resetPasswordForEmail), from one shared constant
+  (AUTH_EMAIL_REDIRECT_URL = APP_PUBLIC_URL). The bug hid behind a
+  confident code comment ("no redirectTo is needed") — a comment
+  asserting platform behavior is a claim that needs the same proof as
+  code. A realtor hit this in production; it was only reproduced by
+  signing up a test account and clicking the actual email.

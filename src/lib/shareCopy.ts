@@ -14,8 +14,15 @@
 //   screen (Anuraj's call, Sept 26).
 import { firstNameOf } from './pace';
 
+/**
+ * The app's public web address — the single definition every absolute
+ * URL in the app derives from (profile links, the invite client-app
+ * link, and the auth email redirect in src/lib/auth.ts).
+ */
+export const APP_PUBLIC_URL = 'https://anurajshetty.github.io/clear-to-close';
+
 /** Public profile URL contract: https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id> */
-export const PROFILE_URL_BASE = 'https://anurajshetty.github.io/clear-to-close/realtor';
+export const PROFILE_URL_BASE = `${APP_PUBLIC_URL}/realtor`;
 
 /**
  * Client app link for invite shares (Anuraj, Oct 20, 2026): the BUILT-IN
@@ -29,7 +36,7 @@ export const PROFILE_URL_BASE = 'https://anurajshetty.github.io/clear-to-close/r
  * served by the deployed SPA fallback (boot-verified under the real
  * subpath).
  */
-export const CLIENT_APP_LINK = 'https://anurajshetty.github.io/clear-to-close/redeem';
+export const CLIENT_APP_LINK = `${APP_PUBLIC_URL}/redeem`;
 
 export interface InviteShareInput {
   /** The party name exactly as the realtor entered it. */

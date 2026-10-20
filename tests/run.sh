@@ -73,6 +73,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/auth_copy.test.ts" \
+  "$ROOT/tests/email_redirect.test.ts" \
   "$ROOT/tests/app_config.test.ts" \
   "$ROOT/tests/signup.test.ts" \
   "$ROOT/tests/securestore_migration.test.ts" \
@@ -194,6 +195,7 @@ node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/auth_copy.test.js"
+node "$OUT/tests/email_redirect.test.js"
 node "$OUT/tests/app_config.test.js"
 node "$OUT/tests/signup.test.js"
 node "$OUT/tests/securestore_migration.test.js"

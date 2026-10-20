@@ -247,7 +247,11 @@ central user; the buyers and sellers they represent are the other parties.
   (skippable — "Skip for now" goes straight to the deal list). Login is email
   + password; password reset via email — the emailed link opens a
   "Set new password" screen in the browser (expired links get a fresh-link
-  path). The session persists on both
+  path). Every email link (signup confirmation, resend, reset) is sent
+  with an explicit redirect to the app's public web address
+  (`AUTH_EMAIL_REDIRECT_URL`, from the single `APP_PUBLIC_URL`
+  definition) — without it, Supabase's default drops the address's
+  /clear-to-close path and the link lands on the bare domain's 404. The session persists on both
   platforms — **web** in localStorage, **native iOS** in its own storage —
   so a refresh keeps the realtor signed in, on the same screen. The session
   ends on Log out, or when the browser/incognito session ends.
