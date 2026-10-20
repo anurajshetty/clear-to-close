@@ -75,12 +75,25 @@ assert(has('testID={`share-name-${s.role}`}'), 'name field has a per-role testID
 assert(has('disabled={!nameOk || formBusy}'), 'Create code disabled until the name is non-empty');
 assert(has("Couldn't create the invite. Check your connection and try again."),
   'create-code failure shows an inline error (confirmed-or-loud)');
-// Decision (b), final: Anuraj dropped the branded invite link. The code
-// phase is exactly the mockup's single Copy (code only) + Done — no link
-// button, no placeholder scaffolding.
-assert(has('<PrimaryButton title="Copy"'), 'code phase: single Copy button (code only)');
-assert(!has('Copy invite link'), 'no "Copy invite link" — branded link dropped by decision');
+// Superseded (Oct 20, 2026): the Sept "no link" decision (b) is replaced
+// by Anuraj's invite Share — the code phase now pairs Copy with a Share
+// action, and every Invited row gains Share next to its Copy. The link
+// travels in the share payload's url field, never as a copy-link button.
+assert(has('<PrimaryButton title="Copy"'), 'code phase: Copy button (code only) retained');
+assert(has('title="Share"') && has('shareInvite(formName.trim(), formCode)'),
+  'code phase: Share sits alongside Copy and shares the just-created invite');
+assert(!has('Copy invite link'), 'no "Copy invite link" — the link rides the share payload, not a button');
 assert(!has('EXTENSION POINT'), 'no leftover extension scaffolding');
+assert(has('accessibilityLabel={`Share invite for ${inv.partyName}`}'),
+  'Share has an accessible label per row');
+assert(has('shareInvite(inv.partyName, inv.code)'), 'row Share sends that row\'s invite');
+assert(
+  SRC.indexOf('{!accepted && (') >= 0 &&
+    SRC.indexOf('Share invite for') > SRC.indexOf('{!accepted && ('),
+  'row Share renders inside the Invited-only block (Accepted rows get nothing new)',
+);
+assert(has('store.getProfile()'), 'screen loads the realtor profile for the share message name');
+assert(has("firstNameOf(realtorName) || 'Your realtor'"), 'share message uses the realtor first name with a fallback');
 
 // --- Inline confirms (remove / regenerate) ---
 assert(has('Remove {inv.partyName}?'), 'remove confirm title copy');
@@ -97,6 +110,8 @@ assert(has('setRemoveId(null);\n    setRegenId((cur)'),
 
 // --- Toasts (exact mockup copy, ToastTimer-owned) ---
 assert(has("showToast('Code copied.')"), 'toast: "Code copied."');
+assert(has("showToast('Copied to clipboard')"), 'toast: share clipboard fallback "Copied to clipboard"');
+assert(has('showToast("Couldn\'t share. Try again.")'), 'toast: share failure "Couldn\'t share. Try again."');
 assert(has("showToast('Invite created.')"), 'toast: "Invite created."');
 assert(has("showToast('Invite removed.')"), 'toast: "Invite removed."');
 assert(has("showToast('New code created.')"), 'toast: "New code created."');

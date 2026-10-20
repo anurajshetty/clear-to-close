@@ -60,8 +60,18 @@ function mockClient(o: {
   signOutError?: string;
   signOutCalls?: Array<{ scope?: 'local' | 'global' | 'others' } | undefined>;
   onSignOut?: () => void;
+  rpc?: (fn: string, args: Record<string, unknown>) => Promise<{ data?: unknown; error?: { message?: string } | null }>;
+  rpcCalls?: Array<{ fn: string; args: Record<string, unknown> }>;
 }): AuthClientLike {
   return {
+    ...(o.rpc
+      ? {
+          rpc: async (fn: string, args: Record<string, unknown>) => {
+            if (o.rpcCalls) o.rpcCalls.push({ fn, args });
+            return o.rpc!(fn, args);
+          },
+        }
+      : {}),
     auth: {
       signUp: o.signUp ?? (async () => ({ data: {}, error: { message: 'not scripted' } })),
       signInWithPassword: o.signIn ?? (async () => ({ data: {}, error: { message: 'not scripted' } })),
@@ -220,6 +230,50 @@ async function main(): Promise<void> {
     assert(updated, 'M6b changepw: the password update succeeded before revocation failed');
     assert(!res.ok && res.code === 'revoke_failed',
       'M6b changepw: failed revocation surfaces revoke_failed, never silent');
+  }
+  {
+    // P0 (Oct 2026): after the others-revocation, the realtor's OTHER
+    // devices' push token rows are pruned (migration 0038) — except this
+    // device's. Identity is derived server-side; the app sends only the
+    // current device id.
+    const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const kv = memoryKV();
+    await kv.setItem('ctc:deviceid', 'device-current');
+    const svc = serviceFor(
+      mockClient({
+        session: { user: { id: UID, email: 'rita@example.com' } },
+        signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+        updateUser: async () => ({ error: null }),
+        rpc: async () => ({ data: { ok: true }, error: null }),
+        rpcCalls,
+      }),
+      kv,
+    );
+    const res = await svc.changePassword('old-secret', 'brand-new-password');
+    assert(res.ok, 'P0 prune: success still returns ok when the prune succeeds');
+    assert(
+      rpcCalls.length === 1 &&
+        rpcCalls[0].fn === 'unregister_push_tokens_except_device' &&
+        rpcCalls[0].args.p_device_id === 'device-current',
+      'P0 prune: called once with the current device id',
+    );
+  }
+  {
+    // P0: a failed token prune is a revocation failure — LOUD, never silent.
+    const kv = memoryKV();
+    await kv.setItem('ctc:deviceid', 'device-current');
+    const svc = serviceFor(
+      mockClient({
+        session: { user: { id: UID, email: 'rita@example.com' } },
+        signIn: async () => ({ data: { user: { id: UID } }, error: null }),
+        updateUser: async () => ({ error: null }),
+        rpc: async () => ({ data: null, error: { message: 'prune refused' } }),
+      }),
+      kv,
+    );
+    const res = await svc.changePassword('old-secret', 'brand-new-password');
+    assert(!res.ok && res.code === 'revoke_failed',
+      'P0 prune: failed prune surfaces revoke_failed, never silent');
   }
   {
     // changePassword: revocation throws -> revoke_failed (LOUD, not unknown).
@@ -497,6 +551,37 @@ async function main(): Promise<void> {
     );
     const r = await svc.signIn('rita@x.com', 'wrongpassword');
     assert(!r.ok && r.code === 'invalid_credentials', 'wrong password -> invalid_credentials, stays on login');
+  }
+  {
+    // Unconfirmed account on the LOGIN path (Oct 15, 2026): Supabase's
+    // "Email not confirmed" earns its own inline copy — before this it
+    // fell through to the generic "Something went wrong".
+    const svc = serviceFor(
+      mockClient({
+        signIn: async () => ({ data: {}, error: { message: 'Email not confirmed' } }),
+      }),
+    );
+    const r = await svc.signIn('new@x.com', 'longenoughpassword');
+    assert(
+      !r.ok && r.code === 'email_not_confirmed',
+      'unconfirmed login (message shape) -> email_not_confirmed',
+    );
+  }
+  {
+    // The GoTrue code shape maps the same way.
+    const svc = serviceFor(
+      mockClient({
+        signIn: async () => ({
+          data: {},
+          error: { message: 'email_not_confirmed', code: 'email_not_confirmed' },
+        }),
+      }),
+    );
+    const r = await svc.signIn('new@x.com', 'longenoughpassword');
+    assert(
+      !r.ok && r.code === 'email_not_confirmed',
+      'unconfirmed login (code shape) -> email_not_confirmed',
+    );
   }
   {
     // Supabase does not distinguish unregistered emails on sign-in; the app

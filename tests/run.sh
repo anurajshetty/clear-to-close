@@ -72,6 +72,8 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/push.test.ts" \
   "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
+  "$ROOT/tests/auth_copy.test.ts" \
+  "$ROOT/tests/app_config.test.ts" \
   "$ROOT/tests/signup.test.ts" \
   "$ROOT/tests/securestore_migration.test.ts" \
   "$ROOT/tests/syncedstore.test.ts" \
@@ -191,6 +193,8 @@ node "$OUT/tests/push.test.js"
 node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
+node "$OUT/tests/auth_copy.test.js"
+node "$OUT/tests/app_config.test.js"
 node "$OUT/tests/signup.test.js"
 node "$OUT/tests/securestore_migration.test.js"
 node "$OUT/tests/syncedstore.test.js"
@@ -304,6 +308,36 @@ python3 "$ROOT/tests/key_dates_push_migration.py"
 # (including the concurrent same-code race-loser path), and scopes push
 # tokens per link (SQL, not runnable in node).
 python3 "$ROOT/tests/multi_escrow_migration.py"
+# Realtor push-token migration self-check (Oct 15, 2026): the 0038 migration
+# adds user-bound push tokens — derived identity only (no user-id param),
+# (text,text,text) register overload granted to authenticated only,
+# exactly-one-binding CHECK, partial unique index with matching conflict
+# target, rebind-on-register, sign-out unregister + M6b prune (SQL, not
+# runnable in node).
+python3 "$ROOT/tests/realtor_push_tokens_migration.py"
+# Step-push side-targeting migration self-check (Oct 15, 2026): the 0039
+# migration adds step_role to pending_step_pushes and re-creates
+# ctc_push_notify with a diff of exactly the two buffer inserts vs 0024
+# (SQL, not runnable in node).
+python3 "$ROOT/tests/step_push_side_targeting_migration.py"
+# P1 event-pushes migration self-check (Oct 15, 2026): the 0040 outbox,
+# queue kind widening, join/review triggers, the closed/cancelled token
+# snapshot, and the ctc_push_notify diff vs 0039 pinned to exactly the
+# comment refresh + custom-step branch (SQL, not runnable in node).
+python3 "$ROOT/tests/p1_event_pushes_migration.py"
+# P2 (0041): date-reminder candidates are per-token-timezone, the claim
+# log's unique key is (escrow, event, threshold, date, token), both new
+# functions are service-role-only from birth, third cron job (SQL only).
+python3 "$ROOT/tests/p2_date_reminders_migration.py"
+# P3 (0042): ctc_push_notify == 0040 + exactly the two halfway hook
+# lines; the claim helper's crossing math + atomic once-per-escrow
+# stamp are pinned (SQL only).
+python3 "$ROOT/tests/p3_halfway_migration.py"
+# Android backup exclusion (auditor-approved plugin): every domain in
+# both rule formats + both manifest attributes + registered in app.json.
+python3 "$ROOT/tests/android_backup_rules.py"
+# app_config posture: public SELECT only, no client write path, seeded link.
+python3 "$ROOT/tests/app_config_migration.py"
 # TC intake migration self-check (Sept 29, 2026): the 0031 migration
 # creates tc_intakes (escrow_id PK -> escrows cascade), locks direct access
 # to the owner (no anon grant), and replaces get_client_view so the tc

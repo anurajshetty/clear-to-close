@@ -163,8 +163,7 @@ function isWebPlatform(): boolean {
 }
 
 /** Lazy-loads expo-secure-store; null when the module can't be loaded. */
-function loadSecureStore(): SecureStoreLike | null {
-  try {
+function loadSecureStore(): SecureStoreLike | null {  try {
     // Lazy require: the native module is unavailable in node test runs and
     // on native binaries built before expo-secure-store was added.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -186,6 +185,11 @@ function loadSecureStore(): SecureStoreLike | null {
     // fall through to null
   }
   return null;
+}
+
+/** Shared accessor for the lazy SecureStore loader (null on web/node). */
+export function getSecureStore(): SecureStoreLike | null {
+  return loadSecureStore();
 }
 
 /**

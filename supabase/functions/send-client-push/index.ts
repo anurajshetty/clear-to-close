@@ -7,12 +7,19 @@
 // Send paths:
 //   * step/key-date trigger events: immediate send, quiet-hours aware.
 //   * flush_step_pushes (pg_cron, every minute): coalesce each escrow's
-//     buffered check-offs (~2 min window), drain the delayed queue.
+//     buffered check-offs (~2 min window), drain the delayed queue,
+//     drain the P1 event outbox (0040).
 //   * quiet_checkin_sweep (pg_cron, hourly): five-day quiet check-ins.
+//   * date_reminder_sweep (pg_cron, hourly): P2 date reminders (0041) —
+//     candidates per recipient timezone, claimed once per (date, token)
+//     in push_reminder_log before delivery; quiet-hours-queued rows
+//     re-validate at drain so stale "tomorrow" copy never lands.
 //
 // Guards on EVERY path (approved rules, Anuraj Sept 28 2026):
 //   * revoked links / revoked invites never get pushes,
-//   * closed/cancelled escrows never get pushes,
+//   * closed/cancelled escrows never get pushes — ONE deliberate
+//     exception (P1, 0040): the closed/cancelled announcement itself is
+//     delivered to the tokens snapshotted at the transition moment,
 //   * 21:00-08:00 client-local -> queued for 08:00, never buzzed,
 //   * multi-escrow devices get the property address in the body,
 //   * delivery failure is logged (push_delivery_log) and never fails the
@@ -33,19 +40,27 @@ import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import {
   buildCoalescedBody,
+  buildEventBody,
   buildPushBody,
   buildQuietCheckinBody,
+  buildReminderBody,
+  collapseBurstEvents,
   daysUntilClose,
   deadTokensFromReceipts,
   isQuietHour,
   nextMorning8am,
   parseTriggerPayload,
   resolveZone,
+  rolesForPushEvent,
+  splitStepPushesByAudience,
   toExpoMessages,
   withAddress,
   COALESCE_WINDOW_MS,
+  type BufferedStepPush,
+  type ClientLinkRole,
   type ExpoMessage,
   type PushEvent,
+  type ReminderEvent,
 } from './push.ts';
 
 // PUSH_INLINE_MARKER — the generator replaces the './push.ts' import above
@@ -65,6 +80,9 @@ interface LiveToken {
   role: string;
   timezone: string | null;
   escrowIds: string[];
+  /** Snapshot rows (closed/cancelled) carry their multi-escrow flag
+   *  directly; live rows derive it from escrowIds. */
+  multi?: boolean;
 }
 
 interface EscrowInfo {
@@ -72,6 +90,7 @@ interface EscrowInfo {
   address: string;
   status: string;
   realtorFirst: string;
+  userId: string;
 }
 
 async function getEscrowInfo(supa: SupaClient, escrowId: string): Promise<EscrowInfo | null> {
@@ -92,6 +111,7 @@ async function getEscrowInfo(supa: SupaClient, escrowId: string): Promise<Escrow
     address: ((escrow as { address?: string }).address ?? '').trim(),
     status: (escrow as { status?: string }).status ?? '',
     realtorFirst: name.split(/\s+/)[0] || 'Your realtor',
+    userId: (escrow as { user_id: string }).user_id,
   };
 }
 
@@ -131,6 +151,187 @@ async function getLiveTokens(supa: SupaClient, escrow: EscrowInfo): Promise<Live
     timezone: r.timezone,
     escrowIds: byDevice.get(r.device_id) ?? [escrow.id],
   }));
+}
+
+/**
+ * The escrow owner's own devices (P0.1 user-bound token rows). A realtor
+ * with several devices gets the push on each; tap data carries
+ * role 'realtor' so the app routes to the realtor escrow screen.
+ */
+async function getRealtorTokens(supa: SupaClient, escrow: EscrowInfo): Promise<LiveToken[]> {
+  const { data: tokenRows } = await supa
+    .from('push_tokens')
+    .select('expo_push_token, device_id, timezone')
+    .eq('user_id', escrow.userId);
+  const seen = new Set<string>();
+  const rows = ((tokenRows ?? []) as Array<{
+    expo_push_token: string;
+    device_id: string;
+    timezone: string | null;
+  }>).filter((r) => {
+    if (seen.has(r.expo_push_token)) return false;
+    seen.add(r.expo_push_token);
+    return true;
+  });
+  if (rows.length === 0) return [];
+  const deviceIds = [...new Set(rows.map((r) => r.device_id))];
+  const { data: escrowRows } = await supa
+    .from('push_tokens')
+    .select('device_id, escrow_id')
+    .in('device_id', deviceIds);
+  const byDevice = new Map<string, string[]>();
+  for (const r of ((escrowRows ?? []) as Array<{ device_id: string; escrow_id: string | null }>)) {
+    if (!r.escrow_id) continue;
+    const list = byDevice.get(r.device_id) ?? [];
+    if (!list.includes(r.escrow_id)) list.push(r.escrow_id);
+    byDevice.set(r.device_id, list);
+  }
+  return rows.map((r) => {
+    const ids = byDevice.get(r.device_id) ?? [];
+    if (!ids.includes(escrow.id)) ids.push(escrow.id);
+    return {
+      expo_push_token: r.expo_push_token,
+      role: 'realtor',
+      timezone: r.timezone,
+      escrowIds: ids,
+    };
+  });
+}
+
+interface EventPushRow {
+  id: string;
+  escrow_id: string;
+  event: PushEvent;
+  payload: Record<string, unknown>;
+  snapshot_tokens: Array<{
+    token: string;
+    role: string;
+    timezone: string | null;
+    escrow_count: number;
+  }> | null;
+}
+
+/**
+ * P1 event outbox drain (0040): join/review events go to the escrow's
+ * realtor, custom-step events to the step's side + TC, and
+ * closed/cancelled events to the tokens SNAPSHOTTED at transition time
+ * (the one deliberate exception to send-time liveness — see 0040).
+ * Every row is consumed exactly once; delivery failures land in
+ * push_delivery_log via deliver(), like every other path.
+ */
+async function handleEventPushes(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+): Promise<{ processed: number; sent: number; queued: number }> {
+  const { data: rows } = await supa
+    .from('pending_event_pushes')
+    .select('id, escrow_id, event, payload, snapshot_tokens')
+    .order('created_at', { ascending: true })
+    .limit(100);
+  const fetched = (rows ?? []) as EventPushRow[];
+  // Intake bursts collapse to one delivery per (escrow, event); the
+  // collapsed rows are still consumed below.
+  const list = collapseBurstEvents(fetched);
+  let processed = 0;
+  let sent = 0;
+  let queued = 0;
+  for (const row of list) {
+    const escrow = await getEscrowInfo(supa, row.escrow_id);
+    if (escrow) {
+      if (row.event === 'client_joined' || row.event === 'review_submitted') {
+        const body = buildEventBody(row.event, {
+          clientName:
+            (row.payload['party_name'] as string | null) ??
+            (row.payload['client_name'] as string | null) ??
+            null,
+          clientRole: (row.payload['role'] as string | null) ?? null,
+          stars: (row.payload['stars'] as number | null) ?? null,
+        });
+        const tokens = await getRealtorTokens(supa, escrow);
+        if (body && tokens.length > 0) {
+          const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'event');
+          sent += d.sent;
+          queued += d.queued;
+        }
+      } else if (row.event === 'custom_step_added') {
+        if (escrow.status === 'open') {
+          const roles = rolesForPushEvent(
+            'custom_step_added',
+            (row.payload['step_role'] as string | null) ?? null,
+          );
+          const tokens = (await getLiveTokens(supa, escrow)).filter((t) =>
+            roles.includes(t.role as ClientLinkRole),
+          );
+          const body = buildPushBody('custom_step_added', escrow.realtorFirst, null, null);
+          if (body && tokens.length > 0) {
+            const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'event');
+            sent += d.sent;
+            queued += d.queued;
+          }
+        }
+      } else if (
+        row.event === 'buyer_intake_submitted' ||
+        row.event === 'seller_intake_submitted'
+      ) {
+        // Option A: the TC (only) hears that an intake was saved.
+        if (escrow.status === 'open') {
+          const roles = rolesForPushEvent(row.event);
+          const tokens = (await getLiveTokens(supa, escrow)).filter((t) =>
+            roles.includes(t.role as ClientLinkRole),
+          );
+          const body = buildEventBody(row.event, {});
+          if (body && tokens.length > 0) {
+            const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'event');
+            sent += d.sent;
+            queued += d.queued;
+          }
+        }
+      } else if (row.event === 'halfway_milestone') {
+        // P3: every client device (buyer + seller + TC) celebrates the
+        // halfway crossing; counts are the crossing-time snapshot.
+        if (escrow.status === 'open') {
+          const tokens = await getLiveTokens(supa, escrow);
+          const body = buildEventBody('halfway_milestone', {
+            doneCount: (row.payload['done'] as number | null) ?? null,
+            totalCount: (row.payload['total'] as number | null) ?? null,
+          });
+          if (body && tokens.length > 0) {
+            const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'event');
+            sent += d.sent;
+            queued += d.queued;
+          }
+        }
+      } else if (row.event === 'escrow_closed' || row.event === 'escrow_cancelled') {
+        const body = buildEventBody(row.event, {
+          realtorName: (row.payload['realtor_first'] as string | null) ?? null,
+        });
+        const tokens: LiveToken[] = (row.snapshot_tokens ?? []).map((s) => ({
+          expo_push_token: s.token,
+          role: s.role,
+          timezone: s.timezone,
+          escrowIds: [escrow.id],
+          multi: (s.escrow_count ?? 1) > 1,
+        }));
+        if (body && tokens.length > 0) {
+          const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'event');
+          sent += d.sent;
+          queued += d.queued;
+        }
+      }
+    }
+    await supa.from('pending_event_pushes').delete().eq('id', row.id);
+    processed++;
+  }
+  // Consume the burst-collapsed duplicates (already counted as one
+  // delivery above) so they never re-fire on the next drain.
+  const deliveredIds = new Set(list.map((r) => r.id));
+  for (const row of fetched) {
+    if (!deliveredIds.has(row.id)) {
+      await supa.from('pending_event_pushes').delete().eq('id', row.id);
+      processed++;
+    }
+  }
+  return { processed, sent, queued };
 }
 
 interface QueuedPush {
@@ -206,21 +407,23 @@ async function deliver(
   tokens: LiveToken[],
   body: string,
   data: Record<string, unknown>,
-  kind: 'step' | 'keydate' | 'checkin',
+  kind: 'step' | 'keydate' | 'checkin' | 'event' | 'reminder',
 ): Promise<{ sent: number; queued: number; deadRemoved: number }> {
   const now = new Date();
   const immediate: ExpoMessage[] = [];
   let queued = 0;
   for (const t of tokens) {
     const zone = resolveZone(t.timezone);
-    const addressed = withAddress(body, escrow.address, t.escrowIds.length > 1);
+    const addressed = withAddress(body, escrow.address, t.multi ?? t.escrowIds.length > 1);
     if (isQuietHour(now, zone)) {
-      // Queue for 08:00 client-local; never buzz at night.
+      // Queue for 08:00 client-local; never buzz at night. Reminder rows
+      // also carry the recipient zone so the drain can re-validate the
+      // threshold in local time (stale "tomorrow" copy must never land).
       await supa.from('push_queue').insert({
         expo_push_token: t.expo_push_token,
         title: 'Clear to Close',
         body: addressed,
-        data: { ...data, role: t.role },
+        data: { ...data, role: t.role, ...(kind === 'reminder' ? { tz: t.timezone } : {}) },
         kind,
         escrow_id: escrow.id,
         send_after: nextMorning8am(now, zone).toISOString(),
@@ -291,6 +494,51 @@ async function drainQueue(
         !!activityAt && new Date(activityAt).getTime() > new Date(row.queued_at).getTime();
       valid = escRow.status === 'open' && hasOpen && !activitySince;
     }
+    if (row.kind === 'reminder' && row.escrow_id) {
+      // Still true at delivery time? The escrow must still be open, the
+      // date must be UNCHANGED since queueing (a moved date re-arms via
+      // the sweep's claim key; the stale queued copy must not land), and
+      // the threshold must still be exact in the recipient's timezone.
+      const rem = (row.data?.['reminder'] ?? {}) as {
+        event?: string;
+        threshold?: number;
+        dateISO?: string;
+      };
+      const tz = (row.data?.['tz'] as string | null) ?? null;
+      const { data: esc } = await supa
+        .from('escrows')
+        .select('status, close_date, inspection_deadline, appraisal_deadline, loan_approval_date')
+        .eq('id', row.escrow_id)
+        .maybeSingle();
+      const escRow = (esc ?? {}) as {
+        status?: string;
+        close_date?: string | null;
+        inspection_deadline?: string | null;
+        appraisal_deadline?: string | null;
+        loan_approval_date?: string | null;
+      };
+      let current: string | null = null;
+      if (rem.event === 'closing_reminder') current = escRow.close_date ?? null;
+      else if (rem.event === 'inspection_reminder') current = escRow.inspection_deadline ?? null;
+      else if (rem.event === 'appraisal_reminder') current = escRow.appraisal_deadline ?? null;
+      else if (rem.event === 'loan_reminder') current = escRow.loan_approval_date ?? null;
+      else if (rem.event === 'possession_reminder') {
+        const { data: bi } = await supa
+          .from('buyer_intakes')
+          .select('data')
+          .eq('escrow_id', row.escrow_id)
+          .maybeSingle();
+        const p = ((bi as { data?: Record<string, unknown> } | null)?.data?.['possession'] ??
+          null) as string | null;
+        current = typeof p === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p) ? p : null;
+      }
+      valid =
+        escRow.status === 'open' &&
+        !!rem.dateISO &&
+        current === rem.dateISO &&
+        typeof rem.threshold === 'number' &&
+        daysUntilClose(rem.dateISO, new Date(), tz) === rem.threshold;
+    }
     await supa.from('push_queue').delete().eq('id', row.id);
     if (!valid) {
       dropped++;
@@ -309,14 +557,6 @@ async function drainQueue(
   return { sent, dropped };
 }
 
-interface PendingGroup {
-  escrow_id: string;
-  push_count: number;
-  events: string[];
-  titles: string[];
-  oldest_at: string;
-}
-
 /** Per-minute tick: coalesce buffered check-offs, then drain the queue. */
 async function handleFlush(
   supa: SupaClient,
@@ -326,7 +566,7 @@ async function handleFlush(
   const cutoff = new Date(Date.now() - COALESCE_WINDOW_MS).toISOString();
   const { data: rows } = await supa
     .from('pending_step_pushes')
-    .select('escrow_id, event, step_title, created_at')
+    .select('escrow_id, event, step_title, step_role, created_at')
     .lte('created_at', cutoff)
     .order('created_at', { ascending: true })
     .limit(500);
@@ -334,57 +574,72 @@ async function handleFlush(
     escrow_id: string;
     event: string;
     step_title: string;
+    step_role: string | null;
     created_at: string;
   }>;
-  const groups = new Map<string, PendingGroup>();
+  const groups = new Map<string, BufferedStepPush[]>();
   for (const r of list) {
-    const g = groups.get(r.escrow_id) ?? {
-      escrow_id: r.escrow_id,
-      push_count: 0,
-      events: [],
-      titles: [],
-      oldest_at: r.created_at,
-    };
-    g.push_count++;
-    g.events.push(r.event);
-    g.titles.push(r.step_title);
+    const g = groups.get(r.escrow_id) ?? [];
+    g.push({
+      event: r.event as PushEvent,
+      step_title: r.step_title,
+      step_role: r.step_role,
+    });
     groups.set(r.escrow_id, g);
   }
   let flushed = 0;
   let sent = 0;
   let queued = 0;
-  for (const g of groups.values()) {
-    const escrow = await getEscrowInfo(supa, g.escrow_id);
+  for (const [groupEscrowId, groupRows] of groups) {
+    const escrow = await getEscrowInfo(supa, groupEscrowId);
     if (!escrow) {
-      await supa.from('pending_step_pushes').delete().eq('escrow_id', g.escrow_id);
+      await supa.from('pending_step_pushes').delete().eq('escrow_id', groupEscrowId);
       continue;
     }
     const tokens = await getLiveTokens(supa, escrow);
-    let body: string | null;
-    if (g.push_count === 1) {
-      // Single check-off: the exact FINAL copy (Sept 26 2026).
-      const ev = g.events[0] as PushEvent;
-      body = buildPushBody(ev, escrow.realtorFirst, g.titles[0], null, null);
-    } else {
-      body = buildCoalescedBody(g.push_count);
+    if (tokens.length === 0) {
+      // Nobody to notify (revoked/closed): drop the buffer, don't accumulate.
+      await supa.from('pending_step_pushes').delete().eq('escrow_id', groupEscrowId);
+      flushed++;
+      continue;
     }
-    if (body && tokens.length > 0) {
-      const d = await deliver(supa, env, escrow, tokens, body, { escrowId: escrow.id }, 'step');
+    // P0.3 side-aware targeting: one delivery per audience (the step's
+    // side + TC), and each audience's body counts only its own rows —
+    // a buyer check-off and a seller check-off in the same window no
+    // longer coalesce into one blast to every device.
+    let retain = false;
+    for (const audience of splitStepPushesByAudience(groupRows)) {
+      const audienceTokens = tokens.filter((t) =>
+        audience.roles.includes(t.role as ClientLinkRole),
+      );
+      if (audienceTokens.length === 0) continue;
+      const body =
+        audience.rows.length === 1
+          ? buildPushBody(
+              audience.rows[0].event,
+              escrow.realtorFirst,
+              audience.rows[0].step_title,
+              null,
+              null,
+            )
+          : buildCoalescedBody(audience.rows.length);
+      if (!body) {
+        // Honest copy impossible for an audience that has devices: keep
+        // the buffer for the next tick rather than drop the check-off.
+        retain = true;
+        continue;
+      }
+      const d = await deliver(supa, env, escrow, audienceTokens, body, { escrowId: escrow.id }, 'step');
       sent += d.sent;
       queued += d.queued;
     }
-    // Rows are gone once sent or safely queued; on delivery failure they
-    // stay and retry next tick (at-least-once beats silent loss).
-    if (body && tokens.length > 0) {
-      await supa.from('pending_step_pushes').delete().eq('escrow_id', g.escrow_id);
-      flushed++;
-    } else if (tokens.length === 0) {
-      // Nobody to notify (revoked/closed): drop the buffer, don't accumulate.
-      await supa.from('pending_step_pushes').delete().eq('escrow_id', g.escrow_id);
+    if (!retain) {
+      await supa.from('pending_step_pushes').delete().eq('escrow_id', groupEscrowId);
       flushed++;
     }
   }
-  return json({ ok: true, flushed, sent, queued, queue: drained });
+  const events = await handleEventPushes(supa, env);
+  return json({ ok: true, flushed, sent, queued, queue: drained, events });
 }
 
 interface CheckinCandidate {
@@ -467,6 +722,119 @@ async function handleSweep(
   return json({ ok: true, escrows, sent, queued });
 }
 
+/**
+ * P2 date-reminder sweep (0041): due_date_reminders() returns one row
+ * per recipient token whose LOCAL date hits a threshold. Each row is
+ * claimed in push_reminder_log BEFORE delivery (the claim key includes
+ * the date, so a moved date re-arms; and the token, so each timezone
+ * claims on its own day). Concurrent runs are safe: the unique claim
+ * index lets exactly one insert win.
+ */
+interface ReminderCandidate {
+  escrow_id: string;
+  address: string;
+  event: ReminderEvent;
+  threshold: number;
+  date_value: string;
+  expo_push_token: string;
+  timezone: string | null;
+  recipient_role: string;
+}
+
+async function handleDateSweep(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+): Promise<Response> {
+  const { data, error } = await supa.rpc('due_date_reminders');
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error(`[send-client-push] due_date_reminders failed: ${error.message ?? error}`);
+    return json({ ok: false, error: 'reminders_failed' }, 500);
+  }
+  const candidates = (data ?? []) as ReminderCandidate[];
+
+  // Claim first, deliver second (check-in precedent).
+  const claimed: ReminderCandidate[] = [];
+  for (const c of candidates) {
+    const { error: claimErr } = await supa.from('push_reminder_log').insert({
+      escrow_id: c.escrow_id,
+      event: c.event,
+      threshold: c.threshold,
+      date_value: c.date_value,
+      expo_push_token: c.expo_push_token,
+    });
+    if (!claimErr) claimed.push(c);
+    // A 23505 (unique violation) means a concurrent or earlier run
+    // already claimed this exact reminder for this token: skip quietly.
+  }
+
+  // Group deliveries by (escrow, event, threshold, audience): client
+  // devices share one body; the realtor's street copy is separate.
+  const groups = new Map<string, { first: ReminderCandidate; rows: ReminderCandidate[] }>();
+  for (const c of claimed) {
+    const audience = c.recipient_role === 'realtor' ? 'realtor' : 'client';
+    const key = `${c.escrow_id}|${c.event}|${c.threshold}|${audience}`;
+    const g = groups.get(key) ?? { first: c, rows: [] };
+    g.rows.push(c);
+    groups.set(key, g);
+  }
+
+  let sent = 0;
+  let queued = 0;
+  let escrows = 0;
+  const seenEscrows = new Set<string>();
+  for (const g of groups.values()) {
+    const { first } = g;
+    const escrow = await getEscrowInfo(supa, first.escrow_id);
+    if (!escrow) continue;
+    const body = buildReminderBody(
+      first.event,
+      first.recipient_role === 'realtor' ? 'realtor' : 'client',
+      { threshold: first.threshold, dateISO: first.date_value, street: first.address },
+    );
+    if (!body) continue;
+    const tokens: LiveToken[] = [];
+    for (const c of g.rows) {
+      // Multi-escrow address suffix: the same per-device computation
+      // the check-in sweep uses (link-bound escrows for this token).
+      const { data: devRows } = await supa
+        .from('push_tokens')
+        .select('escrow_id')
+        .eq('expo_push_token', c.expo_push_token);
+      const ids = new Set<string>();
+      for (const r of (devRows ?? []) as Array<{ escrow_id: string | null }>) {
+        if (r.escrow_id) ids.add(r.escrow_id);
+      }
+      ids.add(first.escrow_id);
+      tokens.push({
+        expo_push_token: c.expo_push_token,
+        role: c.recipient_role,
+        timezone: c.timezone,
+        escrowIds: [...ids],
+      });
+    }
+    const d = await deliver(
+      supa,
+      env,
+      escrow,
+      tokens,
+      body,
+      {
+        escrowId: first.escrow_id,
+        reminder: { event: first.event, threshold: first.threshold, dateISO: first.date_value },
+      },
+      'reminder',
+    );
+    sent += d.sent;
+    queued += d.queued;
+    if (!seenEscrows.has(first.escrow_id)) {
+      seenEscrows.add(first.escrow_id);
+      escrows++;
+    }
+  }
+  return json({ ok: true, candidates: candidates.length, claimed: claimed.length, escrows, sent, queued });
+}
+
 async function handle(req: Request, env: Record<string, string | undefined>): Promise<Response> {
   const secret = env['PUSH_TRIGGER_SECRET'];
   if (!secret || req.headers.get('X-Trigger-Secret') !== secret) {
@@ -493,6 +861,7 @@ async function handle(req: Request, env: Record<string, string | undefined>): Pr
   // Internal cron events carry no escrow.
   if (payload.event === 'flush_step_pushes') return handleFlush(supa, env);
   if (payload.event === 'quiet_checkin_sweep') return handleSweep(supa, env);
+  if (payload.event === 'date_reminder_sweep') return handleDateSweep(supa, env);
 
   const escrowId = payload.escrow_id as string;
   const escrow = await getEscrowInfo(supa, escrowId);
@@ -515,7 +884,15 @@ async function handle(req: Request, env: Record<string, string | undefined>): Pr
   const tokens = await getLiveTokens(supa, escrow);
   if (tokens.length === 0) return json({ ok: true, sent: 0 });
 
-  const d = await deliver(supa, env, escrow, tokens, body, { escrowId }, 'keydate');
+  // P0.3 side-aware targeting: key-date events reach only their roles
+  // (closing -> all parties; contingency deadlines -> buyer side + TC).
+  const targetRoles = rolesForPushEvent(payload.event);
+  const targeted = tokens.filter((t) =>
+    targetRoles.includes(t.role as ClientLinkRole),
+  );
+  if (targeted.length === 0) return json({ ok: true, sent: 0 });
+
+  const d = await deliver(supa, env, escrow, targeted, body, { escrowId }, 'keydate');
   return json({ ok: true, sent: d.sent, queued: d.queued, dead_removed: d.deadRemoved });
 }
 

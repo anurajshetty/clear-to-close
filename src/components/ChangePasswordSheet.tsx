@@ -76,6 +76,10 @@ function serverErrorCopy(code: ChangePasswordErrorCode): string {
       return 'Current password is incorrect. Try again.';
     case 'weak_password':
       return 'Password needs 8+ characters.';
+    case 'revoke_failed':
+      // The password DID change; only the other-device sign-out failed
+      // (approved copy, Anuraj Oct 15 2026).
+      return "Your password was changed, but we couldn't sign out your other devices. Please try again.";
     case 'network':
       return "Couldn't reach the server. Check your connection and try again.";
     case 'unconfigured':

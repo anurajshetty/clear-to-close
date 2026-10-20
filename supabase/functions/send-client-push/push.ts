@@ -11,8 +11,9 @@
 //   coalesced (2+):              "Your realtor completed {N} steps."
 //   check-in (> 7 days):         "Your escrow is on track: {done} of {total} steps done, closing in {n} days."
 //   check-in (<= 7 days):        "Closing is {n} days away, {open} steps still to go."
-//   custom_step_added:           "{First} added a new step to your escrow." (compat; new trigger never emits)
+//   custom_step_added:           "{First} added a new step to your escrow." (P1: emitted again via the 0040 outbox)
 //   close_date_changed:          "Your closing date is now {date}."
+//                                (cleared -> "Your closing date was removed." — wired but inert: the date is never clearable today)
 //   inspection_deadline_changed: "Your inspection contingency deadline is now {date}."
 //                                (cleared -> "Your inspection contingency deadline was removed.")
 //   appraisal_deadline_changed:  "Your appraisal deadline is now {date}."
@@ -31,10 +32,25 @@ export type PushEvent =
   | 'appraisal_deadline_changed'
   | 'loan_approval_date_changed'
   | 'key_dates_changed'
+  // P1 outbox events (0040+): written to pending_event_pushes by
+  // triggers and drained by the per-minute flush. They are NEVER valid
+  // HTTP trigger payloads — parseTriggerPayload rejects them; bodies
+  // are built by buildEventBody, not buildPushBody.
+  | 'client_joined'
+  | 'review_submitted'
+  | 'escrow_closed'
+  | 'escrow_cancelled'
+  | 'buyer_intake_submitted'
+  | 'seller_intake_submitted'
+  // P3 (0042): written to the outbox by ctc_maybe_push_halfway when an
+  // escrow's checklist crosses 50%; never an HTTP payload either.
+  | 'halfway_milestone'
   // Internal cron events (0024+): posted by pg_cron via push_cron_ping.
   // They carry no escrow_id; parseTriggerPayload accepts them bare.
   | 'flush_step_pushes'
-  | 'quiet_checkin_sweep';
+  | 'quiet_checkin_sweep'
+  // P2 (0041): the hourly date-reminder sweep.
+  | 'date_reminder_sweep';
 
 export interface TriggerPayload {
   event: PushEvent;
@@ -101,7 +117,11 @@ export function buildPushBody(
       return `${first} added a new step to your escrow.`;
     case 'close_date_changed': {
       const d = dateFor(newCloseDate);
-      if (!d) return null;
+      // A cleared closing date gets the same "removed" copy as the
+      // other three key dates (Anuraj, Oct 15 2026). Inert today —
+      // close_date is required/never clearable in the app — but wired
+      // and pinned so the behavior is defined if that ever changes.
+      if (!d) return 'Your closing date was removed.';
       return `Your closing date is now ${formatPushDate(d)}.`;
     }
     case 'inspection_deadline_changed': {
@@ -124,11 +144,180 @@ export function buildPushBody(
     }
     case 'key_dates_changed':
       return `${first} updated your key dates.`;
+    case 'client_joined':
+    case 'review_submitted':
+    case 'escrow_closed':
+    case 'escrow_cancelled':
+    case 'buyer_intake_submitted':
+    case 'seller_intake_submitted':
+    case 'halfway_milestone':
+      // P1 outbox events: bodies are built by buildEventBody from the
+      // outbox payload; this HTTP-path builder never serves them.
+      return null;
     case 'flush_step_pushes':
     case 'quiet_checkin_sweep':
+    case 'date_reminder_sweep':
       // Internal cron events: never carry copy; the caller routes them
       // before building a body.
       return null;
+  }
+}
+
+/** First name, or null when the name is missing/blank. */
+function firstNameOrNull(name: string | null | undefined): string | null {
+  const first = (name ?? '').trim().split(/\s+/)[0] ?? '';
+  return first || null;
+}
+
+export interface EventBodyContext {
+  /** Joining client's name (client_links.party_name) or review author. */
+  clientName?: string | null;
+  /** The joining link's role ('buyer' | 'seller' | 'tc'). */
+  clientRole?: string | null;
+  /** Review stars when the review carries a rating. */
+  stars?: number | null;
+  /** Realtor's name (full or first — firstNameOf normalizes). */
+  realtorName?: string | null;
+  /** P3: checklist counts snapshotted at the halfway crossing. */
+  doneCount?: number | null;
+  totalCount?: number | null;
+}
+
+/**
+ * Bodies for the P1 outbox events (approved copy batch, Oct 15 2026).
+ * Client references render as FIRST names, matching the app's existing
+ * first-name convention and the lock-screen privacy rule. Returns null
+ * for events that carry no P1 copy — the drain drops those rows.
+ */
+export function buildEventBody(event: PushEvent, ctx: EventBodyContext): string | null {
+  switch (event) {
+    case 'client_joined': {
+      if (ctx.clientRole === 'tc') return 'Your TC just joined the escrow.';
+      const name = firstNameOrNull(ctx.clientName);
+      return name
+        ? `${name} just joined their escrow.`
+        : 'Your client just joined their escrow.';
+    }
+    case 'review_submitted': {
+      const who = firstNameOrNull(ctx.clientName) ?? 'A client';
+      const stars =
+        typeof ctx.stars === 'number' && ctx.stars >= 1 ? Math.round(ctx.stars) : null;
+      return stars
+        ? `${who} left you a ${stars}-star review.`
+        : `${who} left you a review.`;
+    }
+    case 'escrow_closed':
+      return 'Congratulations, your escrow is closed!';
+    case 'escrow_cancelled':
+      return `This escrow has been cancelled. ${firstNameOf(ctx.realtorName)} can help with any questions.`;
+    case 'buyer_intake_submitted':
+      // Option A (Anuraj, Oct 15 2026): intake saves notify the TC —
+      // the forms are realtor-authored and the TC works from them.
+      return 'Buyer intake submitted.';
+    case 'seller_intake_submitted':
+      // tc_intakes holds the listing (seller-side) details.
+      return 'Seller intake submitted.';
+    case 'halfway_milestone': {
+      const done = ctx.doneCount;
+      const total = ctx.totalCount;
+      if (typeof done !== 'number' || typeof total !== 'number' || total <= 0) return null;
+      return `You're halfway there: ${done} of ${total} steps done.`;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Intake events coalesce per (escrow, event) within one drain: a burst
+ * of saves while editing is one fact ("the intake was submitted"),
+ * never N pushes. All other events pass through untouched.
+ */
+export function isBurstCoalescedEvent(event: PushEvent): boolean {
+  return event === 'buyer_intake_submitted' || event === 'seller_intake_submitted';
+}
+
+export function collapseBurstEvents<T extends { escrow_id: string; event: PushEvent }>(
+  rows: T[],
+): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const r of rows) {
+    if (isBurstCoalescedEvent(r.event)) {
+      const key = `${r.escrow_id}:${r.event}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+export type ReminderEvent =
+  | 'closing_reminder'
+  | 'inspection_reminder'
+  | 'appraisal_reminder'
+  | 'loan_reminder'
+  | 'possession_reminder';
+
+export interface ReminderContext {
+  /** Days-until threshold that fired (7/3/1 closing, 1 deadlines, 5 possession). */
+  threshold: number;
+  /** The date the reminder is about ('YYYY-MM-DD'). */
+  dateISO: string;
+  /** Street address for the realtor variants ({Street}). */
+  street: string;
+}
+
+const DEADLINE_LABEL: Record<string, string> = {
+  inspection_reminder: 'inspection deadline',
+  appraisal_reminder: 'appraisal deadline',
+  loan_reminder: 'loan approval deadline',
+};
+
+/**
+ * Bodies for the P2 date reminders (approved copy batch, Oct 15 2026).
+ * The sweep computes days-until in the RECIPIENT's timezone, so
+ * "tomorrow"/"in N days" is true where the phone is. Returns null for a
+ * threshold/event combination that carries no copy — the sweep drops
+ * those rather than improvising.
+ */
+export function buildReminderBody(
+  event: ReminderEvent,
+  audience: 'client' | 'realtor',
+  ctx: ReminderContext,
+): string | null {
+  const date = formatPushDate(ctx.dateISO);
+  const street = (ctx.street ?? '').trim();
+  switch (event) {
+    case 'closing_reminder': {
+      if (audience === 'realtor') {
+        if (!street) return null;
+        if (ctx.threshold === 7) return `${street} closes in 7 days.`;
+        if (ctx.threshold === 3) return `${street} closes in 3 days.`;
+        if (ctx.threshold === 1) return `${street} closes tomorrow.`;
+        return null;
+      }
+      if (ctx.threshold === 7) return `One week to go. Your closing is on ${date}.`;
+      if (ctx.threshold === 3) return `Closing is in 3 days, on ${date}.`;
+      if (ctx.threshold === 1) return `Closing is tomorrow, ${date}.`;
+      return null;
+    }
+    case 'inspection_reminder':
+    case 'appraisal_reminder':
+    case 'loan_reminder': {
+      if (ctx.threshold !== 1) return null;
+      const label = DEADLINE_LABEL[event];
+      if (audience === 'realtor') {
+        if (!street) return null;
+        return `${street}: ${label} is tomorrow.`;
+      }
+      return `Your ${label} is tomorrow, ${date}.`;
+    }
+    case 'possession_reminder': {
+      if (audience !== 'client' || ctx.threshold !== 5) return null;
+      return `The buyer takes possession in 5 days, on ${date}.`;
+    }
   }
 }
 
@@ -138,7 +327,10 @@ export function parseTriggerPayload(raw: unknown): TriggerPayload | null {
   const p = raw as Record<string, unknown>;
   const event = p['event'];
   const escrowId = p['escrow_id'];
-  const isInternal = event === 'flush_step_pushes' || event === 'quiet_checkin_sweep';
+  const isInternal =
+    event === 'flush_step_pushes' ||
+    event === 'quiet_checkin_sweep' ||
+    event === 'date_reminder_sweep';
   if (
     (event !== 'step_done' &&
       event !== 'custom_step_added' &&
@@ -331,6 +523,75 @@ export function daysUntilClose(
 /** Coalesced body for N (>= 2) rapid check-offs. Approved copy. */
 export function buildCoalescedBody(count: number): string {
   return `Your realtor completed ${count} steps.`;
+}
+
+// ------------------------------------------------------- P0.3 targeting --
+
+export type ClientLinkRole = 'buyer' | 'seller' | 'tc';
+
+/**
+ * Side-aware targeting (P0.3, Oct 15 2026): which client link roles
+ * receive a given push event.
+ * - Step events go to the step's own side + TC. A step belongs to
+ *   exactly one side (steps.role is 'buyer' | 'seller'); stepRole is
+ *   that side. Anything unexpected falls back to the buyer side.
+ * - The inspection / appraisal / loan deadlines are buyer contingencies:
+ *   buyer side + TC.
+ * - The closing date concerns every party, and key_dates_changed (a
+ *   multi-date edit, which may include the closing date; the copy is
+ *   generic) goes to all parties as well.
+ * Check-ins do not route through here: the sweep's candidates are
+ * already per-token, and a quiet check-in is an escrow-wide status.
+ */
+export function rolesForPushEvent(
+  event: PushEvent,
+  stepRole?: string | null,
+): ClientLinkRole[] {
+  switch (event) {
+    case 'step_done':
+    case 'custom_step_added':
+      return stepRole === 'seller' ? ['seller', 'tc'] : ['buyer', 'tc'];
+    case 'buyer_intake_submitted':
+    case 'seller_intake_submitted':
+      // P1 Option A: intake saves notify only the TC.
+      return ['tc'];
+    case 'inspection_deadline_changed':
+    case 'appraisal_deadline_changed':
+    case 'loan_approval_date_changed':
+      return ['buyer', 'tc'];
+    default:
+      return ['buyer', 'seller', 'tc'];
+  }
+}
+
+export interface BufferedStepPush {
+  event: PushEvent;
+  step_title: string;
+  step_role: string | null;
+}
+
+export interface StepAudience {
+  roles: ClientLinkRole[];
+  rows: BufferedStepPush[];
+}
+
+/**
+ * Split one escrow's buffered step pushes into delivery audiences for
+ * the flush. Buyer-side rows address buyer + TC devices; seller-side
+ * rows address seller + TC devices. A row with no recorded side (only
+ * possible for rows buffered before migration 0039 landed) joins BOTH
+ * audiences — the pre-P0.3 behavior — so an in-flight check-off is
+ * never dropped or mistargeted by the deploy. TC devices sit in both
+ * audiences and can receive one push per side in the same window; that
+ * is the targeting rule itself (the step's side + TC), not a duplicate.
+ */
+export function splitStepPushesByAudience(rows: BufferedStepPush[]): StepAudience[] {
+  const buyerRows = rows.filter((r) => r.step_role !== 'seller');
+  const sellerRows = rows.filter((r) => r.step_role === 'seller' || r.step_role === null);
+  const out: StepAudience[] = [];
+  if (buyerRows.length > 0) out.push({ roles: ['buyer', 'tc'], rows: buyerRows });
+  if (sellerRows.length > 0) out.push({ roles: ['seller', 'tc'], rows: sellerRows });
+  return out;
 }
 
 function daysAway(n: number): string {

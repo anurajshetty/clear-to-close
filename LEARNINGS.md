@@ -3,6 +3,90 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Notification P0: realtor tokens + TC tap route (Oct 15, 2026)
+
+**What happened:** Realtors could register no push tokens (registration
+iterated client links only), and TC push taps landed on the buyer home.
+P0 adds user-bound token rows (migration 0038) with auditor-mandated
+derived identity, fixes the tap route, and prunes a realtor's other
+devices' tokens on password change.
+
+**Lessons:**
+- **The bug was in the last inch.** The push payload extractor already
+  returned role 'tc' correctly; the UI callback collapsed every
+  non-seller role to buyer. When a route misbehaves, trace the value
+  through EVERY hop — extraction, transport, and the final consumer —
+  before assuming the payload is wrong.
+- **Derived identity beats guarded parameters.** The first design passed
+  an optional user id and checked it against auth.uid(); the auditor's
+  rule is stricter and simpler: no identity parameter exists at all —
+  the server stamps auth.uid(). If a caller-supplied value needs a
+  guard against the session, delete the parameter instead.
+- **Sign-out ordering is a security property.** Token unregister must
+  run while the JWT is still live (before auth.signOut()), and its
+  failure path needs a queued retry, not a log line — a signed-out
+  device that keeps receiving deal pushes is a leak, not a buglet.
+- **Session-revocation ≠ token-revocation.** M6b's signOut-others killed
+  sessions but left token rows live on the revoked devices; every
+  future revocation feature must audit BOTH surfaces.
+- **Coalescing groups are audience-shaped.** When step pushes became
+  side-aware, the flush's per-escrow group had to split per audience
+  first — a buyer and a seller check-off in the same window are two
+  pushes with two different counts, not one blast with a merged count.
+  Any future per-recipient filtering must split BEFORE the body is
+  built, never filter devices after the copy is written.
+- **Eligibility regexes drift from the role set.** The push
+  pre-prompt's home matcher listed buyer|seller from before TCs were
+  push recipients, so TC homes were silently never primed. Any
+  role-listing pattern must be re-checked whenever a new recipient
+  role appears; the matcher now lives in `src/lib/push.ts`
+  (`isClientHomePath`) with pinned positive AND negative paths.
+- **Verify who performs an action before notifying about it.** The P1
+  plan briefed "intake submitted → notify the realtor", but both
+  intake forms are filled in BY the realtor (0031/0034 headers say so;
+  clients can't even read the tables) — the push would have told the
+  realtor about their own save. The recipient was re-decided with the
+  facts on the table (Anuraj, Option A): intake saves notify the TC,
+  the reader who works from the forms. The same README-class
+  assumption error as the phantom realtor feed, caught this time by
+  reading the access model before building the trigger.
+- **Terminal-state announcements need a snapshot, not a query.** Any
+  push ABOUT a transition that destroys its own audience (cancel
+  revokes links → token rows deleted; send-liveness excludes non-open
+  escrows) must capture recipients inside the transition — P1 uses a
+  BEFORE UPDATE OF status trigger writing token snapshots to the
+  outbox, and the drain treats those two events as the single
+  deliberate exception to liveness re-checks.
+
+## Android Phase 0 (Oct 15, 2026)
+
+**What happened:** Added the Android platform baseline: app.json
+android block (package, adaptive + monochrome icons derived from the
+app icon, splash plugin, notification icon/color, adjustResize,
+edge-to-edge, POST_NOTIFICATIONS), EAS preview=APK / production=AAB.
+
+**Lessons:**
+- **Read the merged manifest, not the config.** expo-notifications'
+  plugin did NOT declare POST_NOTIFICATIONS in the generated manifest
+  — on Android 13+ the permission could never be granted. The
+  declaration now rides `android.permissions` in app.json; the check
+  is a scratch `expo prebuild` + manifest read, which also verified
+  the adaptive-icon XML, splash theme, scheme intent-filter, and
+  notification meta-data in one pass.
+- **expo-secure-store covers only itself.** Its bundled backup rules
+  exclude just the SecureStore prefs file; AsyncStorage and everything
+  else still rides Auto Backup by default. An all-domain exclusion is
+  proposed and sits with the security auditor before it ships.
+- **This VM cannot run the Android emulator usefully** (no /dev/kvm —
+  software emulation only), and its egress proxy breaks Java tooling
+  twice over: sdkmanager's CONNECT tunneling throws on the proxy's
+  auth response, and the JDK trust store lacks the proxy's MITM CA
+  (curl works because the system bundle has it). Workarounds that
+  worked: assemble the SDK from the repository zips with curl, import
+  the "Hatch Sandbox Egress CA" into the JDK cacerts for Gradle, and
+  give Gradle proxy systemProps. Samsung One UI images don't exist in
+  the SDK at all — that matrix cell is physical-device-only.
+
 ## Intake additions + seller steps (Oct 14, 2026)
 
 **What happened:** Buyer intake gained Type of loan (chips), Buyer credit
@@ -1450,3 +1534,50 @@ check-off copy; `tests/run.sh` wires both.
   reminder for `app.config.js`-style dynamic configs — the plugin
   (`expo-secure-store`) belongs in `app.json`'s plugins array, which is the
   single source of truth here.
+- **Time-based notifications are per-recipient, not per-server.** A
+  reminder like "closing is tomorrow" is only true in the recipient's
+  timezone, so candidates, fire-once claims, and drain-time
+  revalidation all key on the DEVICE: days computed in the token's
+  registered zone, the claim unique on (escrow, event, threshold,
+  date, token). Keying the claim on the escrow alone would let the
+  first timezone to hit a threshold consume it for everyone — and
+  keying it without the date value would break re-arming when the
+  date moves.
+- **A golden text pin cannot catch an error encoded in its own
+  expectation (Oct 15, 2026).** Migration 0042 was generated by
+  inserting the halfway hook after the line containing the activity
+  stamp — but the UPDATE's WHERE sat on the NEXT line, so the hook
+  split the statement (`syntax error at or near "perform"`); the
+  verbatim-diff pin passed because it compared against the same
+  flawed text. Two durable fixes: (1) assert generated-code
+  PLACEMENT structurally (the hook must directly follow the completed
+  statement), never only textually; (2) execute the migration chain
+  for real — the repo now has a disposable-Postgres pass (stub
+  Supabase platform, apply 0001→current, functional smokes). A
+  migration that has never run against a database is unverified,
+  however many static pins it carries.
+- **A share payload is two fields, not one string (Oct 20, 2026).**
+  The invite share sends the approved message as `message` and the app
+  link as the separate `url` field — that split is what makes iOS
+  Messages render the link as a preview card (the Muse referral
+  pattern). Embedding the URL in the message text loses the card; the
+  builder therefore never inlines the link, and the clipboard fallback
+  (which has no url field) appends it explicitly so a paste loses
+  nothing. The link itself comes from the app_config table
+  (client_app_link, migration 0043 — public-read, dashboard-writable)
+  so the shared link stays first-party and launch routing becomes a
+  landing-page change, with the CLIENT_APP_LINK constant as the
+  validated fallback (https or ignored). Note the decision history: a
+  branded invite LINK was dropped in Sept 2026; what returned in Oct
+  is a share ACTION, and the old pin was rewritten to say so rather
+  than quietly deleted.
+- **+html.tsx does nothing in SPA export mode (Oct 20, 2026).** With
+  web.output unset ("single"), Expo builds index.html from the Expo
+  config template only (title from web.name, plain description from
+  web.description, no OG support) — the +html.tsx shell is honored
+  solely by the static/server export paths. Verified in the CLI source
+  and empirically (a --clear rebuild still emitted the default shell).
+  OG tags therefore ride a post-export injector wired into
+  `npm run export:web` (tools/inject_og_tags.js); switching the whole
+  rendering model to static for a metadata rider was the rejected
+  alternative. Check web.output BEFORE reaching for +html.

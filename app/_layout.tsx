@@ -15,7 +15,7 @@
 // unexpected sign-outs send the realtor to /login?expired=1 with the
 // approved copy. Our own sign-out navigates to /role directly.
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, StyleSheet, View } from 'react-native';
 import { Stack, usePathname, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { auth, parseRecoveryLink, takeExpectSignOut } from '../src/lib/auth';
@@ -23,6 +23,7 @@ import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { unregisterPushTokenForLink } from '../src/lib/push';
 import { PushGate } from '../src/components/PushGate';
+import { refreshClientAppLink } from '../src/lib/appConfig';
 import { SyncErrorBar } from '../src/components/SyncErrorBar';
 import { colors } from '../src/theme';
 
@@ -167,6 +168,18 @@ export default function RootLayout() {
       active = false;
     };
   }, [router]);
+
+  useEffect(() => {
+    // Public app config (Oct 20, 2026): the invite-share app link lives
+    // in app_config so it can flip to the App Store URL without a
+    // rebuild. Fetch at boot and on every foreground; the module keeps
+    // an in-memory cache with the built-in link as its fallback.
+    void refreshClientAppLink();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshClientAppLink();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     // Mid-session expiry (web): an unexpected SIGNED_OUT returns the realtor

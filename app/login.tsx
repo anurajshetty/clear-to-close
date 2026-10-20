@@ -186,6 +186,11 @@ export default function Login() {
               {error === 'invalid_credentials' ? (
                 <Text style={styles.inlineError}>Wrong email or password. Try again.</Text>
               ) : null}
+              {error === 'email_not_confirmed' ? (
+                <Text style={styles.inlineError}>
+                  Please confirm your email, then try again.
+                </Text>
+              ) : null}
               {error === 'network' ? (
                 <Text style={styles.inlineError}>
                   Couldn&apos;t reach the server. Check your connection and try again.

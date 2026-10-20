@@ -15,13 +15,46 @@
         "ITSAppUsesNonExemptEncryption": false
       }
     },
+    "android": {
+      "package": "com.anuraj.cleartoclose",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#012D37"
+      },
+      "softwareKeyboardLayoutMode": "resize",
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "Clear to Close",
+      "description": "Your escrow, step by step. Clear to Close keeps you and your realtor connected and up to date, from accepted offer to closing."
     },
     "plugins": [
       "expo-router",
-      "expo-notifications",
-      "expo-secure-store"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#175E54"
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "imageWidth": 220,
+          "backgroundColor": "#012D37",
+          "dark": {
+            "backgroundColor": "#012D37"
+          }
+        }
+      ],
+      "./plugins/withAndroidBackupRules.js"
     ],
     "extra": {
       "router": {},

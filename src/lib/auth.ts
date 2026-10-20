@@ -76,19 +76,25 @@ export function mapSignUpError(err: unknown): SignUpErrorCode {
 
 export type SignInErrorCode =
   | 'invalid_credentials'
+  | 'email_not_confirmed'
   | 'network'
   | 'unconfigured'
   | 'unknown';
 
 /** True when a sign-in failure is Supabase's "Email not confirmed" shape. */
 export function isEmailNotConfirmedError(err: unknown): boolean {
-  const msg = String((err as { message?: string } | null)?.message ?? '');
-  return /email not confirmed/i.test(msg);
+  const e = (err ?? {}) as { message?: string; code?: string };
+  if (e.code === 'email_not_confirmed') return true;
+  return /email not confirmed/i.test(String(e.message ?? ''));
 }
 
 /** Map a Supabase signIn failure onto the app's login error codes. */
 export function mapSignInError(err: unknown): SignInErrorCode {
   if (isNetworkError(err)) return 'network';
+  // Checked before the invalid-credentials pattern: an unconfirmed
+  // account must earn the confirm-your-email copy, never the generic
+  // failure (approved copy, Anuraj Oct 15 2026).
+  if (isEmailNotConfirmedError(err)) return 'email_not_confirmed';
   const msg = String((err as { message?: string } | null)?.message ?? '');
   if (/invalid login credentials|invalid/i.test(msg)) return 'invalid_credentials';
   return 'unknown';
@@ -136,6 +142,11 @@ export interface AuthClientLike {
       cb: (event: string, session: { user?: { id?: string } } | null) => void,
     ): { data: { subscription: { unsubscribe(): void } } };
   };
+  // PostgREST RPC surface (real client only; test mocks may omit it).
+  rpc?(
+    fn: string,
+    args: Record<string, unknown>,
+  ): Promise<{ data?: unknown; error?: { message?: string } | null }>;
 }
 
 export interface AuthServiceDeps {
@@ -382,7 +393,27 @@ export function createAuthService(deps: AuthServiceDeps) {
   async function revokeOtherSessions(client: AuthClientLike): Promise<boolean> {
     try {
       const { error } = await client.auth.signOut({ scope: 'others' });
-      return !error;
+      if (error) return false;
+    } catch {
+      return false;
+    }
+    // M6b companion (P0, Oct 2026; migration 0038): the other sessions are
+    // dead, but their push token rows would keep delivering the realtor's
+    // deal pushes to devices they no longer control. Prune every
+    // user-bound token row except THIS device's. Identity is derived
+    // server-side (auth.uid()); the literal RPC name lives here because
+    // push.ts imports auth, never the reverse. A prune failure is a
+    // revocation failure — LOUD via the same 'revoke_failed' path.
+    try {
+      if (typeof client.rpc !== 'function') return true;
+      const deviceId = await kv.getItem(K_DEVICE_ID);
+      if (!deviceId) return true; // no device id => nothing registered from here
+      const { data, error } = await client.rpc(
+        'unregister_push_tokens_except_device',
+        { p_device_id: deviceId },
+      );
+      if (error) return false;
+      return (data as { ok?: boolean } | null)?.ok === true;
     } catch {
       return false;
     }

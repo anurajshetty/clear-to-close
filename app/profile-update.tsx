@@ -20,6 +20,7 @@ import { BackChevron, Kicker, PrimaryButton, useKeyboardHeight } from '../src/co
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { isValidReviewLink } from '../src/lib/reviewLinks';
+import { unregisterRealtorPushToken } from '../src/lib/push';
 import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
@@ -216,6 +217,11 @@ export default function ProfileUpdate() {
       // Wipe the previous account's local cache FIRST so a different
       // realtor signing up on this device never sees it (Sept 2026).
       await store.clearLocalAccountData();
+      // P0 (Oct 2026): drop this device's realtor push token row while
+      // the session is STILL live — the server derives identity from the
+      // JWT, so this must precede auth.signOut(). A failed call queues a
+      // possession retry for next boot inside the helper; never throws.
+      await unregisterRealtorPushToken();
       await auth.signOut();
     } finally {
       // Web → login screen. Native → the persisted session is fully cleared

@@ -9,13 +9,19 @@
 // https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id>.
 import { assert, summary } from './assert';
 import {
+  buildInviteShareMessage,
   buildShareEmail,
   buildShareMessage,
+  CLIENT_APP_LINK,
+  inviteSharePayload,
   profileUrlFor,
   type ShareCopyInput,
 } from '../src/lib/shareCopy';
 
-declare const process: { exitCode?: number };
+declare const require: any;
+declare const process: { cwd(): string; exitCode?: number };
+const fs = require('fs');
+const path = require('path');
 
 const FULL: ShareCopyInput = {
   realtorName: 'Maya Sharma',
@@ -176,6 +182,73 @@ async function main(): Promise<void> {
     assert(!v.includes('—') && !v.includes('–'), `no em/en dashes (${JSON.stringify(v.slice(0, 60))}…)`);
     assert(!/deal/i.test(v), `no deals-closed count (${JSON.stringify(v.slice(0, 60))}…)`);
   }
+
+  // --- invite share (Anuraj, Oct 20, 2026 — approved verbatim) --------------
+  assert(
+    CLIENT_APP_LINK === 'https://anurajshetty.github.io/clear-to-close/redeem',
+    'client app link is the /redeem deep path (SPA-fallback boot-verified)',
+  );
+  const inviteMsg = buildInviteShareMessage({
+    clientName: 'Tim Okafor',
+    realtorFirst: 'Maya',
+    code: 'ABC123',
+  });
+  assert(
+    inviteMsg ===
+      'Hi Tim Okafor, Maya is sharing your escrow with you on Clear to Close. ' +
+        'Download the app and enter your one-time code:\nCode: ABC123',
+    'invite share message is the approved string, verbatim',
+  );
+  assert(
+    !inviteMsg.includes(CLIENT_APP_LINK),
+    'invite message carries NO inline link (the link rides the url field)',
+  );
+  const payload = inviteSharePayload({ clientName: 'Tim Okafor', realtorFirst: 'Maya', code: 'ABC123' });
+  assert(payload.message === inviteMsg, 'invite payload message is the built message');
+  assert(payload.url === CLIENT_APP_LINK, 'invite payload url field carries the app link (iOS preview card)');
+  // share.ts actually sends the split payload on native (source pin: the
+  // module is not node-importable, so its wiring is pinned as text).
+  const shareSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'lib', 'share.ts'), 'utf8');
+  assert(shareSrc.includes('Share.share({ message, url })'), 'native invite share passes { message, url }');
+  assert(shareSrc.includes('nav.share({ text: message, url })'), 'web invite share passes text + url');
+  assert(shareSrc.includes('shareInviteCode'), 'shareInviteCode is the invite entry point');
+
+  // --- link-preview metadata (Oct 20, 2026): the exported page must carry
+  // OG tags or Messages renders the shared link bare. In SPA ("single")
+  // export mode the shell comes from the Expo config template (no OG
+  // support; +html.tsx applies only to static/server output), so the
+  // tags are injected post-export by tools/inject_og_tags.js, wired
+  // into the sanctioned export:web script. Title + plain description
+  // come from app.json web.name / web.description via the template.
+  // The exported dist/index.html is grep-verified in the shipping bar.
+  const ogSrc = fs.readFileSync(path.join(process.cwd(), 'tools', 'inject_og_tags.js'), 'utf8');
+  assert(ogSrc.includes('<meta property="og:title" content="Clear to Close">'), 'injector: og:title');
+  assert(
+    ogSrc.includes(
+      'Your escrow, step by step. Clear to Close keeps you and your realtor connected and up to date, from accepted offer to closing.',
+    ),
+    'injector: og:description is the approved app description, verbatim',
+  );
+  assert(
+    ogSrc.includes('<meta property="og:image" content="https://anurajshetty.github.io/clear-to-close/app-icon.png">'),
+    'injector: og:image is the app icon at its stable public URL',
+  );
+  assert(ogSrc.includes('<meta name="twitter:card" content="summary">'), 'injector: twitter:card summary');
+  const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+  assert(
+    String(pkg.scripts['export:web']).includes('node tools/inject_og_tags.js'),
+    'export:web runs the OG injector after the export',
+  );
+  const appJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'app.json'), 'utf8'));
+  assert(appJson.expo.web.name === 'Clear to Close', 'app.json web.name drives the spaced page title');
+  assert(
+    String(appJson.expo.web.description).includes('Your escrow, step by step.'),
+    'app.json web.description carries the approved description',
+  );
+  assert(
+    fs.existsSync(path.join(process.cwd(), 'public', 'app-icon.png')),
+    'public/app-icon.png exists (served unhashed at the og:image URL)',
+  );
 
   summary('sharecopy');
 }

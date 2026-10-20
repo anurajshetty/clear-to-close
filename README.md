@@ -201,11 +201,26 @@ central user; the buyers and sellers they represent are the other parties.
   buy-side escrow throws); the matching server trigger is written and
   awaits application. Tapping an invite button expands an inline form:
   name → **Create code** → the big six-character code → **Copy** (code
-  only) + **Done**. Each code is single-use, 6 characters, globally unique,
+  only) or **Share** + **Done**. Share (also on every invited row, next
+  to its Copy; accepted rows get neither) sends the approved message —
+  "Hi {name}, {Realtor} is sharing your escrow with you on Clear to
+  Close. Download the app and enter your one-time code: Code: {code}" —
+  with the app link as the share payload's separate URL, so iOS Messages
+  renders it as a preview card. The link's live value comes from the
+  `app_config` table (`client_app_link`, migration 0043 — public-read,
+  dashboard-writable only), fetched at boot and on foreground and
+  validated client-side (https or ignored); the built-in
+  `CLIENT_APP_LINK` constant (`src/lib/shareCopy.ts`, the web app's
+  /redeem deep path) is the fallback when the fetch fails, the row is
+  missing, or the value is invalid. The link always points at a
+  first-party page (never a raw store URL — one link serves iOS,
+  Android, and desktop); at store launch that page gains per-platform
+  routing and the config value may not change at all. Each code is single-use, 6 characters, globally unique,
   bound to (escrow, role, party name); name and code must both match at
   redeem time. Rows show name + Invited (amber) / Accepted (teal) status,
   code + Copy on invited rows only, per-invite **Regenerate**, and a red
-  remove (x). Remove and Regenerate ask for confirmation inline, right under
+  remove (x). Invited rows also carry **Share** (same message as the
+  post-creation Share); accepted rows show neither code, Copy, nor Share. Remove and Regenerate ask for confirmation inline, right under
   the row. **Regenerate** issues a fresh code while atomically killing the
   old code *and* its device link — the old device lands on a clear "this
   code no longer works" state. **Revoke** (the remove x) kills the invite
@@ -504,7 +519,8 @@ central user; the buyers and sellers they represent are the other parties.
 - **Push notifications (iOS native only)** — after redeeming, the client is
   asked once whether to allow notifications ("Stay in the loop": "Get
   notified the moment {first name} checks off a step — you'll never have to
-  keep checking"). **Forward progress only**: a push fires when the realtor
+  keep checking"). The same prompt appears on all three client homes —
+  buyer, seller, and the transaction coordinator's. **Forward progress only**: a push fires when the realtor
   checks off a step or changes a key date; **unchecking a step and
   structural checklist edits (reorder/title/add) never send a push**.
   Check-off copy (Anuraj, Sept 28, 2026): "Your realtor just completed the
@@ -525,6 +541,65 @@ central user; the buyers and sellers they represent are the other parties.
   app is open, no banner appears (the Latest card shows the update). Web is
   out of push scope — no prompt, no tokens.
   Requires a fresh iOS binary (new native module) — see "iOS release".
+  **Realtor devices (P0, Oct 15, 2026)**: a signed-in realtor's device can
+  now register a push token too (migration `0038_realtor_push_tokens.sql`:
+  user-bound token rows next to the client link-bound rows, identity
+  derived from the session server-side; sign-out unregisters the device,
+  and a password change prunes the realtor's other devices' tokens).
+  Registration only in P0 — the first realtor pushes arrive with P1,
+  below.
+  **Side-aware targeting (P0, Oct 15, 2026)**: pushes no longer blast
+  every client device on an escrow. A step check-off goes to the devices
+  of that step's side plus the TC's devices (migration
+  `0039_step_push_side_targeting.sql` records the side in the coalescing
+  buffer; buyer and seller check-offs in the same window coalesce
+  separately per audience). Key dates: a closing-date change still goes
+  to all parties; inspection / appraisal / loan deadline changes go to
+  the buyer side plus the TC. Quiet hours, coalescing, the kill switch,
+  and the five-day check-in (an escrow-wide status, all parties) are
+  unchanged.
+  **Key action events (P1, Oct 15, 2026)**: migration
+  `0040_p1_event_pushes.sql` adds an event outbox
+  (`pending_event_pushes`) that the Edge Function drains every minute.
+  The realtor is now notified when a client joins an escrow ("{First}
+  just joined their escrow."; a TC joining sends "Your TC just joined
+  the escrow.") and when a review is submitted ("{First} left you a
+  5-star review."). Clients are notified when the realtor adds a custom
+  step (the step's side + TC), when the escrow closes
+  ("Congratulations, your escrow is closed!"), and when it is cancelled
+  ("This escrow has been cancelled. {Realtor} can help with any
+  questions."). Closed/cancelled pushes go to the device tokens
+  snapshotted at the moment of the transition, because cancelling
+  revokes links and closed escrows are otherwise excluded from sends.
+  A cleared closing date would send "Your closing date was removed.",
+  matching the other key dates — that code is wired and pinned, but
+  inert today because the closing date is required and never
+  clearable in the app. The realtor gets the same one-time
+  "Stay in the loop" permission prompt on the deal list, and tapping a
+  realtor push opens that escrow. Intake saves notify the TC (the
+  reader who works from both forms; the forms themselves are filled
+  in by the realtor): a buyer-intake save sends the TC "Buyer intake
+  submitted." and a listing-intake save sends "Seller intake
+  submitted.", with repeated saves in one minute coalescing into a
+  single push.
+- Date-based reminders (P2, Oct 2026) run as a third hourly sweep:
+  days are counted in each recipient's own timezone, and a claim log
+  keyed by (escrow, event, threshold, date, device) makes every
+  reminder fire exactly once per date value — a moved date re-arms
+  it. Closing in 7/3/1 days reaches the clients, the TC, and the
+  realtor ("One week to go. Your closing is on Oct 29, 2026." /
+  "{Street} closes in 3 days."); an inspection, appraisal, or loan
+  deadline tomorrow reaches the buyer side, the TC, and the realtor;
+  the seller hears "The buyer takes possession in 5 days" when the
+  buyer intake's possession date is five days out. A reminder delayed
+  by quiet hours re-validates at delivery: if the date moved or the
+  threshold is no longer exact, it is dropped instead of landing
+  with stale copy.
+- Halfway milestone (P3, Oct 2026): when a check-off carries an
+  escrow's checklist across 50% done, every client device (buyer,
+  seller, TC) gets "You're halfway there: {done} of {total} steps
+  done." — exactly once per escrow, claimed atomically in the steps
+  trigger, with the counts snapshotted at the crossing.
 - Buyer access can never expose seller data and vice versa.
 
 **Sync** — Supabase-backed cloud sync activates under the realtor's
@@ -577,6 +652,17 @@ save button is never buried behind the keyboard.
 ## Tech
 
 - Expo SDK 57 + TypeScript (strict) + expo-router, iOS + web from one codebase
+- **Android (Phase 0, Oct 15, 2026)** — platform configuration baseline in
+  the same codebase: package `com.anuraj.cleartoclose`, adaptive icon
+  (+ monochrome variant for Android 13 themed icons), splash via
+  expo-splash-screen on the brand teal `#012D37`, notification icon +
+  accent color, `adjustResize` keyboard mode, edge-to-edge, and
+  `POST_NOTIFICATIONS` declared for the Android 13+ permission flow.
+  EAS: preview builds an Android APK for sideload testing, production an
+  AAB (iOS profiles unchanged). Not yet done: Play Store submission,
+  Firebase wiring (Android push needs Anuraj's Firebase project), App
+  Links, and the on-device matrix pass — see LEARNINGS.md for the
+  environment findings.
 - Local state in AsyncStorage; cloud sync via Supabase (Postgres + Auth + RPCs)
 - Anonymous auth stays **disabled** — sync runs under the realtor's
   email/password identity from the start
@@ -700,6 +786,38 @@ Supabase dashboard (one-time):
    so pushes cannot work on the currently installed build. Also run
    `eas init` (or add `extra.eas.projectId`) if the project isn't linked:
    without a project ID the client can't mint an Expo push token.
+5. Run `supabase/migrations/0038_realtor_push_tokens.sql` in the SQL editor
+   (P0, Oct 2026: realtor push-token registration — user-bound rows on
+   `push_tokens`, an authenticated-only `register_push_token` overload,
+   sign-out unregister, and the password-change prune RPC). Until it is
+   applied, realtor devices simply hold no token rows; client pushes are
+   unaffected either way.
+6. Run `supabase/migrations/0039_step_push_side_targeting.sql` in the SQL
+   editor, then redeploy the `send-client-push` Edge Function from the
+   regenerated single file (P0, Oct 2026: side-aware targeting — step
+   pushes reach only the step's side + TC; contingency-deadline pushes
+   reach the buyer side + TC). Order matters: migration first, function
+   second; rows buffered between the two carry no side and are delivered
+   to both audiences, so nothing is lost in the gap.
+7. Run `supabase/migrations/0040_p1_event_pushes.sql` in the SQL editor,
+   then redeploy the `send-client-push` Edge Function from the
+   regenerated single file (P1, Oct 2026: the event outbox + drain —
+   client-joined and review pushes to the realtor, custom-step pushes,
+   and the closed/cancelled announcements snapshotted at transition).
+8. Run `supabase/migrations/0041_p2_date_reminders.sql` in the SQL
+   editor, then redeploy the `send-client-push` Edge Function from the
+   regenerated single file (P2, Oct 2026: the date-reminder sweep —
+   candidates computed per recipient timezone; claims in
+   push_reminder_log make each reminder fire exactly once per date).
+9. Run `supabase/migrations/0042_p3_halfway_milestone.sql` in the SQL
+   editor, then redeploy the `send-client-push` Edge Function from the
+   regenerated single file (P3, Oct 2026: the halfway milestone —
+   ctc_push_notify gains only the two halfway hook lines over 0040).
+10. Run `supabase/migrations/0043_app_config.sql` in the SQL editor
+    (Oct 2026: the public app_config table — `client_app_link` seeds
+    the invite-share link; no function redeploy needed. The value is a
+    first-party link and stays one at store launch — routing happens
+    on the landing page, not by pointing this at a store URL).
 
 Kill switch (no code deploy needed): pause all pushes with
 

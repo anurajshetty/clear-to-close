@@ -19,11 +19,12 @@
 declare const require: (id: string) => any;
 
 import { auth } from './auth';
-import { getSupabase } from './supabase';
+import { getSecureStore, getSupabase, type SecureStoreLike } from './supabase';
 import { getDefaultKV } from './kv';
 import type { KV } from './store';
 
 const K_PUSH_ASKED = 'ctc:pushasked';
+const K_PUSH_ASKED_REALTOR = 'ctc:pushasked:realtor';
 
 // Platform without a static react-native import: the unit tests run in node,
 // where react-native is unavailable. The app bundle resolves require() fine.
@@ -124,6 +125,24 @@ export async function markPushAsked(kv?: KV): Promise<void> {
   }
 }
 
+/** Realtor ask-once flag (P1): a separate key — a device that was asked
+ *  as a client has not been asked as a realtor, and vice versa. */
+export async function hasBeenAskedRealtorPush(kv?: KV): Promise<boolean> {
+  try {
+    return ((await (kv ?? getDefaultKV()).getItem(K_PUSH_ASKED_REALTOR)) === '1');
+  } catch {
+    return false;
+  }
+}
+
+export async function markRealtorPushAsked(kv?: KV): Promise<void> {
+  try {
+    await (kv ?? getDefaultKV()).setItem(K_PUSH_ASKED_REALTOR, '1');
+  } catch {
+    // best-effort
+  }
+}
+
 /**
  * Pure pre-prompt eligibility (ask-once, Anuraj's rule): the prompt shows
  * only for a client whose OS permission is still undetermined and who has
@@ -144,23 +163,88 @@ export function shouldShowPrePrompt(args: {
 }
 
 /**
+ * Realtor pre-prompt eligibility (P1, approved copy): the mirror image
+ * of the client rule — a signed-in realtor, never asked (the realtor
+ * flag), OS permission still undetermined.
+ */
+export function shouldShowRealtorPrePrompt(args: {
+  role: string | null;
+  hasSession: boolean;
+  asked: boolean;
+  permission: PushPermissionState;
+}): boolean {
+  return (
+    args.role === 'realtor' &&
+    args.hasSession &&
+    !args.asked &&
+    args.permission === 'undetermined'
+  );
+}
+
+/**
+ * Where a push tap lands, by the tapped payload's role. Realtor pushes
+ * (P1) carry role 'realtor' and open the realtor escrow screen; client
+ * pushes open the role's client home (clientHomeRoute).
+ */
+export function pushTapRoute(escrowId: string, role: string): string {
+  if (role === 'realtor') return `/escrow/${escrowId}`;
+  return clientHomeRoute(escrowId, role);
+}
+
+/**
  * Extract the deep-link target from a notification response. Returns null
  * for malformed payloads so a bad push can never misroute.
  */
 export function escrowRouteFromResponse(response: unknown): {
   escrowId: string;
-  role: 'buyer' | 'seller' | 'tc';
+  role: 'buyer' | 'seller' | 'tc' | 'realtor';
 } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (response as any)?.notification?.request?.content?.data ?? {};
     const escrowId = typeof data.escrowId === 'string' ? data.escrowId : '';
     if (!escrowId) return null;
-    const role = data.role === 'seller' ? 'seller' : data.role === 'tc' ? 'tc' : 'buyer';
+    // 'realtor' is preserved (P1): realtor pushes carry it and route to
+    // the realtor escrow screen via pushTapRoute. Anything unrecognized
+    // keeps the buyer default.
+    const role =
+      data.role === 'seller'
+        ? 'seller'
+        : data.role === 'tc'
+          ? 'tc'
+          : data.role === 'realtor'
+            ? 'realtor'
+            : 'buyer';
     return { escrowId, role };
   } catch {
     return null;
   }
+}
+
+/**
+ * Client home route for a push tap, by the tapped device's link role.
+ * All three client roles have their own home (P0 fix, Oct 15 2026: TC
+ * taps used to fall through to the buyer home because PushGate mapped
+ * every non-seller role to buyer). Unknown roles keep the buyer
+ * default, matching escrowRouteFromResponse.
+ */
+export function clientHomeRoute(escrowId: string, role: string): string {
+  const segment = role === 'seller' ? 'seller' : role === 'tc' ? 'tc' : 'buyer';
+  return `/client/${segment}/${escrowId}`;
+}
+
+const CLIENT_HOME_PATH_RE = /^\/client\/(buyer|seller|tc)\/[^/]+$/;
+
+/**
+ * Is this pathname a client escrow home (any of the three roles)?
+ * Gates the push pre-prompt: it may only appear over a client's own
+ * escrow home. P0.4 (Oct 15, 2026): TC homes included — TCs are
+ * first-class push recipients under side-aware targeting, and the
+ * pre-prompt copy is role-neutral ("your realtor checks off a step"),
+ * so the identical sheet serves all three roles.
+ */
+export function isClientHomePath(pathname: string): boolean {
+  return CLIENT_HOME_PATH_RE.test(pathname);
 }
 
 /**
@@ -254,6 +338,178 @@ export async function unregisterPushToken(): Promise<void> {
     await client.rpc('unregister_push_token', { p_device_id: deviceId });
   } catch {
     // best-effort
+  }
+}
+
+// ------------------------------------------------------- realtor tokens --
+// P0 (Oct 15, 2026; migration 0038): the signed-in realtor's OWN devices
+// register through the authenticated register_push_token_for_user —
+// identity is auth.uid() server-side; the app never sends a user id.
+// Registration mirrors the client self-heal: it runs while OS permission
+// is granted and re-runs on launch, so rotations/reinstalls heal. No new
+// permission ask is shown to realtors in P0 (copy decision, later phase).
+
+const K_PUSH_REALTOR_UNREG_PENDING = 'ctc:push:realtor-unreg-pending';
+
+interface RealtorUnregPending {
+  deviceId: string;
+  token: string;
+}
+
+/**
+ * Where the pending pair lives (auditor v2 fix, Oct 15 2026): an
+ * explicit test KV wins; otherwise SecureStore (the pair is a live
+ * push credential — it does not belong in plain AsyncStorage); the
+ * AsyncStorage KV is only the fallback where SecureStore does not
+ * exist (web). Nothing has shipped with the queued pair yet, so no
+ * legacy-copy migration is owed.
+ */
+export function resolveRealtorPendingStore(
+  kv?: KV,
+  secure?: SecureStoreLike | null,
+): KV {
+  if (kv) return kv;
+  const ss = secure !== undefined ? secure : getSecureStore();
+  if (ss) {
+    return {
+      getItem: (k: string) => ss.getItemAsync(k),
+      setItem: (k: string, v: string) => ss.setItemAsync(k, v),
+      removeItem: (k: string) => ss.deleteItemAsync(k),
+    };
+  }
+  return getDefaultKV();
+}
+
+/** Queue (or clear) the boot retry for a failed sign-out unregister. */
+export async function setRealtorUnregisterPending(
+  pending: RealtorUnregPending | null,
+  kv?: KV,
+): Promise<void> {
+  try {
+    const store = resolveRealtorPendingStore(kv);
+    if (pending === null) {
+      await store.removeItem(K_PUSH_REALTOR_UNREG_PENDING);
+    } else {
+      await store.setItem(K_PUSH_REALTOR_UNREG_PENDING, JSON.stringify(pending));
+    }
+  } catch {
+    // best-effort; the authenticated path is the primary rail
+  }
+}
+
+export async function getRealtorUnregisterPending(
+  kv?: KV,
+): Promise<RealtorUnregPending | null> {
+  try {
+    const raw = await resolveRealtorPendingStore(kv).getItem(K_PUSH_REALTOR_UNREG_PENDING);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RealtorUnregPending>;
+    if (typeof parsed.deviceId === 'string' && typeof parsed.token === 'string') {
+      return { deviceId: parsed.deviceId, token: parsed.token };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Register this device's Expo token for the signed-in realtor (no-op when
+ * signed out, on web, or while permission is not granted). Returns true
+ * when the server holds a live user-bound row for this device.
+ */
+export async function registerRealtorPushToken(): Promise<boolean> {
+  const N = loadNotifications();
+  if (!N) return false;
+  try {
+    if ((await getPushPermission()) !== 'granted') return false;
+    if ((await auth.getSessionUserId()) === null) return false;
+    const projectId = getExpoProjectId();
+    if (!projectId) {
+      console.warn('[push] missing EAS projectId: realtor token registration skipped');
+      return false;
+    }
+    const tokenResp = await N.getExpoPushTokenAsync({ projectId });
+    const token = tokenResp?.data;
+    if (!token) return false;
+    const deviceId = await auth.getDeviceId();
+    const client = getSupabase();
+    if (!client) return false;
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // Distinct authenticated function (0038 v2, auditor: never an
+    // overload of the client register_push_token).
+    const { data, error } = await client.rpc('register_push_token_for_user', {
+      p_device_id: deviceId,
+      p_token: token,
+      p_timezone: timeZone,
+    });
+    return !error && (data as { ok?: boolean } | null)?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Drop this device's realtor token row during logout — MUST run while
+ * the session is still live (auditor requirement 6: identity is derived
+ * server-side from the JWT). If the call fails, the (deviceId, token)
+ * pair is queued locally so the next boot can retry by possession;
+ * a signed-out device must never keep receiving the realtor's pushes
+ * silently. No-op when there is no session (nothing authenticated to
+ * unregister) or on web.
+ */
+export async function unregisterRealtorPushToken(): Promise<void> {
+  const N = loadNotifications();
+  if (!N) return;
+  try {
+    if ((await auth.getSessionUserId()) === null) return;
+    const deviceId = await auth.getDeviceId();
+    const client = getSupabase();
+    if (!client) return;
+    const { data, error } = await client.rpc('unregister_push_token_for_user', {
+      p_device_id: deviceId,
+    });
+    if (!error && (data as { ok?: boolean } | null)?.ok === true) {
+      await setRealtorUnregisterPending(null);
+      return;
+    }
+    // Failed: queue the possession retry with the token as minted now,
+    // while this device still holds it.
+    const projectId = getExpoProjectId();
+    const tokenResp = projectId
+      ? await N.getExpoPushTokenAsync({ projectId }).catch(() => null)
+      : null;
+    const token = tokenResp?.data;
+    if (token) {
+      await setRealtorUnregisterPending({ deviceId, token });
+    }
+  } catch {
+    // best-effort; a queued retry (if token minting worked) covers us
+  }
+}
+
+/**
+ * Boot retry for a queued sign-out unregister (auditor requirement 6).
+ * Possession is the credential: the exact (device_id, expo_push_token)
+ * pair deletes at most the one user-bound row matching both (migration
+ * 0038, pending the auditor's line-level pass on that RPC). Clears the
+ * queue only on a server-confirmed delete.
+ */
+export async function retryPendingRealtorUnregister(): Promise<void> {
+  const pending = await getRealtorUnregisterPending();
+  if (!pending) return;
+  try {
+    const client = getSupabase();
+    if (!client) return;
+    const { data, error } = await client.rpc(
+      'unregister_push_token_for_user_by_possession',
+      { p_device_id: pending.deviceId, p_token: pending.token },
+    );
+    if (!error && (data as { ok?: boolean } | null)?.ok === true) {
+      await setRealtorUnregisterPending(null);
+    }
+  } catch {
+    // stays queued for the next boot
   }
 }
 

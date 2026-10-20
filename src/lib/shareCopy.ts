@@ -17,6 +17,52 @@ import { firstNameOf } from './pace';
 /** Public profile URL contract: https://anurajshetty.github.io/clear-to-close/realtor/<realtor-id> */
 export const PROFILE_URL_BASE = 'https://anurajshetty.github.io/clear-to-close/realtor';
 
+/**
+ * Client app link for invite shares (Anuraj, Oct 20, 2026): the BUILT-IN
+ * FALLBACK — the live value comes from the app_config table (migration
+ * 0043, see src/lib/appConfig.ts). The link always points at a
+ * first-party page we control, never a raw store URL: one shared link
+ * serves iOS, Android, and desktop; at store launch the landing page
+ * gains per-platform routing and this value may not change at all.
+ * This constant is what the app uses when the fetch fails, the row is
+ * missing, or the value fails validation. The /redeem deep path is
+ * served by the deployed SPA fallback (boot-verified under the real
+ * subpath).
+ */
+export const CLIENT_APP_LINK = 'https://anurajshetty.github.io/clear-to-close/redeem';
+
+export interface InviteShareInput {
+  /** The party name exactly as the realtor entered it. */
+  clientName: string;
+  /** The signed-in realtor's first name. */
+  realtorFirst: string;
+  /** The one-time invite code. */
+  code: string;
+}
+
+/**
+ * Invite share message — APPROVED verbatim (Anuraj, Oct 20, 2026), do
+ * not paraphrase. The app link travels separately in the share payload's
+ * url field (see inviteSharePayload) so iOS Messages renders it as a
+ * preview card, Muse-referral style.
+ */
+export function buildInviteShareMessage(i: InviteShareInput): string {
+  return (
+    `Hi ${i.clientName}, ${i.realtorFirst} is sharing your escrow with you on Clear to Close. ` +
+    `Download the app and enter your one-time code:\nCode: ${i.code}`
+  );
+}
+
+/** The { message, url } payload every invite share sends (pure; pinned).
+ *  The link defaults to the built-in constant; the app passes the
+ *  app_config-cached value (src/lib/appConfig.ts) when it has one. */
+export function inviteSharePayload(
+  i: InviteShareInput,
+  link: string = CLIENT_APP_LINK,
+): { message: string; url: string } {
+  return { message: buildInviteShareMessage(i), url: link };
+}
+
 export function profileUrlFor(realtorId: string | null | undefined): string {
   const id = (realtorId ?? '').trim();
   return id ? `${PROFILE_URL_BASE}/${id}` : '';

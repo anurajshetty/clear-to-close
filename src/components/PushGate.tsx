@@ -7,6 +7,8 @@
 // (ctc:pushasked). "Not now" and a denied OS answer both count as asked;
 // the prompt never nags again. While permission is granted, the token is
 // re-registered on every launch so reinstalls/rotations self-heal.
+// P1 adds the realtor twin: same rule, its own ask-once flag
+// (ctc:pushasked:realtor), shown on the deal list with approved copy.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { usePathname, useRouter } from 'expo-router';
@@ -14,30 +16,36 @@ import { auth } from '../lib/auth';
 import {
   getPushPermission,
   hasBeenAskedPush,
+  hasBeenAskedRealtorPush,
+  isClientHomePath,
   loadNotifications,
   markPushAsked,
+  markRealtorPushAsked,
+  pushTapRoute,
   registerPushToken,
+  registerRealtorPushToken,
   requestPushPermission,
+  retryPendingRealtorUnregister,
   setupPushHandling,
   shouldShowPrePrompt,
+  shouldShowRealtorPrePrompt,
 } from '../lib/push';
 import { store } from '../lib/store-instance';
 import { PrimaryButton, SecondaryButton, Sheet } from './ui';
 import { colors } from '../theme';
 
-const CLIENT_HOME_RE = /^\/client\/(buyer|seller)\/[^/]+$/;
-
 export function PushGate(): React.ReactElement | null {
   const router = useRouter();
   const pathname = usePathname() ?? '';
   const [visible, setVisible] = useState(false);
+  const [realtorPromptVisible, setRealtorPromptVisible] = useState(false);
   const [realtorFirst, setRealtorFirst] = useState('');
   const evaluated = useRef(false);
+  const realtorEvaluated = useRef(false);
 
   const routeToEscrow = useCallback(
     (escrowId: string, role: string) => {
-      const r = role === 'seller' ? 'seller' : 'buyer';
-      router.replace(`/client/${r}/${escrowId}` as never);
+      router.replace(pushTapRoute(escrowId, role) as never);
     },
     [router],
   );
@@ -48,6 +56,9 @@ export function PushGate(): React.ReactElement | null {
     if (Platform.OS === 'web') return;
     if (!loadNotifications()) return;
     const cleanup = setupPushHandling(routeToEscrow);
+    // Boot retry for a sign-out unregister that failed last session
+    // (auditor P0 requirement 6) — possession-based, self-guarded.
+    void retryPendingRealtorUnregister().catch(() => {});
     void auth
       .getClientLinks()
       .then((links) => {
@@ -55,6 +66,10 @@ export function PushGate(): React.ReactElement | null {
         return false;
       })
       .catch(() => false);
+    // Realtor token self-heal on launch (P0): registers this device for
+    // the signed-in realtor while permission is granted; self-guards
+    // when signed out or ungranted.
+    void registerRealtorPushToken().catch(() => false);
     return cleanup;
   }, [routeToEscrow]);
 
@@ -63,7 +78,7 @@ export function PushGate(): React.ReactElement | null {
   useEffect(() => {
     if (evaluated.current) return;
     if (Platform.OS === 'web') return;
-    if (!CLIENT_HOME_RE.test(pathname)) return;
+    if (!isClientHomePath(pathname)) return;
     evaluated.current = true;
     let active = true;
     (async () => {
@@ -95,6 +110,46 @@ export function PushGate(): React.ReactElement | null {
     };
   }, [pathname]);
 
+  // Realtor pre-prompt eligibility (P1): signed-in realtor on the deal
+  // list, never asked, OS permission still undetermined. Mirrors the
+  // client rule with its own ask-once flag and approved copy.
+  useEffect(() => {
+    if (realtorEvaluated.current) return;
+    if (Platform.OS === 'web') return;
+    if (pathname !== '/') return;
+    realtorEvaluated.current = true;
+    let active = true;
+    (async () => {
+      try {
+        const [role, sessionUserId, asked, permission] = await Promise.all([
+          auth.getRole(),
+          auth.getSessionUserId(),
+          hasBeenAskedRealtorPush(),
+          getPushPermission(),
+        ]);
+        if (
+          !shouldShowRealtorPrePrompt({
+            role,
+            hasSession: sessionUserId !== null,
+            asked,
+            permission,
+          })
+        ) {
+          return;
+        }
+        // Small settle delay so the deal list lands first.
+        await new Promise((r) => setTimeout(r, 1200));
+        if (!active) return;
+        setRealtorPromptVisible(true);
+      } catch {
+        // never block the deal list
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [pathname]);
+
   const dismiss = useCallback(async () => {
     await markPushAsked();
     setVisible(false);
@@ -115,6 +170,46 @@ export function PushGate(): React.ReactElement | null {
       setVisible(false);
     }
   }, []);
+
+  const onRealtorNotNow = useCallback(() => {
+    void (async () => {
+      await markRealtorPushAsked();
+      setRealtorPromptVisible(false);
+    })();
+  }, []);
+
+  const onRealtorAllow = useCallback(async () => {
+    try {
+      const granted = await requestPushPermission();
+      await markRealtorPushAsked();
+      if (granted) await registerRealtorPushToken();
+    } catch {
+      // never block the deal list
+    } finally {
+      setRealtorPromptVisible(false);
+    }
+  }, []);
+
+  if (realtorPromptVisible) {
+    return (
+      <Sheet visible={realtorPromptVisible} onClose={onRealtorNotNow}>
+        <View style={styles.body} testID="push-preprompt-realtor">
+          <Text style={styles.title}>Stay in the loop</Text>
+          <Text style={styles.copy}>
+            Get notified the moment a client joins an escrow, leaves a review, or submits an
+            intake. Nothing important slips by.
+          </Text>
+          <View testID="push-allow-realtor">
+            <PrimaryButton title="Allow" onPress={onRealtorAllow} />
+          </View>
+          <View style={styles.gap} />
+          <View testID="push-notnow-realtor">
+            <SecondaryButton title="Not now" onPress={onRealtorNotNow} />
+          </View>
+        </View>
+      </Sheet>
+    );
+  }
 
   if (!visible) return null;
 

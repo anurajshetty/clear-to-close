@@ -32,6 +32,8 @@ import {
 } from '../../src/components/ui';
 import { colors } from '../../src/theme';
 import { visibleShareSections, type ShareSectionMeta } from '../../src/lib/shareSections';
+import { shareInviteCode } from '../../src/lib/share';
+import { firstNameOf } from '../../src/lib/pace';
 
 export default function ShareEscrow() {
   const router = useRouter();
@@ -44,6 +46,9 @@ export default function ShareEscrow() {
   const [escrow, setEscrow] = useState<Escrow | null>(null);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // The signed-in realtor's name feeds the invite share message
+  // ("{RealtorFirst} is sharing your escrow with you…", Oct 20, 2026).
+  const [realtorName, setRealtorName] = useState('');
 
   // Toast (ToastTimer owns the dismiss timer — never inside an effect that
   // mutates unrelated state; the Sept 28 stuck-toast lesson).
@@ -77,6 +82,8 @@ export default function ShareEscrow() {
     try {
       setEscrow(await store.getEscrow(escrowId));
       setInvites(await store.listInvites(escrowId));
+      const profile = await store.getProfile().catch(() => null);
+      setRealtorName((profile?.name ?? '').trim());
     } catch (err) {
       console.warn('share refresh failed', err);
     } finally {
@@ -114,6 +121,19 @@ export default function ShareEscrow() {
       console.warn('clipboard failed', err);
     }
     showToast('Code copied.');
+  };
+
+  // Invite share (Anuraj, Oct 20, 2026): the approved message + app link
+  // through the shared share machinery; feedback mirrors the TC intake
+  // share's toasts.
+  const shareInvite = async (partyName: string, code: string) => {
+    const outcome = await shareInviteCode({
+      clientName: partyName,
+      realtorFirst: firstNameOf(realtorName) || 'Your realtor',
+      code,
+    });
+    if (outcome === 'copied') showToast('Copied to clipboard');
+    else if (outcome === 'unavailable') showToast("Couldn't share. Try again.");
   };
 
   const createCode = async () => {
@@ -246,6 +266,15 @@ export default function ShareEscrow() {
               >
                 <Text style={styles.copyText}>Copy</Text>
               </Pressable>
+              <Pressable
+                onPress={() => shareInvite(inv.partyName, inv.code)}
+                hitSlop={8}
+                style={styles.copyBtn}
+                accessibilityRole="button"
+                accessibilityLabel={`Share invite for ${inv.partyName}`}
+              >
+                <Text style={styles.copyText}>Share</Text>
+              </Pressable>
             </>
           )}
           <Pressable
@@ -356,7 +385,15 @@ export default function ShareEscrow() {
             <Text style={styles.bigCode}>{formCode}</Text>
             <Text style={styles.hintCenter}>Share this code with them. It works once.</Text>
             <View style={styles.codeBtns}>
-              <PrimaryButton title="Copy" onPress={() => copyCode(formCode)} />
+              <View style={styles.codeBtnHalf}>
+                <PrimaryButton title="Copy" onPress={() => copyCode(formCode)} />
+              </View>
+              <View style={styles.codeBtnHalf}>
+                <SecondaryButton
+                  title="Share"
+                  onPress={() => shareInvite(formName.trim(), formCode)}
+                />
+              </View>
             </View>
             <Pressable onPress={finishInvite} hitSlop={8} style={styles.quietBtn}>
               <Text style={styles.quietText}>Done</Text>
@@ -720,6 +757,11 @@ const styles = StyleSheet.create({
   codeBtns: {
     width: '100%',
     marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  codeBtnHalf: {
+    flex: 1,
   },
   inviteBtnWrap: {
     marginTop: 10,
