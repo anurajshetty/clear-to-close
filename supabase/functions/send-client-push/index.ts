@@ -318,7 +318,7 @@ async function sendTeamPush(
     const quiet = teamQuietQueue(now, t.timezone);
     if (quiet.queued && quiet.sendAfter) {
       await supa.from('push_queue').insert({
-        expo_push_token: <redacted>
+        expo_push_token: t.expo_push_token,
         title: 'Clear to Close',
         body,
         data,
