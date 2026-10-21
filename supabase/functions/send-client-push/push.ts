@@ -667,11 +667,12 @@ export function withAddress(body: string, address: string, multiEscrow: boolean)
 // for Anuraj's approval). The drain decides everything at send time
 // (R4): the outbox row is only a fact ("an invite was created", "a
 // member touched a step"); the grant's CURRENT state decides whether
-// anyone is notified and through which channel. Branch exclusivity for
-// invites: an invitee WITH an account gets the push and never the
-// email; an invitee WITHOUT an account gets the email and never a
-// push. The invite email carries no address or deal details (R7) — the
-// builder below takes no such input by construction.
+// anyone is notified and through which channel. Invite channels
+// (Anuraj, Oct 21, 2026): the invite email goes on EVERY invite;
+// an invitee WITH an account also gets the push; an invitee WITHOUT
+// an account gets the email only. The invite email names the
+// escrow's property address (Anuraj's Oct 21 override amending R7);
+// party names, dates, and amounts stay out.
 
 export type TeamRole = 'associate' | 'tc';
 
@@ -694,26 +695,27 @@ export function teamRolePushPhrase(role: string | null | undefined): string {
   return role === 'tc' ? 'its transaction coordinator' : 'an Associate';
 }
 
-/** Role phrase for the invite EMAIL ("help with an escrow as ..."). */
-export function teamRoleEmailPhrase(role: string | null | undefined): string {
-  return role === 'tc' ? 'the transaction coordinator' : 'an Associate';
-}
-
 function trimmedOrNull(v: string | null | undefined): string | null {
   const s = (v ?? '').trim();
   return s || null;
 }
 
 export type TeamInviteReceivedPlan =
-  /** Grant gone or no longer pending: notify nobody. */
+  /** Grant gone or no longer pending: notify nobody, on any channel. */
   | { action: 'drop' }
-  /** Account invitee: push to their own devices only, never email. */
-  | { action: 'push'; body: string }
-  /** No-account invitee: email only, never a push. */
-  | { action: 'email' }
-  /** Email wanted but suppressed (cap reached or sending unconfigured):
-   *  the row is still consumed, silently. */
-  | { action: 'skip'; reason: 'cap' | 'unconfigured' };
+  /** Grant live and pending: notify on each applicable channel. The
+   *  invite email goes on EVERY invite (Anuraj, Oct 21, 2026 — this
+   *  reverses the original branch exclusivity): account invitees get
+   *  the push AND the email; no-account invitees get the email only.
+   *  The email half is suppressed (silently) at the per-owner cap or
+   *  when sending is unconfigured; the push half is never suppressed. */
+  | {
+      action: 'send';
+      /** Push body for an account invitee; null for no-account. */
+      pushBody: string | null;
+      email: boolean;
+      emailSkip?: 'cap' | 'unconfigured';
+    };
 
 /**
  * Quiet-hours decision for a team push to ONE token (merge addition,
@@ -735,8 +737,9 @@ export function teamQuietQueue(
 /**
  * Decide a team_invite_received outbox row from the grant's live state.
  * `inviteEmailsSentLast24h` counts the OWNER's invite emails in the
- * trailing 24h; `emailConfigured` is true only when both the Resend key
- * and the From address are present.
+ * trailing 24h across BOTH branches (only Resend-accepted sends are
+ * logged, so only they count); `emailConfigured` is true only when
+ * both the Resend key and the From address are present.
  */
 export function planTeamInviteReceived(
   grant: TeamGrantSnapshot | null,
@@ -747,18 +750,16 @@ export function planTeamInviteReceived(
   },
 ): TeamInviteReceivedPlan {
   if (!grant || grant.status !== 'pending') return { action: 'drop' };
-  if (grant.user_id) {
-    const owner = trimmedOrNull(ctx.ownerName) ?? 'Your realtor';
-    return {
-      action: 'push',
-      body: `${owner} invited you to join an escrow as ${teamRolePushPhrase(grant.role)}.`,
-    };
-  }
+  const pushBody = grant.user_id
+    ? `${trimmedOrNull(ctx.ownerName) ?? 'Your realtor'} invited you to join an escrow as ${teamRolePushPhrase(grant.role)}.`
+    : null;
   if (ctx.inviteEmailsSentLast24h >= INVITE_EMAIL_CAP_PER_24H) {
-    return { action: 'skip', reason: 'cap' };
+    return { action: 'send', pushBody, email: false, emailSkip: 'cap' };
   }
-  if (!ctx.emailConfigured) return { action: 'skip', reason: 'unconfigured' };
-  return { action: 'email' };
+  if (!ctx.emailConfigured) {
+    return { action: 'send', pushBody, email: false, emailSkip: 'unconfigured' };
+  }
+  return { action: 'send', pushBody, email: true };
 }
 
 export type TeamInviteAcceptedPlan =
@@ -858,41 +859,38 @@ export interface TeamInviteEmail {
 }
 
 /**
- * The no-account invite email (copy batch, R7): inviter name, role,
- * the invited email, and the app link ONLY — no address, party names,
- * dates, or amounts appear anywhere in it. The batch's
- * "[Open Clear to Close]" link placeholder renders as a labeled link
- * in HTML and as a label line + URL in plain text.
+ * The invite email (copy batch as amended by Anuraj, Oct 21, 2026):
+ * inviter name, role, the escrow's property address, and the app
+ * link. The address is IN by his explicit override amending R7;
+ * party names, dates, and amounts stay OUT.
  */
 export function buildTeamInviteEmail(ctx: {
   ownerName: string | null | undefined;
   role: string | null | undefined;
-  invitedEmail: string;
+  address: string;
   appLink: string;
 }): TeamInviteEmail {
   const owner = trimmedOrNull(ctx.ownerName) ?? 'Your realtor';
-  const phrase = teamRoleEmailPhrase(ctx.role);
-  const email = ctx.invitedEmail;
+  const phrase = teamRolePushPhrase(ctx.role);
+  const address = ctx.address.trim();
   const link = ctx.appLink;
-  const subject = `${owner} invited you to Clear to Close`;
+  const subject = `${owner} invited you to an escrow on Clear to Close`;
+  const intro = `${owner} has invited you to join the escrow for ${address} on Clear to Close as ${phrase}.`;
   const text = [
-    'Hi there,',
+    intro,
     '',
-    `${owner} invited you to help with an escrow as ${phrase} in Clear to Close, the app they use to keep every escrow step in one place.`,
-    '',
-    `To accept, sign up with this email address (${email}) and the invitation will be waiting for you in the app.`,
-    '',
-    'Open Clear to Close:',
+    'Open the app to see the escrow and accept your invitation:',
     link,
     '',
-    'If you were not expecting this, you can ignore this email.',
+    'New to Clear to Close? The link will get you set up. Sign up with this email address so the invitation is waiting for you when you arrive.',
+    '',
+    "You can ignore this email if you weren't expecting an invitation.",
   ].join('\n');
   const html = [
-    '<p>Hi there,</p>',
-    `<p>${escapeHtml(owner)} invited you to help with an escrow as ${escapeHtml(phrase)} in Clear to Close, the app they use to keep every escrow step in one place.</p>`,
-    `<p>To accept, sign up with this email address (${escapeHtml(email)}) and the invitation will be waiting for you in the app.</p>`,
-    `<p><a href="${escapeHtml(link)}">Open Clear to Close</a></p>`,
-    '<p>If you were not expecting this, you can ignore this email.</p>',
+    `<p>${escapeHtml(intro)}</p>`,
+    `<p>Open the app to see the escrow and accept your invitation:<br><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>`,
+    '<p>New to Clear to Close? The link will get you set up. Sign up with this email address so the invitation is waiting for you when you arrive.</p>',
+    "<p>You can ignore this email if you weren't expecting an invitation.</p>",
   ].join('\n');
   return { subject, text, html };
 }

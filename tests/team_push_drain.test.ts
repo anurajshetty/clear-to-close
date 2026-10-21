@@ -1,10 +1,10 @@
 // team_push_drain.test.ts — Team Access (0044) drain decisions: the
 // pure planners/builders in supabase/functions/send-client-push/push.ts
-// that the event drain consults at send time (R4). Covers branch
-// exclusivity (account -> push only, no account -> email only), the
-// per-owner invite-email cap, validity drops from live grant state,
-// member-activity coalescing, and copy exactness against the Q3 copy
-// batch (team-access-copy-batch.md).
+// that the event drain consults at send time (R4). Covers the invite
+// channels (email on EVERY invite; account invitees also get the
+// push — Oct 21, 2026 rule), the per-owner invite-email cap, validity
+// drops from live grant state, member-activity coalescing, and copy
+// exactness against the Q3 copy batch (team-access-copy-batch.md).
 // Run: see tests/run.sh (node, no framework).
 import { assert, summary } from './assert';
 import {
@@ -61,16 +61,17 @@ async function main(): Promise<void> {
     );
   }
 
-  // ---- invite received: branch exclusivity ----
+  // ---- invite received: channels (Oct 21 rule — email on EVERY
+  // invite; account invitees get push + email) ----
   const pushPlan = planTeamInviteReceived(grant({ user_id: 'user-9' }), {
     ownerName: OWNER,
     inviteEmailsSentLast24h: 0,
     emailConfigured: true,
   });
-  assert(pushPlan.action === 'push', 'account invitee takes the push branch');
+  assert(pushPlan.action === 'send' && pushPlan.email === true, 'account invitee gets push + email');
   assert(
-    pushPlan.action === 'push' &&
-      pushPlan.body === 'Maria Lopez invited you to join an escrow as an Associate.',
+    pushPlan.action === 'send' &&
+      pushPlan.pushBody === 'Maria Lopez invited you to join an escrow as an Associate.',
     'invite received push copy (associate) is exact',
   );
   const pushTc = planTeamInviteReceived(grant({ user_id: 'user-9', role: 'tc' }), {
@@ -79,20 +80,36 @@ async function main(): Promise<void> {
     emailConfigured: true,
   });
   assert(
-    pushTc.action === 'push' &&
-      pushTc.body ===
+    pushTc.action === 'send' &&
+      pushTc.pushBody ===
         'Maria Lopez invited you to join an escrow as its transaction coordinator.',
     'invite received push copy (tc) is exact',
   );
-  // An account invitee NEVER falls through to email, even over the cap
-  // and with email fully configured: the push branch wins outright.
+  // The cap suppresses ONLY the email half: an account invitee over
+  // the cap still gets the push.
+  const accountCapped = planTeamInviteReceived(grant({ user_id: 'user-9' }), {
+    ownerName: OWNER,
+    inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H + 5,
+    emailConfigured: true,
+  });
   assert(
-    planTeamInviteReceived(grant({ user_id: 'user-9' }), {
-      ownerName: OWNER,
-      inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H + 5,
-      emailConfigured: true,
-    }).action === 'push',
-    'account invitee never gets the email (cap does not reroute)',
+    accountCapped.action === 'send' &&
+      accountCapped.pushBody !== null &&
+      accountCapped.email === false &&
+      accountCapped.emailSkip === 'cap',
+    'account invitee over the cap: push sends, email suppressed',
+  );
+  const accountUnconfigured = planTeamInviteReceived(grant({ user_id: 'user-9' }), {
+    ownerName: OWNER,
+    inviteEmailsSentLast24h: 0,
+    emailConfigured: false,
+  });
+  assert(
+    accountUnconfigured.action === 'send' &&
+      accountUnconfigured.pushBody !== null &&
+      accountUnconfigured.email === false &&
+      accountUnconfigured.emailSkip === 'unconfigured',
+    'account invitee unconfigured: push sends, email skipped',
   );
   const noName = planTeamInviteReceived(grant({ user_id: 'user-9' }), {
     ownerName: '  ',
@@ -100,26 +117,28 @@ async function main(): Promise<void> {
     emailConfigured: true,
   });
   assert(
-    noName.action === 'push' &&
-      noName.body === 'Your realtor invited you to join an escrow as an Associate.',
+    noName.action === 'send' &&
+      noName.pushBody === 'Your realtor invited you to join an escrow as an Associate.',
     'invite received push falls back to "Your realtor" without a profile name',
   );
 
-  // ---- invite received: email branch + cap (R5) ----
+  // ---- invite received: no-account invitee + cap (R5) ----
+  const emailPlan = planTeamInviteReceived(grant({}), {
+    ownerName: OWNER,
+    inviteEmailsSentLast24h: 0,
+    emailConfigured: true,
+  });
   assert(
-    planTeamInviteReceived(grant({}), {
-      ownerName: OWNER,
-      inviteEmailsSentLast24h: 0,
-      emailConfigured: true,
-    }).action === 'email',
-    'no-account invitee takes the email branch',
+    emailPlan.action === 'send' && emailPlan.pushBody === null && emailPlan.email === true,
+    'no-account invitee gets the email only',
   );
+  const belowCap = planTeamInviteReceived(grant({}), {
+    ownerName: OWNER,
+    inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H - 1,
+    emailConfigured: true,
+  });
   assert(
-    planTeamInviteReceived(grant({}), {
-      ownerName: OWNER,
-      inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H - 1,
-      emailConfigured: true,
-    }).action === 'email',
+    belowCap.action === 'send' && belowCap.email === true,
     'one below the 24h cap still emails',
   );
   const capped = planTeamInviteReceived(grant({}), {
@@ -128,15 +147,17 @@ async function main(): Promise<void> {
     emailConfigured: true,
   });
   assert(
-    capped.action === 'skip' && capped.reason === 'cap',
+    capped.action === 'send' && capped.pushBody === null && capped.email === false &&
+      capped.emailSkip === 'cap',
     'at the 24h cap the email is suppressed (row still consumed)',
   );
+  const overCap = planTeamInviteReceived(grant({}), {
+    ownerName: OWNER,
+    inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H + 3,
+    emailConfigured: true,
+  });
   assert(
-    planTeamInviteReceived(grant({}), {
-      ownerName: OWNER,
-      inviteEmailsSentLast24h: INVITE_EMAIL_CAP_PER_24H + 3,
-      emailConfigured: true,
-    }).action === 'skip',
+    overCap.action === 'send' && overCap.email === false && overCap.emailSkip === 'cap',
     'over the 24h cap the email is suppressed',
   );
   const unconfigured = planTeamInviteReceived(grant({}), {
@@ -145,7 +166,8 @@ async function main(): Promise<void> {
     emailConfigured: false,
   });
   assert(
-    unconfigured.action === 'skip' && unconfigured.reason === 'unconfigured',
+    unconfigured.action === 'send' && unconfigured.email === false &&
+      unconfigured.emailSkip === 'unconfigured',
     'missing Resend key/From skips the email silently',
   );
   assert(INVITE_EMAIL_CAP_PER_24H === 20, 'invite email cap is 20 per owner per 24h');
@@ -268,63 +290,68 @@ async function main(): Promise<void> {
   );
   assert((groups.get('e2') ?? []).length === 1, 'single-row escrow forms its own group');
 
-  // ---- invite email: copy batch verbatim, R7 by construction ----
+  // ---- invite email: amended template verbatim (Oct 21, 2026) ----
   const email = buildTeamInviteEmail({
     ownerName: OWNER,
     role: 'associate',
-    invitedEmail: 'alex@example.com',
+    address: STREET,
     appLink: APP_LINK,
   });
   assert(
-    email.subject === 'Maria Lopez invited you to Clear to Close',
+    email.subject === 'Maria Lopez invited you to an escrow on Clear to Close',
     'invite email subject is exact',
   );
   const expectedText = [
-    'Hi there,',
+    'Maria Lopez has invited you to join the escrow for 4821 Maple Grove Dr on Clear to Close as an Associate.',
     '',
-    'Maria Lopez invited you to help with an escrow as an Associate in Clear to Close, the app they use to keep every escrow step in one place.',
-    '',
-    'To accept, sign up with this email address (alex@example.com) and the invitation will be waiting for you in the app.',
-    '',
-    'Open Clear to Close:',
+    'Open the app to see the escrow and accept your invitation:',
     APP_LINK,
     '',
-    'If you were not expecting this, you can ignore this email.',
+    'New to Clear to Close? The link will get you set up. Sign up with this email address so the invitation is waiting for you when you arrive.',
+    '',
+    "You can ignore this email if you weren't expecting an invitation.",
   ].join('\n');
-  assert(email.text === expectedText, 'invite email text is exact (associate)');
+  assert(email.text === expectedText, 'invite email text is exact (associate, with address)');
   const emailTc = buildTeamInviteEmail({
     ownerName: OWNER,
     role: 'tc',
-    invitedEmail: 'dana@example.com',
+    address: STREET,
     appLink: APP_LINK,
   });
   assert(
-    emailTc.text.includes('as the transaction coordinator in Clear to Close'),
-    'invite email uses the TC role phrase',
+    emailTc.text.includes(
+      'has invited you to join the escrow for 4821 Maple Grove Dr on Clear to Close as its transaction coordinator.',
+    ),
+    'invite email uses the TC role phrase with the address',
   );
   assert(
-    email.html.includes(`<a href="${APP_LINK}">Open Clear to Close</a>`),
-    'invite email HTML carries the labeled app link',
+    email.html.includes(`<a href="${APP_LINK}">${APP_LINK}</a>`),
+    'invite email HTML carries the app link',
   );
-  // R7: the builder takes no address/deal input; the rendered email
-  // must not name the property or any party.
+  // Amended R7 (Oct 21 override): the address is IN; party names,
+  // dates, and amounts stay OUT.
   assert(
-    !email.text.includes(STREET) && !email.html.includes(STREET),
-    'invite email contains no property address (R7)',
+    email.text.includes(STREET) && email.html.includes(STREET),
+    'invite email names the property address (Oct 21 override)',
   );
   assert(
-    !email.text.includes('—') && !email.html.includes('—'),
+    !email.text.includes('\u2014') && !email.html.includes('\u2014'),
     'invite email has no em dashes',
   );
   const emailEscaped = buildTeamInviteEmail({
     ownerName: 'Ann <Admin> & Co',
     role: 'associate',
-    invitedEmail: 'a@b.c',
+    address: '1 <Main> St & 2nd',
     appLink: APP_LINK,
   });
   assert(
-    emailEscaped.html.includes('Ann &lt;Admin&gt; &amp; Co'),
-    'invite email HTML escapes interpolated values',
+    emailEscaped.html.includes('Ann &lt;Admin&gt; &amp; Co') &&
+      emailEscaped.html.includes('1 &lt;Main&gt; St &amp; 2nd'),
+    'invite email HTML escapes interpolated values (owner + address)',
+  );
+  assert(
+    emailEscaped.text.includes('1 <Main> St & 2nd'),
+    'invite email text keeps the address verbatim',
   );
 
   // ---- team kinds are outbox-only ----

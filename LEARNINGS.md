@@ -1629,3 +1629,17 @@ check-off copy; `tests/run.sh` wires both.
   app-called RPCs + both policy helpers, SELECT grant on
   escrow_activity, and escrow_team_grants / team_invite_email_log
   intentionally grantless (definer functions / service role only).
+- Parse-gate lesson (Oct 21, 2026 — Anuraj caught it at the dashboard):
+  the send-client-push single handed over for the Team Access deploy
+  carried a REAL syntax error in the merged sendTeamPush queue insert
+  (a mangled expo_push_token line). The generator inlined the source
+  faithfully and grep verification passed it; the unit suite/tsc bar
+  never see supabase/functions (outside the app tsconfig), so NOTHING
+  in the bar parsed the Deno entry or the single. Fix shipped by the
+  coordinator (remote f3407ac). Standing bar addition: tools/
+  parse_check.mjs requires ZERO TypeScript parse diagnostics
+  (createSourceFile) on the edge-function sources AND every generated
+  dashboard single — wired into tests/run.sh and into
+  make_send_client_push_single.py itself, which now fails loudly
+  instead of handing over an unparsable file. Grep verifies content;
+  only a parser verifies grammar.

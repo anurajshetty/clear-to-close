@@ -99,6 +99,26 @@ def main() -> int:
         f.write(out)
     print(f"wrote {OUT} ({len(out)} bytes)")
     print("markers OK; no embedded secrets")
+
+    # Parse gate (Oct 21, 2026): grep markers cannot see grammar — a
+    # generated single once shipped a syntax error the whole bar
+    # missed. The generated file AND both sources must parse with
+    # zero TypeScript parse diagnostics, or this generator fails
+    # loudly and the output must not be handed over.
+    import subprocess
+
+    checker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parse_check.mjs")
+    proc = subprocess.run(
+        ["node", checker, OUT,
+         os.path.join(FN_DIR, "index.ts"), os.path.join(FN_DIR, "push.ts")],
+        capture_output=True, text=True,
+    )
+    sys.stdout.write(proc.stdout)
+    sys.stderr.write(proc.stderr)
+    if proc.returncode != 0:
+        print("FAIL: parse check failed — DO NOT hand over the generated file")
+        return 1
+    print("parse check OK")
     return 0
 
 

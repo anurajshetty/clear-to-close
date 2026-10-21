@@ -381,3 +381,10 @@ node "$OUT/tests/pool_strip.test.js"
 node "$OUT/tests/step_key_dates.test.js"
 node "$OUT/tests/share_button_label.test.js"
 node "$OUT/tests/unregister_push_token_device_binding.test.js"
+
+# Parse gate (Oct 21, 2026): the Deno edge sources live outside the
+# app tsconfig and the dashboard singles were verified by grep only —
+# a syntax error shipped in a handover single. Every bar run now
+# requires zero TS parse diagnostics on the edge-function sources
+# and the generated single.
+node "$ROOT/tools/parse_check.mjs"

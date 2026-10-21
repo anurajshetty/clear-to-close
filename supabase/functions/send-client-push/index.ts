@@ -373,9 +373,10 @@ async function sendTeamInviteEmailMessage(
 
 /**
  * team_invite_received: the invitee hears about a pending invite. The
- * plan (from the grant's LIVE state) picks the channel exclusively —
- * account invitees get a push and never the email; no-account
- * invitees get the email and never a push. Returns pushes sent.
+ * plan (from the grant's LIVE state) drives both channels: the invite
+ * email goes on EVERY invite (Oct 21, 2026 rule), and an account
+ * invitee ALSO gets the push. A grant cancelled before the drain
+ * sends neither. Returns pushes sent.
  */
 async function handleTeamInviteReceived(
   supa: SupaClient,
@@ -390,37 +391,40 @@ async function handleTeamInviteReceived(
     if (!grant || grant.status !== 'pending') return 0;
     const from = await getPushConfigValue(supa, 'invite_from_email');
     const emailConfigured = !!(env['RESEND_API_KEY'] && from);
-    const sentLast24h = grant.user_id
-      ? 0
-      : await countRecentInviteEmails(supa, grant.invited_by);
+    // The cap counts every invite email the owner sent in 24h, on
+    // both branches (Oct 21 rule) — always counted now.
+    const sentLast24h = await countRecentInviteEmails(supa, grant.invited_by);
     const ownerName = await getProfileName(supa, escrow.userId);
     const plan = planTeamInviteReceived(grant, {
       ownerName,
       inviteEmailsSentLast24h: sentLast24h,
       emailConfigured,
     });
-    if (plan.action === 'push') {
-      // plan guarantees an account invitee here.
+    if (plan.action !== 'send') return 0;
+    let sent = 0;
+    if (plan.pushBody) {
+      // Account invitee: the push half. No live tokens is fine — the
+      // email half below still goes out (never an early return).
       const tokens = await getUserPushTokens(supa, grant.user_id as string, escrow.id);
-      if (tokens.length === 0) return 0;
-      return await sendTeamPush(supa, env, tokens, plan.body, 'team_invite_received', escrow.id);
+      if (tokens.length > 0) {
+        sent = await sendTeamPush(supa, env, tokens, plan.pushBody, 'team_invite_received', escrow.id);
+      }
     }
-    if (plan.action === 'skip') {
-      // Cap reached or sending unconfigured: consumed silently, the
-      // invite itself is unaffected (same posture as a missing
-      // push secret: skip rather than break the flow).
+    if (plan.emailSkip) {
+      // Cap reached or sending unconfigured: the email half is
+      // suppressed silently; the invite itself is unaffected.
       // eslint-disable-next-line no-console
       console.log(
-        `[send-client-push] team invite email skipped (${plan.reason}) grant=${grant.id}`,
+        `[send-client-push] team invite email skipped (${plan.emailSkip}) grant=${grant.id}`,
       );
-      return 0;
+      return sent;
     }
-    if (plan.action !== 'email' || !from) return 0;
+    if (!plan.email || !from) return sent;
     const appLink = await getClientAppLink(supa);
     const email = buildTeamInviteEmail({
       ownerName,
       role: grant.role,
-      invitedEmail: grant.invited_email,
+      address: escrow.address,
       appLink,
     });
     const ok = await sendTeamInviteEmailMessage(env, from, grant.invited_email, email);
@@ -431,12 +435,12 @@ async function handleTeamInviteReceived(
         escrow.id,
         `invite email send failed grant=${grant.id}`,
       );
-      return 0;
+      return sent;
     }
     await supa
       .from('team_invite_email_log')
       .insert({ grant_id: grant.id, owner_id: grant.invited_by });
-    return 0;
+    return sent;
   } catch (err) {
     await logDeliveryFailure(
       supa,
