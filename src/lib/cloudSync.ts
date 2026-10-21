@@ -154,6 +154,12 @@ export function toStepRows(escrowId: string, role: ClientRole, steps: StepT[]): 
     // loudly (confirmed-write contract: the key is never silently dropped;
     // the write errors until 0020 is applied).
     ...(s.templateKey ? { template_key: s.templateKey } : null),
+    // Team Access actor stamps (migration 0044): always shipped so an
+    // uncheck clears completed_by server-side (it rides completedAt).
+    // pushEscrowNow retries without these two keys when the database
+    // predates 0044, so the stamps simply stay local until it lands.
+    completed_by: s.completedBy ?? null,
+    created_by: s.createdBy ?? null,
   }));
 }
 
@@ -364,6 +370,12 @@ export function fromEscrowRow(row: Record<string, unknown>): Escrow {
     buyerClosedAt,
     sellerClosedAt,
     createdAt: String(row.created_at ?? new Date().toISOString()),
+    // Team Access (migration 0044): a row mapped from the escrows table
+    // is this account's own escrow (the invited-escrow merge decorates
+    // its copies with the grant role + owner identity afterwards).
+    accessRole: 'owner',
+    ownerName: null,
+    ownerPhotoUrl: null,
   };
   // Key dates (migration 0019): local 'YYYY-MM-DD' or null. Absent on
   // pre-0019 rows; null until the realtor sets one.
@@ -396,6 +408,9 @@ export function fromStepRow(row: Record<string, unknown>): StepT {
     custom,
     order: Number(row.position ?? 0),
     completedAt: (row.completed_at as string) ?? null,
+    // Team Access actor stamps (migration 0044): absent on pre-0044 rows.
+    completedBy: (row.completed_by as string) ?? null,
+    createdBy: (row.created_by as string) ?? null,
     explainer: (row.explainer as string) ?? null,
     // Template key (migration 0020). Rows written before keys existed
     // backfill it by title match here, same as the local upgrade path —
@@ -427,29 +442,53 @@ export async function pullEscrowsNow(client: Cloud): Promise<Escrow[] | null> {
     );
     if (rows.length === 0) return [];
     const ids = rows.map((r) => String(r.id));
+    const stepsByEscrow = await pullStepsByEscrow(client, ids);
+    if (stepsByEscrow === null) return null;
+    return rows.map((r) => {
+      const e = fromEscrowRow(r);
+      const g = stepsByEscrow.get(e.id);
+      e.buyerSteps = g?.buyer ?? [];
+      e.sellerSteps = g?.seller ?? [];
+      return e;
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Pull steps for a set of escrow ids (by id, never by owner — Team
+ * Access, migration 0044: an invited escrow's steps are readable by the
+ * grant holder under RLS). Grouped per escrow and role, position order.
+ * Returns null on a transport/RLS failure so callers keep local state.
+ */
+export async function pullStepsByEscrow(
+  client: Cloud,
+  ids: string[],
+): Promise<Map<string, { buyer: StepT[]; seller: StepT[] }> | null> {
+  const out = new Map<string, { buyer: StepT[]; seller: StepT[] }>();
+  if (ids.length === 0) return out;
+  try {
     const { data: stepData, error: stepError } = await client
       .from('steps')
       .select('*')
       .in('escrow_id', ids);
     if (stepError) return null;
-    const stepsByEscrow = new Map<string, { buyer: StepT[]; seller: StepT[] }>();
     for (const s of (stepData ?? []) as Record<string, unknown>[]) {
       const eid = String(s.escrow_id ?? '');
       if (!ids.includes(eid)) continue;
-      let g = stepsByEscrow.get(eid);
+      let g = out.get(eid);
       if (!g) {
         g = { buyer: [], seller: [] };
-        stepsByEscrow.set(eid, g);
+        out.set(eid, g);
       }
       (String(s.role ?? '') === 'seller' ? g.seller : g.buyer).push(fromStepRow(s));
     }
-    return rows.map((r) => {
-      const e = fromEscrowRow(r);
-      const g = stepsByEscrow.get(e.id);
-      e.buyerSteps = (g?.buyer ?? []).sort((a, b) => a.order - b.order);
-      e.sellerSteps = (g?.seller ?? []).sort((a, b) => a.order - b.order);
-      return e;
-    });
+    for (const g of out.values()) {
+      g.buyer.sort((a, b) => a.order - b.order);
+      g.seller.sort((a, b) => a.order - b.order);
+    }
+    return out;
   } catch {
     return null;
   }
@@ -980,19 +1019,25 @@ export async function pushTcIntakeNow(
   userId: string,
   escrowId: string,
   data: TcIntakeData,
+  ownerId?: string,
 ): Promise<void> {
   // upsertAll verifies the affected row count (the same confirmed-write
   // discipline as every other table): an RLS rejection looks like a
   // success without the RETURNING check.
+  // Team Access (migration 0044): owner_id must keep naming the ESCROW
+  // OWNER (the RLS policy requires it and get_client_view joins on it),
+  // while updated_by names the account actually saving — for an owner
+  // saving their own escrow the two are the same uid.
   await upsertAll(
     client,
     'tc_intakes',
     [
       {
         escrow_id: escrowId,
-        owner_id: userId,
+        owner_id: ownerId ?? userId,
         data: normalizeTcIntake(data),
         updated_at: new Date().toISOString(),
+        updated_by: userId,
       },
     ],
     'escrow_id',
@@ -1035,19 +1080,23 @@ export async function pushBuyerIntakeNow(
   userId: string,
   escrowId: string,
   data: BuyerIntakeData,
+  ownerId?: string,
 ): Promise<void> {
   // upsertAll verifies the affected row count (the same confirmed-write
   // discipline as every other table): an RLS rejection looks like a
   // success without the RETURNING check.
+  // Team Access (migration 0044): owner_id names the ESCROW OWNER and
+  // updated_by the saving account — see pushTcIntakeNow.
   await upsertAll(
     client,
     'buyer_intakes',
     [
       {
         escrow_id: escrowId,
-        owner_id: userId,
+        owner_id: ownerId ?? userId,
         data: normalizeBuyerIntake(data),
         updated_at: new Date().toISOString(),
+        updated_by: userId,
       },
     ],
     'escrow_id',
@@ -1106,7 +1155,21 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     ...toStepRows(escrow.id, 'seller', escrow.sellerSteps),
   ];
   if (steps.length > 0) {
-    await upsertAll(client, 'steps', steps, 'id');
+    try {
+      await upsertAll(client, 'steps', steps, 'id');
+    } catch (e) {
+      if (!isMissingColumnError(e)) throw e;
+      // Migration 0044 (Team Access actor stamps) not applied yet: retry
+      // without completed_by/created_by so the push still lands; the
+      // stamps stay local until the migration is applied.
+      const legacy = steps.map((s) => {
+        const row = { ...s };
+        delete row.completed_by;
+        delete row.created_by;
+        return row;
+      });
+      await upsertAll(client, 'steps', legacy, 'id');
+    }
   }
 }
 

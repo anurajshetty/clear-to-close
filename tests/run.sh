@@ -34,6 +34,8 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/topCard.ts" \
   "$ROOT/src/lib/shareCopy.ts" \
   "$ROOT/src/lib/shareSections.ts" \
+  "$ROOT/src/lib/teamAccess.ts" \
+  "$ROOT/src/lib/teamActivityText.ts" \
   "$ROOT/src/lib/latest.ts" \
   "$ROOT/src/lib/lifecycle.ts" \
   "$ROOT/src/lib/cloudSync.ts" \
@@ -66,6 +68,9 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/pace.test.ts" \
   "$ROOT/tests/sharecopy.test.ts" \
   "$ROOT/tests/share_side.test.ts" \
+  "$ROOT/tests/team_screens.test.ts" \
+  "$ROOT/tests/team_store.test.ts" \
+  "$ROOT/tests/team_push_drain.test.ts" \
   "$ROOT/tests/latest.test.ts" \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
@@ -187,6 +192,9 @@ TZ="America/Los_Angeles" node "$OUT/tests/dates.test.js"
 node "$OUT/tests/pace.test.js"
 node "$OUT/tests/sharecopy.test.js"
 node "$OUT/tests/share_side.test.js"
+node "$OUT/tests/team_screens.test.js"
+node "$OUT/tests/team_store.test.js"
+node "$OUT/tests/team_push_drain.test.js"
 # Pinned TZ so the calendar-day relative-time buckets are deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"

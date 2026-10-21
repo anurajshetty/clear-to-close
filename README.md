@@ -90,6 +90,29 @@ central user; the buyers and sellers they represent are the other parties.
   coordinator) — the codes die with the escrow, and any redeemed device
   link is killed at the same moment. Closed and cancelled
   cards show the pencil only.
+- **Team Access** (Oct 2026, migration 0044) — a realtor can invite ONE
+  Associate and ONE transaction coordinator per escrow, by email, from the
+  escrow's **Invite team** sheet (the two-row Invite card at the end of the
+  checklist: "Invite clients" for buyer/seller codes, "Invite team" for
+  account invites; the client share screen no longer carries a TC section,
+  and a redeemed legacy TC link is managed from the Team sheet instead).
+  Invitees sign in with their own accounts; people without an account get
+  an email with the app link (never any address or deal details). Pending
+  invites appear at the top of the invitee's **Invited escrows** home
+  section with Accept/Reject; accepting adds the escrow to that section.
+  **Associates** edit everything in the escrow (checklist, custom steps,
+  intakes, key dates, property details, client codes); **TCs** edit the
+  intakes only and view the rest. Only the owner creates, closes, cancels,
+  manages the team, or edits the profile. Closed/cancelled escrows are
+  read-only for members. Every change lands in the escrow's **Activity**
+  timeline with the actor's name (clients see none of this; their codes,
+  screens, and pushes are unchanged, and client-facing copy still says
+  "your realtor"). Pushes: the invitee is notified on invite, the owner
+  on acceptance, and the owner gets a coalesced summary when an Associate
+  checks, unchecks, or adds a step (tap opens Activity) — all through the
+  existing outbox with per-token quiet hours. Removing a member ends
+  their access immediately; seats are enforced in the database (one
+  active-or-pending grant per role per escrow).
 - **Transaction detail** — per-escrow home with:
   - **Time tracker** — escrow open date, end date (display-only), and where
     today falls between them (day X of Y). Turns red once the end date passes.
@@ -822,6 +845,17 @@ Supabase dashboard (one-time):
     the invite-share link; no function redeploy needed. The value is a
     first-party link and stays one at store launch — routing happens
     on the landing page, not by pointing this at a store URL).
+11. Run `supabase/migrations/0044_team_access.sql` in the SQL editor,
+    then redeploy the `send-client-push` Edge Function from the
+    regenerated single file (Team Access drains: team invite /
+    accepted / member-activity kinds). For invite EMAILS to people
+    without an account, also: set the function's `RESEND_API_KEY`
+    secret (Supabase → Edge Functions → send-client-push → Secrets)
+    and the From address —
+    `insert into push_config (key, value) values ('invite_from_email', 'Clear to Close <invites@YOURDOMAIN>') on conflict (key) do update set value = excluded.value;`
+    Without them, account invitees still get pushes and in-app pending
+    cards; only the no-account email is skipped (silently, by design).
+    Invite emails are capped at 20 per owner per rolling 24h.
 
 Kill switch (no code deploy needed): pause all pushes with
 

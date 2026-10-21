@@ -12,7 +12,7 @@
 // time-tracker card on top, then a Buyer | Seller tab switcher — each tab
 // fully independent (own checklist, ring, edit draft; rows carry a
 // Buyer/Seller tag). No shared-step syncing.
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +21,22 @@ import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
 import type { ChecklistDraftStep, ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { uid } from '../../src/lib/store';
-import { hasClientInvites, shareButtonTitle } from '../../src/lib/invites';
+import {
+  accessRoleOf,
+  canEditChecklist,
+  completedByOf,
+  isMemberRole,
+  ownerNameOf,
+  participantNameMap,
+  seatFor,
+  seatPillLabel,
+  memberStripSentence,
+} from '../../src/lib/teamAccess';
+import type {
+  TeamActivityEntry,
+  TeamParticipants,
+} from '../../src/lib/teamModel';
+import { checkedOffByLine, activitySummaryLine } from '../../src/lib/teamActivityText';
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard } from '../../src/components/TcIntakeEntry';
@@ -31,7 +46,7 @@ import {
   showBuyerIntakeForRealtorSide,
 } from '../../src/lib/buyerIntake';
 import { EditableChecklist } from '../../src/components/Checklist';
-import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight } from '../../src/components/ui';
+import { Field, Kicker, PrimaryButton, SecondaryButton, useKeyboardHeight, initialsOf, Card } from '../../src/components/ui';
 import { closedDisplayDate, formatClosedDate, sideClosedAt } from '../../src/lib/lifecycle';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
@@ -43,6 +58,7 @@ const PENCIL_PATH =
   'M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z';
 const X_PATH =
   'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z';
+
 
 function sortedSteps(raw: StepT[]): StepT[] {
   return [...raw].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -197,12 +213,11 @@ export default function TransactionDetail() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToastMsg(null), 2400);
   };
-  // Share flow (Anuraj's final decision, Sept 29, 2026): the single
-  // "Share this escrow" button below pushes the full-screen Share route.
-  // Per-side invite state now lives on that screen, not here.
-  // Label (Anuraj, Oct 2026): once a buyer/seller client invite exists the
-  // button reads "View clients" instead of "Share this escrow".
-  const [hasClients, setHasClients] = useState(false);
+  // Team Access (Oct 20, 2026): participants (Invite-card seat pills,
+  // "Checked off by" actor names) and the activity feed's newest entry
+  // (footer row). Additive reads; failures leave the surfaces empty.
+  const [participants, setParticipants] = useState<TeamParticipants | null>(null);
+  const [latestActivity, setLatestActivity] = useState<TeamActivityEntry | null>(null);
 
   const both = escrow?.side === 'both';
   const role: ClientRole = both ? tab : escrow?.side === 'sell' ? 'seller' : 'buyer';
@@ -216,14 +231,18 @@ export default function TransactionDetail() {
     } finally {
       setLoaded(true);
     }
-    // The share button label (Anuraj, Oct 2026): "View clients" once a
-    // buyer/seller invite exists. Loaded on every focus so returning from
-    // the share screen re-evaluates the label. A failed invite load must
-    // never break the escrow load above.
+    // Team Access reads (Oct 20, 2026). Best-effort: a failed team read
+    // must never break the escrow load above.
     try {
-      setHasClients(hasClientInvites(await store.listInvites(escrowId)));
+      setParticipants(await store.getEscrowParticipants(escrowId));
     } catch (err) {
-      console.warn('listInvites failed', err);
+      console.warn('getEscrowParticipants failed', err);
+    }
+    try {
+      const rows = await store.listEscrowActivity(escrowId);
+      setLatestActivity(rows.length > 0 ? rows[0] : null);
+    } catch (err) {
+      console.warn('listEscrowActivity failed', err);
     }
   }, [escrowId]);
 
@@ -235,6 +254,17 @@ export default function TransactionDetail() {
 
   const toggle = async (r: ClientRole, stepId: string) => {
     if (!escrow) return;
+    // Team Access read-only guards (the server enforces the same rules):
+    // TCs view the checklist without toggling, and members cannot change
+    // a closed/cancelled escrow or an already-closed side.
+    const myRole = accessRoleOf(escrow);
+    if (!canEditChecklist(myRole)) return;
+    if (
+      isMemberRole(myRole) &&
+      (escrow.status !== 'open' || sideClosedAt(escrow, r) !== null)
+    ) {
+      return;
+    }
     setWriteError(null);
     try {
       setEscrow(await store.toggleStep(escrow.id, r, stepId));
@@ -248,6 +278,11 @@ export default function TransactionDetail() {
 
   const startEditing = (r: ClientRole) => {
     if (!escrow || editingRole !== null) return;
+    // Team Access: TCs and members of a closed/cancelled escrow never
+    // enter checklist edit mode (server enforces too).
+    const myRole = accessRoleOf(escrow);
+    if (!canEditChecklist(myRole)) return;
+    if (isMemberRole(myRole) && escrow.status !== 'open') return;
     const steps = r === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps;
     setDraft(
       sortedSteps(steps).map((s) => ({
@@ -375,6 +410,61 @@ export default function TransactionDetail() {
 
   const subtitle = both ? `${escrow.city} · Dual agency` : `${escrow.city} · ${partyLine(escrow)}`;
 
+  // ---- Team Access derivations (Oct 20, 2026) ----
+  const accessRole = accessRoleOf(escrow);
+  const isMember = isMemberRole(accessRole);
+  const memberReadOnly = isMember && escrow.status !== 'open';
+  const canEdit = canEditChecklist(accessRole) && !memberReadOnly;
+  const nameById = useMemo(
+    () => participantNameMap(participants),
+    [participants],
+  );
+  // Frame 6/7: a done step names who checked it off when the actor
+  // resolves (participants or, for the owner, the owner row). Unknown
+  // actor → no line at all.
+  const checkedByFor = (step: StepT): string | null => {
+    if (!step.done || !step.completedAt) return null;
+    const by = completedByOf(step);
+    if (!by) return null;
+    const name = nameById.get(by);
+    if (!name) return null;
+    return checkedOffByLine(name, step.completedAt);
+  };
+
+  // Frame 6 shared strip: whose escrow this is + what my role can do.
+  const renderMemberStrip = () => {
+    if (!isMember) return null;
+    const owner = participants?.owner?.name?.trim() || ownerNameOf(escrow);
+    return (
+      <View style={styles.strip} testID="shared-strip">
+        <View style={styles.stripAvatar}>
+          <Text style={styles.stripAvatarText}>{initialsOf(owner || '?')}</Text>
+        </View>
+        <Text style={styles.stripText}>
+          <Text style={styles.stripBold}>
+            {owner ? `${owner}'s escrow. ` : 'Shared escrow. '}
+          </Text>
+          {memberStripSentence(accessRole)}
+        </Text>
+      </View>
+    );
+  };
+
+  // Frame 6 lock banner: a member looking at a closed/cancelled escrow.
+  const renderReadOnlyBanner = () => {
+    if (!memberReadOnly) return null;
+    return (
+      <View style={styles.roBanner} testID="member-readonly-banner">
+        <Text style={styles.roLock}>🔒</Text>
+        <Text style={styles.roText}>
+          {escrow.status === 'cancelled'
+            ? 'This escrow was cancelled. You can look back at everything, but nothing can be changed.'
+            : 'This escrow is closed. You can look back at everything, but nothing can be changed.'}
+        </Text>
+      </View>
+    );
+  };
+
   // Escrow lifecycle (approved Sept 2026): the all-steps-complete sage
   // banner carries the close button — once closed it becomes the "Closed"
   // indicator (sage tag + "Closed {date}.", no button). Unchecking any step
@@ -409,6 +499,10 @@ export default function TransactionDetail() {
     const steps = stepsFor(r);
     const done = steps.filter((s) => s.done).length;
     if (steps.length === 0 || done !== steps.length) return null;
+    // Team Access (frame 6): members never see the Close action — the
+    // banner (and with it the button) renders for the owner only. The
+    // Closed indicator above still shows for everyone.
+    if (isMember) return null;
     return (
       <View style={styles.banner} testID={`close-escrow-banner-${r}`}>
         <Text style={styles.bannerTitle}>{`All ${steps.length} steps complete.`}</Text>
@@ -425,25 +519,107 @@ export default function TransactionDetail() {
     );
   };
 
-  // "Share this escrow" at the end of the checklist (Anuraj's final
-  // decision, Sept 29, 2026): ONE entry button replaces the three
-  // per-side/TC "Invite client"/"View clients"/"Invite TC"/"View TC"
-  // buttons. It pushes the full-screen Share route for this escrow and
-  // stays visible on open, closed, and cancelled escrows alike — the
-  // Share screen itself gates invite creation on dead escrows. The label
-  // reads "View clients" once a buyer/seller client invite exists
-  // (Anuraj, Oct 2026); the destination never changes.
-  const renderShareButton = () => {
-    if (!escrow) return null;
+  // End-of-checklist Invite card (Team Access, Oct 20, 2026 — replaces
+  // the old single "Share this escrow" button in this exact slot, per
+  // approved mockup frame 7 + addendum): the owner gets "Invite clients"
+  // (the existing share route) and "Invite team" (the new team route,
+  // seat pills under the sub line); an Associate gets ONLY "Invite
+  // clients"; a TC gets no card at all. Below it, the Activity row
+  // (frame 6) for owner and members alike.
+  const renderInviteCard = () => {
+    if (!escrow || accessRole === 'tc') return null;
+    const assocPill = seatPillLabel('associate', seatFor(participants, 'associate'));
+    const tcPill = seatPillLabel('tc', seatFor(participants, 'tc'));
     return (
-      <View style={styles.inviteBtnWrap}>
-        <SecondaryButton
-          title={shareButtonTitle(hasClients)}
+      <Card style={styles.inviteCard} testID="invite-card">
+        <Pressable
           onPress={() => router.push(`/share/${escrow.id}`)}
-        />
-      </View>
+          accessibilityRole="button"
+          accessibilityLabel="Invite clients"
+          testID="invite-clients-row"
+          style={({ pressed }) => [styles.actRow, pressed && { opacity: 0.7 }]}
+        >
+          <View style={styles.actDot}>
+            <Text style={styles.actGlyph}>⌂</Text>
+          </View>
+          <View style={styles.actMain}>
+            <Text style={styles.actTitle}>Invite clients</Text>
+            <Text style={styles.actSub}>Buyer & seller join with a one-time code</Text>
+          </View>
+          <Text style={styles.actChev}>›</Text>
+        </Pressable>
+        {accessRole === 'owner' ? (
+          <>
+            <View style={styles.actDivider} />
+            <Pressable
+              onPress={() => router.push(`/team/${escrow.id}`)}
+              accessibilityRole="button"
+              accessibilityLabel="Invite team"
+              testID="invite-team-row"
+              style={({ pressed }) => [styles.actRow, pressed && { opacity: 0.7 }]}
+            >
+              <View style={[styles.actDot, styles.actDotGold]}>
+                <Text style={[styles.actGlyph, styles.actGlyphGold]}>✓</Text>
+              </View>
+              <View style={styles.actMain}>
+                <Text style={styles.actTitle}>Invite team</Text>
+                <Text style={styles.actSub}>
+                  Associate & TC join with their own account
+                </Text>
+                {assocPill || tcPill ? (
+                  <View style={styles.seatPills}>
+                    {assocPill ? (
+                      <View style={[styles.seatPill, styles.seatPillAssoc]}>
+                        <Text style={[styles.seatPillText, styles.seatPillTextAssoc]}>
+                          {assocPill}
+                        </Text>
+                      </View>
+                    ) : null}
+                    {tcPill ? (
+                      <View style={[styles.seatPill, styles.seatPillTc]}>
+                        <Text style={[styles.seatPillText, styles.seatPillTextTc]}>
+                          {tcPill}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.actChev}>›</Text>
+            </Pressable>
+          </>
+        ) : null}
+      </Card>
     );
   };
+
+  const renderActivityRow = () => {
+    if (!escrow) return null;
+    return (
+      <Pressable
+        onPress={() => router.push(`/activity/${escrow.id}`)}
+        accessibilityRole="button"
+        accessibilityLabel="View activity"
+        testID="activity-row"
+        style={({ pressed }) => [pressed && { opacity: 0.7 }]}
+      >
+        <Card style={styles.activityCard}>
+          <Text style={styles.activityTitle}>Activity</Text>
+          <Text style={styles.activitySummary} numberOfLines={1}>
+            {latestActivity ? activitySummaryLine(latestActivity) : 'Nothing yet'}
+          </Text>
+          <Text style={styles.actChev}>›</Text>
+        </Card>
+      </Pressable>
+    );
+  };
+
+  const renderInviteFooter = () => (
+    <View style={styles.inviteBtnWrap}>
+      {renderInviteCard()}
+      {renderActivityRow()}
+    </View>
+  );
 
   // "+ Add a custom step" dashed button + inline form (mockup 01 · .addstep).
   // Edit mode only: it lives in the sticky pinned footer and appends to the
@@ -530,18 +706,20 @@ export default function TransactionDetail() {
         ) : (
           <>
             <Kicker>{both ? (r === 'buyer' ? 'Buyer checklist' : 'Seller checklist') : 'Checklist'}</Kicker>
-            <Pressable
-              onPress={() => startEditing(r)}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit the ${r} checklist`}
-              testID={`checklist-edit-${r}`}
-              hitSlop={8}
-              style={styles.headBtn}
-            >
-              <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
-                <Path d={PENCIL_PATH} fill={colors.muted} />
-              </Svg>
-            </Pressable>
+            {canEdit ? (
+              <Pressable
+                onPress={() => startEditing(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit the ${r} checklist`}
+                testID={`checklist-edit-${r}`}
+                hitSlop={8}
+                style={styles.headBtn}
+              >
+                <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
+                  <Path d={PENCIL_PATH} fill={colors.muted} />
+                </Svg>
+              </Pressable>
+            ) : null}
           </>
         )}
       </View>
@@ -598,18 +776,20 @@ export default function TransactionDetail() {
               <Kicker>{r === 'buyer' ? 'Buyer checklist' : 'Seller checklist'}</Kicker>
               <Text style={styles.tabCap}>Checked off independently</Text>
             </View>
-            <Pressable
-              onPress={() => startEditing(r)}
-              accessibilityRole="button"
-              accessibilityLabel={`Edit the ${r} checklist`}
-              testID={`checklist-edit-${r}`}
-              hitSlop={8}
-              style={styles.headBtn}
-            >
-              <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
-                <Path d={PENCIL_PATH} fill={colors.muted} />
-              </Svg>
-            </Pressable>
+            {canEdit ? (
+              <Pressable
+                onPress={() => startEditing(r)}
+                accessibilityRole="button"
+                accessibilityLabel={`Edit the ${r} checklist`}
+                testID={`checklist-edit-${r}`}
+                hitSlop={8}
+                style={styles.headBtn}
+              >
+                <Svg width={20} height={20} viewBox="0 0 24 24" aria-hidden={true}>
+                  <Path d={PENCIL_PATH} fill={colors.muted} />
+                </Svg>
+              </Pressable>
+            ) : null}
           </View>
         )}
         {renderLifecycle(r)}
@@ -623,6 +803,7 @@ export default function TransactionDetail() {
               appraisalDeadline: escrow?.appraisalDeadline ?? null,
               loanApprovalDate: escrow?.loanApprovalDate ?? null,
             }}
+            checkedByFor={checkedByFor}
             editing={isEditing}
             onToggle={(id) => toggle(r, id)}
             onReorder={reorderDraft}
@@ -636,7 +817,7 @@ export default function TransactionDetail() {
                   <Text style={styles.footnote}>
                     {'Tap the circle to check a step off. Tap it again to undo.'}
                   </Text>
-                  {renderShareButton()}
+                  {renderInviteFooter()}
                 </View>
               )
             }
@@ -691,6 +872,8 @@ export default function TransactionDetail() {
         // sits above the tabs; each tab is its own independent checklist.
         <View style={styles.bothWrap}>
           <View style={styles.bothTop}>
+            {renderMemberStrip()}
+            {renderReadOnlyBanner()}
             <TimeTrackerCard
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
@@ -743,12 +926,15 @@ export default function TransactionDetail() {
               appraisalDeadline: escrow?.appraisalDeadline ?? null,
               loanApprovalDate: escrow?.loanApprovalDate ?? null,
             }}
+            checkedByFor={checkedByFor}
             editing={editingRole === role}
             onToggle={(id) => toggle(role, id)}
             onReorder={reorderDraft}
             onRemoveStep={removeDraftStep}
             ListHeaderComponent={
               <View>
+                {renderMemberStrip()}
+                {renderReadOnlyBanner()}
                 <TimeTrackerCard
                   openDate={escrow.openDate}
                   closeDate={escrow.closeDate}
@@ -768,7 +954,7 @@ export default function TransactionDetail() {
                   <Text style={styles.footnote}>
                     {'Tap the circle to check a step off. Tap it again to undo.'}
                   </Text>
-                  {renderShareButton()}
+                  {renderInviteFooter()}
                 </View>
               )
             }
@@ -1021,6 +1207,166 @@ const styles = StyleSheet.create({
   },
   inviteBtnWrap: {
     marginTop: 14,
+  },
+  // Team Access (Oct 20, 2026) — shared strip (frame 6): teal-soft band
+  // naming the owner + the member's role sentence.
+  strip: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.accentSoft,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 14,
+  },
+  stripAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  stripAvatarText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+  stripText: {
+    flex: 1,
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: colors.body,
+  },
+  stripBold: {
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  // Team Access — member read-only lock banner (frame 6).
+  roBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: colors.amberSoft,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginTop: 14,
+  },
+  roLock: {
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  roText: {
+    flex: 1,
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: colors.body,
+    fontWeight: '600',
+  },
+  // Team Access — end-of-checklist Invite card + Activity row (frames 6/7).
+  inviteCard: {
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  actRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+    minHeight: 56,
+  },
+  actDot: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  actDotGold: {
+    backgroundColor: colors.amberSoft,
+  },
+  actGlyph: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.accent,
+  },
+  actGlyphGold: {
+    color: colors.amber,
+  },
+  actMain: {
+    flex: 1,
+  },
+  actTitle: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  actSub: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  actChev: {
+    fontSize: 20,
+    color: colors.muted,
+    flexShrink: 0,
+  },
+  actDivider: {
+    borderTopWidth: 1,
+    borderTopColor: colors.line,
+  },
+  seatPills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  seatPill: {
+    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 9,
+  },
+  seatPillAssoc: {
+    backgroundColor: colors.accentSoft,
+  },
+  seatPillTc: {
+    backgroundColor: colors.amberSoft,
+  },
+  seatPillText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+  seatPillTextAssoc: {
+    color: colors.accent,
+  },
+  seatPillTextTc: {
+    color: colors.amber,
+  },
+  activityCard: {
+    marginTop: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  activityTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  activitySummary: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.body,
+    textAlign: 'right',
   },
   error: {
     fontSize: 13,

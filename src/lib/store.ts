@@ -13,6 +13,12 @@ import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
 import { isInviteRoleAllowedForSide } from './shareSections';
 import type {
+  TeamActionResult,
+  TeamActivityEntry,
+  TeamParticipants,
+  TeamPendingInvite,
+} from './teamModel';
+import type {
   ApplyChecklistResult,
   ChecklistDraftStep,
   ClientLink,
@@ -27,8 +33,22 @@ import type {
   ResolveInviteError,
   StepT,
   TcView,
+  TeamGrantRole,
+  TeamRole,
   UpdateEscrowInput,
 } from './types';
+
+// Team Access (Oct 2026): screens import the team types from the store
+// (or from teamModel directly) — one contract surface.
+export type {
+  TeamActionResult,
+  TeamActivityEntry,
+  TeamParticipantMember,
+  TeamParticipantOwner,
+  TeamParticipants,
+  TeamPendingInvite,
+} from './teamModel';
+export type { TeamGrantRole, TeamRole } from './types';
 
 export interface KV {
   getItem(k: string): Promise<string | null>;
@@ -139,6 +159,11 @@ export interface Store {
   pullEscrowsFromCloud(): Promise<Escrow[]>;
   /** Insert or replace a whole escrow by id (used by the cloud pull-merge). */
   replaceEscrow(e: Escrow): Promise<void>;
+  /**
+   * Drop a local escrow copy entirely (Team Access: an invited escrow
+   * whose grant ended). Local-only; the server is untouched.
+   */
+  removeLocalEscrow(id: string): Promise<void>;
   /** Cloud-linked realtor profile for a client view, or null (local path). */
   getLinkedProfile(escrowId: string): Promise<RealtorProfile | null>;
   /**
@@ -398,6 +423,35 @@ export interface Store {
       revokedLink: { id: string; revokedAt: string } | null;
     }>
   >;
+  // ------------------------------------------------------- Team Access --
+  // Team Access (Oct 2026, migration 0044). The base (local-only) store
+  // holds the pending-invite state (persisted like every other
+  // collection) and inert defaults; the synced store overrides the
+  // actions with the real RPC implementations.
+  /** Pending team invites addressed to this account (newest state from
+   * the last refreshTeam; empty until one runs). */
+  readonly pendingTeamInvites: TeamPendingInvite[];
+  /** Converge team state from the server (claim + pending invites +
+   * invited-escrow merge). Non-fatal by contract: never rejects. */
+  refreshTeam(): Promise<void>;
+  /** Cache setter (the setTcIntakeCache pattern): the synced layer's
+   * refreshTeam writes the mapped pending invites through here. */
+  setPendingTeamInvites(invites: TeamPendingInvite[]): Promise<void>;
+  respondToTeamInvite(grantId: string, accept: boolean): Promise<TeamActionResult>;
+  createTeamInvite(
+    escrowId: string,
+    email: string,
+    role: TeamGrantRole,
+  ): Promise<TeamActionResult>;
+  removeTeamMember(grantId: string): Promise<TeamActionResult>;
+  cancelTeamInvite(grantId: string): Promise<TeamActionResult>;
+  leaveTeamEscrow(grantId: string): Promise<TeamActionResult>;
+  /** Owner + grant holders of one escrow; null when the server does not
+   * confirm this account's access (or sync is unavailable). */
+  getEscrowParticipants(escrowId: string): Promise<TeamParticipants | null>;
+  /** The escrow's activity timeline, newest first ([] when unavailable). */
+  listEscrowActivity(escrowId: string): Promise<TeamActivityEntry[]>;
+
   /**
    * Apply a confirmed preview: swap the snapshot's collections into the
    * live data, persist, and return the preview's result. Call ONLY after
@@ -412,6 +466,8 @@ const K_INVITES = 'ctc:invites';
 const K_LINKS = 'ctc:links';
 const K_TC_INTAKES = 'ctc:tc-intakes';
 const K_BUYER_INTAKES = 'ctc:buyer-intakes';
+/** Team Access (Oct 2026): pending team invites addressed to this account. */
+const K_TEAM_INVITES = 'ctc:team-invites';
 /** Step ids stripped from the seller template, awaiting server-side delete. */
 const K_PENDING_STEP_DELETIONS = 'ctc:pending-step-deletions';
 
@@ -561,17 +617,19 @@ export function createStore(kv: KV): Store {
     links: ClientLink[];
     tcIntakes: Record<string, TcIntakeRow>;
     buyerIntakes: Record<string, BuyerIntakeRow>;
-  } = { loaded: false, profile: null, escrows: [], invites: [], links: [], tcIntakes: {}, buyerIntakes: {} };
+    teamInvites: TeamPendingInvite[];
+  } = { loaded: false, profile: null, escrows: [], invites: [], links: [], tcIntakes: {}, buyerIntakes: {}, teamInvites: [] };
 
   async function ensureLoaded(): Promise<void> {
     if (data.loaded) return;
-    const [p, e, i, l, t, b] = await Promise.all([
+    const [p, e, i, l, t, b, ti] = await Promise.all([
       kv.getItem(K_PROFILE),
       kv.getItem(K_ESCROWS),
       kv.getItem(K_INVITES),
       kv.getItem(K_LINKS),
       kv.getItem(K_TC_INTAKES),
       kv.getItem(K_BUYER_INTAKES),
+      kv.getItem(K_TEAM_INVITES),
     ]);
     data.profile = p ? (JSON.parse(p) as RealtorProfile) : null;
     if (data.profile) {
@@ -713,6 +771,26 @@ export function createStore(kv: KV): Store {
         }
       } catch {
         data.buyerIntakes = {};
+      }
+    }
+    // Team Access (Oct 2026): pending team invites cache — defensively
+    // parsed like the intake caches; a corrupt row is dropped, never a
+    // crash. refreshTeam (synced layer) is the only writer.
+    data.teamInvites = [];
+    if (ti) {
+      try {
+        const parsed = JSON.parse(ti) as unknown;
+        if (Array.isArray(parsed)) {
+          data.teamInvites = parsed.filter(
+            (x): x is TeamPendingInvite =>
+              !!x &&
+              typeof x === 'object' &&
+              typeof (x as TeamPendingInvite).grantId === 'string' &&
+              typeof (x as TeamPendingInvite).escrow?.id === 'string',
+          );
+        }
+      } catch {
+        data.teamInvites = [];
       }
     }
     data.loaded = true;
@@ -893,6 +971,11 @@ export function createStore(kv: KV): Store {
       appraisalDeadline: null,
       loanApprovalDate: null,
       createdAt: new Date().toISOString(),
+      // Team Access (Oct 2026): a locally created escrow is this
+      // account's own — owner role, no separate owner identity.
+      accessRole: 'owner',
+      ownerName: null,
+      ownerPhotoUrl: null,
     };
     h.escrows.push(escrow);
     return escrow;
@@ -997,6 +1080,11 @@ export function createStore(kv: KV): Store {
         custom: d.custom,
         order: index,
         completedAt: d.done ? (d.completedAt ?? prev?.completedAt ?? nowISO) : null,
+        // Team Access actor stamps ride along with the step they belong
+        // to (Oct 2026): a checklist edit must never drop who checked a
+        // step off or who created a custom step.
+        completedBy: prev?.completedBy ?? null,
+        createdBy: prev?.createdBy ?? null,
         // The templateKey is the explainer's identity, not the title: a
         // default step renamed in edit mode keeps its key (and explainer).
         // The draft may carry it for brand-new steps; otherwise the previous
@@ -1380,6 +1468,13 @@ export function createStore(kv: KV): Store {
       if (i >= 0) data.escrows[i] = { ...e };
       else data.escrows.push({ ...e });
       await persist();
+    },
+
+    async removeLocalEscrow(id: string): Promise<void> {
+      await ensureLoaded();
+      const before = data.escrows.length;
+      data.escrows = data.escrows.filter((x) => x.id !== id);
+      if (data.escrows.length !== before) await persist();
     },
 
     async getLinkedProfile(): Promise<RealtorProfile | null> {
@@ -1932,17 +2027,64 @@ export function createStore(kv: KV): Store {
     // already the source of truth here.
     async refreshClientView(_escrowId: string): Promise<void> {},
 
+    // --------------------------------------------------- Team Access ----
+    // The local store holds the pending-invite cache (its own KV key,
+    // outside the preview snapshot — no preview computes against it) and
+    // inert action defaults; the synced store overrides the actions with
+    // the real RPC calls.
+    get pendingTeamInvites(): TeamPendingInvite[] {
+      return data.teamInvites;
+    },
+
+    async refreshTeam(): Promise<void> {},
+
+    async setPendingTeamInvites(invites: TeamPendingInvite[]): Promise<void> {
+      await ensureLoaded();
+      data.teamInvites = [...invites];
+      await kv.setItem(K_TEAM_INVITES, JSON.stringify(data.teamInvites));
+    },
+
+    async respondToTeamInvite(): Promise<TeamActionResult> {
+      return { ok: false, error: 'unavailable' };
+    },
+
+    async createTeamInvite(): Promise<TeamActionResult> {
+      return { ok: false, error: 'unavailable' };
+    },
+
+    async removeTeamMember(): Promise<TeamActionResult> {
+      return { ok: false, error: 'unavailable' };
+    },
+
+    async cancelTeamInvite(): Promise<TeamActionResult> {
+      return { ok: false, error: 'unavailable' };
+    },
+
+    async leaveTeamEscrow(): Promise<TeamActionResult> {
+      return { ok: false, error: 'unavailable' };
+    },
+
+    async getEscrowParticipants(): Promise<TeamParticipants | null> {
+      return null;
+    },
+
+    async listEscrowActivity(): Promise<TeamActivityEntry[]> {
+      return [];
+    },
+
     async clear(): Promise<void> {
       data.loaded = false;
       data.profile = null;
       data.escrows = [];
       data.invites = [];
       data.links = [];
+      data.teamInvites = [];
       await Promise.all([
         kv.removeItem(K_PROFILE),
         kv.removeItem(K_ESCROWS),
         kv.removeItem(K_INVITES),
         kv.removeItem(K_LINKS),
+        kv.removeItem(K_TEAM_INVITES),
       ]);
     },
 

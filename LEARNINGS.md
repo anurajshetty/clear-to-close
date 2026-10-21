@@ -1594,3 +1594,38 @@ check-off copy; `tests/run.sh` wires both.
   asserting platform behavior is a claim that needs the same proof as
   code. A realtor hit this in production; it was only reproduced by
   signing up a test account and clicking the actual email.
+- Team Access (Oct 2026, 0044): the outbox event CHECK constraint is a
+  closed list that EVERY migration adding a kind must re-derive from
+  the LATEST migration touching it — 0044's first draft rebuilt it
+  from 0040's list and silently dropped 'halfway_milestone' (0042);
+  the disposable-chain execution pass caught it when a halfway enqueue
+  violated the new constraint. Same class as the get_client_view
+  paste-ready rule: never reconstruct a shared definition from memory.
+- Actor attribution: triggers take the actor from auth.uid(), never
+  from row stamps — on an uncheck the row's completed_by names the
+  person who CHECKED the step, not the person unchecking. Stamps are
+  display data; auth.uid() is the actor of record.
+- RLS cannot split permissions by column: member UPDATE rights on
+  escrows need a BEFORE UPDATE trigger guard for lifecycle columns
+  (status, user_id), or "members can edit content" quietly becomes
+  "members can close the escrow."
+- WITH CHECK stamp rules need the explicit null-admitting form
+  (`col IS NULL OR col = auth.uid()`): a bare equality passes NULL
+  only by three-valued-logic accident, and the cleared-stamp case
+  (uncheck) is a deliberate allowance, not a loophole.
+- Disposable-PG harness: the stub's auth.uid() reads `test.uid` (not
+  the JWT claims key), platform default privileges (table DML grants,
+  auth schema usage) must be emulated in smoke seeds, and fake
+  pg_net/pg_cron extensions live in pg-scratch/share so a /tmp wipe
+  costs one rebuild (see pg-scratch/HARNESS.md).
+- Supabase Data API grants change (Anuraj standing rule, Oct 20, 2026):
+  from Oct 30, 2026, NEW public-schema tables get NO automatic Data API
+  grants. From migration 0045 onward, every migration that creates a
+  table must carry its own explicit GRANT lines for exactly the roles
+  the app needs (RLS policies do NOT substitute for table grants), and
+  function posture stays explicit: EXECUTE revoked from public/anon,
+  granted to authenticated only where the app calls it. 0044 already
+  complies (verified line-level, Oct 20): EXECUTE grants on all
+  app-called RPCs + both policy helpers, SELECT grant on
+  escrow_activity, and escrow_team_grants / team_invite_email_log
+  intentionally grantless (definer functions / service role only).

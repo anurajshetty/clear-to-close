@@ -8,7 +8,11 @@
 //   * step/key-date trigger events: immediate send, quiet-hours aware.
 //   * flush_step_pushes (pg_cron, every minute): coalesce each escrow's
 //     buffered check-offs (~2 min window), drain the delayed queue,
-//     drain the P1 event outbox (0040).
+//     drain the P1 event outbox (0040) and the Team Access kinds (0044:
+//     team invites, invite acceptances, member step activity — every
+//     recipient/validity decision is made at drain time from the live
+//     grant row, R4; no-account invitees get the invite email instead,
+//     capped at 20 per owner per rolling 24h, R5).
 //   * quiet_checkin_sweep (pg_cron, hourly): five-day quiet check-ins.
 //   * date_reminder_sweep (pg_cron, hourly): P2 date reminders (0041) —
 //     candidates per recipient timezone, claimed once per (date, token)
@@ -29,6 +33,11 @@
 //   PUSH_TRIGGER_SECRET — must match the Vault value minted by the migration
 //                         (printed once as RAISE NOTICE on dashboard run).
 //   EXPO_ACCESS_TOKEN   — created at expo.dev -> Access Tokens.
+//   RESEND_API_KEY      — Resend API key for the Team Access invite
+//                         email (no-account invitees only). The From
+//                         address is push_config key 'invite_from_email'.
+//                         Missing either one: the email is skipped
+//                         silently, the invite itself is unaffected.
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY — provided by the platform.
 //
 // SINGLE-FILE-SOURCE: this file + ./push.ts are the canonical sources.
@@ -41,15 +50,21 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import {
   buildCoalescedBody,
   buildEventBody,
+  buildMemberActivityBody,
   buildPushBody,
   buildQuietCheckinBody,
   buildReminderBody,
+  buildTeamInviteEmail,
   collapseBurstEvents,
   daysUntilClose,
   deadTokensFromReceipts,
+  groupMemberActivityRows,
   isQuietHour,
   nextMorning8am,
   parseTriggerPayload,
+  planTeamInviteAccepted,
+  planTeamInviteReceived,
+  teamQuietQueue,
   resolveZone,
   rolesForPushEvent,
   splitStepPushesByAudience,
@@ -59,8 +74,11 @@ import {
   type BufferedStepPush,
   type ClientLinkRole,
   type ExpoMessage,
+  type MemberActivityFact,
   type PushEvent,
   type ReminderEvent,
+  type TeamGrantSnapshot,
+  type TeamInviteEmail,
 } from './push.ts';
 
 // PUSH_INLINE_MARKER — the generator replaces the './push.ts' import above
@@ -154,15 +172,20 @@ async function getLiveTokens(supa: SupaClient, escrow: EscrowInfo): Promise<Live
 }
 
 /**
- * The escrow owner's own devices (P0.1 user-bound token rows). A realtor
- * with several devices gets the push on each; tap data carries
- * role 'realtor' so the app routes to the realtor escrow screen.
+ * One user's own devices (0038 user-bound token rows), for pushes
+ * addressed to a realtor-side account rather than a client link. A
+ * user with several devices gets the push on each; tap data carries
+ * role 'realtor' so the app routes to the realtor side.
  */
-async function getRealtorTokens(supa: SupaClient, escrow: EscrowInfo): Promise<LiveToken[]> {
+async function getUserPushTokens(
+  supa: SupaClient,
+  userId: string,
+  escrowId: string,
+): Promise<LiveToken[]> {
   const { data: tokenRows } = await supa
     .from('push_tokens')
     .select('expo_push_token, device_id, timezone')
-    .eq('user_id', escrow.userId);
+    .eq('user_id', userId);
   const seen = new Set<string>();
   const rows = ((tokenRows ?? []) as Array<{
     expo_push_token: string;
@@ -188,7 +211,7 @@ async function getRealtorTokens(supa: SupaClient, escrow: EscrowInfo): Promise<L
   }
   return rows.map((r) => {
     const ids = byDevice.get(r.device_id) ?? [];
-    if (!ids.includes(escrow.id)) ids.push(escrow.id);
+    if (!ids.includes(escrowId)) ids.push(escrowId);
     return {
       expo_push_token: r.expo_push_token,
       role: 'realtor',
@@ -196,6 +219,298 @@ async function getRealtorTokens(supa: SupaClient, escrow: EscrowInfo): Promise<L
       escrowIds: ids,
     };
   });
+}
+
+/**
+ * The escrow owner's own devices (P0.1 user-bound token rows). A realtor
+ * with several devices gets the push on each; tap data carries
+ * role 'realtor' so the app routes to the realtor escrow screen.
+ */
+async function getRealtorTokens(supa: SupaClient, escrow: EscrowInfo): Promise<LiveToken[]> {
+  return getUserPushTokens(supa, escrow.userId, escrow.id);
+}
+
+/** Full profile name, or null when the profile/name is missing. */
+async function getProfileName(supa: SupaClient, userId: string): Promise<string | null> {
+  const { data } = await supa
+    .from('realtor_profiles')
+    .select('name')
+    .eq('user_id', userId)
+    .maybeSingle();
+  const name = ((data as { name?: string } | null)?.name ?? '').trim();
+  return name || null;
+}
+
+// ------------------------------------------------------- Team Access (0044) --
+
+const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
+
+/** Built-in app link when app_config has no usable client_app_link. */
+const FALLBACK_CLIENT_APP_LINK = 'https://anurajshetty.github.io/clear-to-close/redeem';
+
+/** The live grant row a team outbox fact refers to (R4 decision input). */
+async function getTeamGrant(
+  supa: SupaClient,
+  grantId: string,
+): Promise<TeamGrantSnapshot | null> {
+  const { data } = await supa
+    .from('escrow_team_grants')
+    .select('id, escrow_id, invited_email, user_id, role, status, invited_by')
+    .eq('id', grantId)
+    .maybeSingle();
+  return (data as TeamGrantSnapshot | null) ?? null;
+}
+
+async function getPushConfigValue(supa: SupaClient, key: string): Promise<string | null> {
+  const { data } = await supa
+    .from('push_config')
+    .select('value')
+    .eq('key', key)
+    .maybeSingle();
+  const v = ((data as { value?: string } | null)?.value ?? '').trim();
+  return v || null;
+}
+
+async function getClientAppLink(supa: SupaClient): Promise<string> {
+  const { data } = await supa
+    .from('app_config')
+    .select('value')
+    .eq('key', 'client_app_link')
+    .maybeSingle();
+  const v = ((data as { value?: string } | null)?.value ?? '').trim();
+  return v.startsWith('https://') ? v : FALLBACK_CLIENT_APP_LINK;
+}
+
+/** Invite emails this owner has sent in the trailing 24h (cap input). */
+async function countRecentInviteEmails(supa: SupaClient, ownerId: string): Promise<number> {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data } = await supa
+    .from('team_invite_email_log')
+    .select('id')
+    .eq('owner_id', ownerId)
+    .gte('sent_at', since);
+  return ((data ?? []) as unknown[]).length;
+}
+
+/**
+ * Send a team push to a realtor-side user's devices, honoring the
+ * per-token quiet hours like deliver() does: tokens in quiet hours
+ * get a push_queue row (kind 'event', team kind in data) for 08:00
+ * recipient-local; the rest send immediately. Unlike deliver() (the
+ * client path), team bodies are complete as built — the
+ * accepted/activity copy already names the street — so no address
+ * suffix is applied. Tap data carries the contract keys
+ * { kind, escrow_id } alongside the legacy { escrowId, role } pair.
+ * Returns the number of messages sent immediately.
+ */
+async function sendTeamPush(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+  tokens: LiveToken[],
+  body: string,
+  kind: 'team_invite_received' | 'team_invite_accepted' | 'member_step_activity',
+  escrowId: string,
+): Promise<number> {
+  const now = new Date();
+  const messages: ExpoMessage[] = [];
+  for (const t of tokens) {
+    const data = { escrowId, escrow_id: escrowId, role: 'realtor', kind };
+    const quiet = teamQuietQueue(now, t.timezone);
+    if (quiet.queued && quiet.sendAfter) {
+      await supa.from('push_queue').insert({
+        expo_push_token: <redacted>
+        title: 'Clear to Close',
+        body,
+        data,
+        kind: 'event',
+        escrow_id: escrowId,
+        send_after: quiet.sendAfter,
+      });
+    } else {
+      messages.push({
+        to: t.expo_push_token,
+        sound: 'default',
+        title: 'Clear to Close',
+        body,
+        data,
+      });
+    }
+  }
+  if (messages.length === 0) return 0;
+  const { sent } = await sendExpoMessages(supa, messages, env, kind, escrowId);
+  return sent;
+}
+
+/** One invite email via Resend. True only when Resend accepted it. */
+async function sendTeamInviteEmailMessage(
+  env: Record<string, string | undefined>,
+  from: string,
+  to: string,
+  email: TeamInviteEmail,
+): Promise<boolean> {
+  const apiKey = env['RESEND_API_KEY'] ?? '';
+  if (!apiKey || !from) return false;
+  try {
+    const res = await fetch(RESEND_EMAILS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: email.subject,
+        text: email.text,
+        html: email.html,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * team_invite_received: the invitee hears about a pending invite. The
+ * plan (from the grant's LIVE state) picks the channel exclusively —
+ * account invitees get a push and never the email; no-account
+ * invitees get the email and never a push. Returns pushes sent.
+ */
+async function handleTeamInviteReceived(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+  escrow: EscrowInfo,
+  row: EventPushRow,
+): Promise<number> {
+  try {
+    const grantId = row.payload['grant_id'];
+    if (typeof grantId !== 'string' || !grantId) return 0;
+    const grant = await getTeamGrant(supa, grantId);
+    if (!grant || grant.status !== 'pending') return 0;
+    const from = await getPushConfigValue(supa, 'invite_from_email');
+    const emailConfigured = !!(env['RESEND_API_KEY'] && from);
+    const sentLast24h = grant.user_id
+      ? 0
+      : await countRecentInviteEmails(supa, grant.invited_by);
+    const ownerName = await getProfileName(supa, escrow.userId);
+    const plan = planTeamInviteReceived(grant, {
+      ownerName,
+      inviteEmailsSentLast24h: sentLast24h,
+      emailConfigured,
+    });
+    if (plan.action === 'push') {
+      // plan guarantees an account invitee here.
+      const tokens = await getUserPushTokens(supa, grant.user_id as string, escrow.id);
+      if (tokens.length === 0) return 0;
+      return await sendTeamPush(supa, env, tokens, plan.body, 'team_invite_received', escrow.id);
+    }
+    if (plan.action === 'skip') {
+      // Cap reached or sending unconfigured: consumed silently, the
+      // invite itself is unaffected (same posture as a missing
+      // push secret: skip rather than break the flow).
+      // eslint-disable-next-line no-console
+      console.log(
+        `[send-client-push] team invite email skipped (${plan.reason}) grant=${grant.id}`,
+      );
+      return 0;
+    }
+    if (plan.action !== 'email' || !from) return 0;
+    const appLink = await getClientAppLink(supa);
+    const email = buildTeamInviteEmail({
+      ownerName,
+      role: grant.role,
+      invitedEmail: grant.invited_email,
+      appLink,
+    });
+    const ok = await sendTeamInviteEmailMessage(env, from, grant.invited_email, email);
+    if (!ok) {
+      await logDeliveryFailure(
+        supa,
+        'team_invite_received',
+        escrow.id,
+        `invite email send failed grant=${grant.id}`,
+      );
+      return 0;
+    }
+    await supa
+      .from('team_invite_email_log')
+      .insert({ grant_id: grant.id, owner_id: grant.invited_by });
+    return 0;
+  } catch (err) {
+    await logDeliveryFailure(
+      supa,
+      'team_invite_received',
+      escrow.id,
+      `team invite handling threw: ${String(err)}`,
+    );
+    return 0;
+  }
+}
+
+/**
+ * team_invite_accepted: the escrow owner hears that the invitee
+ * accepted — only while the grant still stands accepted at drain time.
+ */
+async function handleTeamInviteAccepted(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+  escrow: EscrowInfo,
+  row: EventPushRow,
+): Promise<number> {
+  try {
+    const grantId = row.payload['grant_id'];
+    if (typeof grantId !== 'string' || !grantId) return 0;
+    const grant = await getTeamGrant(supa, grantId);
+    const memberName = grant?.user_id ? await getProfileName(supa, grant.user_id) : null;
+    const plan = planTeamInviteAccepted(grant, { memberName, street: escrow.address });
+    if (plan.action !== 'push') return 0;
+    const tokens = await getRealtorTokens(supa, escrow);
+    if (tokens.length === 0) return 0;
+    return await sendTeamPush(supa, env, tokens, plan.body, 'team_invite_accepted', escrow.id);
+  } catch (err) {
+    await logDeliveryFailure(
+      supa,
+      'team_invite_accepted',
+      escrow.id,
+      `team accepted handling threw: ${String(err)}`,
+    );
+    return 0;
+  }
+}
+
+/**
+ * member_step_activity: ONE summary push per escrow per drain pass to
+ * the escrow owner; every grouped row is consumed by the caller loop.
+ */
+async function handleMemberActivityGroup(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+  escrow: EscrowInfo,
+  group: EventPushRow[],
+): Promise<number> {
+  try {
+    const facts: MemberActivityFact[] = group.map((r) => ({
+      actor_id: (r.payload['actor_id'] as string | null) ?? null,
+      action: (r.payload['action'] as string | null) ?? null,
+      title: (r.payload['title'] as string | null) ?? null,
+    }));
+    const actorId = facts.find((f) => f.actor_id)?.actor_id ?? null;
+    const actorName = actorId ? await getProfileName(supa, actorId) : null;
+    const body = buildMemberActivityBody(facts, actorName, escrow.address);
+    if (!body) return 0;
+    const tokens = await getRealtorTokens(supa, escrow);
+    if (tokens.length === 0) return 0;
+    return await sendTeamPush(supa, env, tokens, body, 'member_step_activity', escrow.id);
+  } catch (err) {
+    await logDeliveryFailure(
+      supa,
+      'member_step_activity',
+      escrow.id,
+      `member activity handling threw: ${String(err)}`,
+    );
+    return 0;
+  }
 }
 
 interface EventPushRow {
@@ -216,8 +531,11 @@ interface EventPushRow {
  * realtor, custom-step events to the step's side + TC, and
  * closed/cancelled events to the tokens SNAPSHOTTED at transition time
  * (the one deliberate exception to send-time liveness — see 0040).
- * Every row is consumed exactly once; delivery failures land in
- * push_delivery_log via deliver(), like every other path.
+ * Team Access kinds (0044) ride the same drain: team_invite_received /
+ * team_invite_accepted / member_step_activity, each decided from live
+ * state at drain time (R4). Every row is consumed exactly once;
+ * delivery failures land in push_delivery_log via deliver(), like
+ * every other path.
  */
 async function handleEventPushes(
   supa: SupaClient,
@@ -232,6 +550,12 @@ async function handleEventPushes(
   // Intake bursts collapse to one delivery per (escrow, event); the
   // collapsed rows are still consumed below.
   const list = collapseBurstEvents(fetched);
+  // Team Access: member step activity coalesces per escrow into ONE
+  // summary push per drain pass (all grouped rows still consumed).
+  const memberGroups = groupMemberActivityRows(
+    list.filter((r) => r.event === 'member_step_activity'),
+  );
+  const memberHandled = new Set<string>();
   let processed = 0;
   let sent = 0;
   let queued = 0;
@@ -300,6 +624,23 @@ async function handleEventPushes(
             sent += d.sent;
             queued += d.queued;
           }
+        }
+      } else if (row.event === 'team_invite_received') {
+        // Team Access (0044): decided from the live grant row (R4).
+        sent += await handleTeamInviteReceived(supa, env, escrow, row);
+      } else if (row.event === 'team_invite_accepted') {
+        sent += await handleTeamInviteAccepted(supa, env, escrow, row);
+      } else if (row.event === 'member_step_activity') {
+        // First row of the escrow's group delivers the summary; the
+        // rest of the group is consumed below without re-sending.
+        if (!memberHandled.has(row.escrow_id)) {
+          memberHandled.add(row.escrow_id);
+          sent += await handleMemberActivityGroup(
+            supa,
+            env,
+            escrow,
+            memberGroups.get(row.escrow_id) ?? [row],
+          );
         }
       } else if (row.event === 'escrow_closed' || row.event === 'escrow_cancelled') {
         const body = buildEventBody(row.event, {

@@ -23,6 +23,12 @@
 //   key_dates_changed:           "{First} updated your key dates."
 // Forward progress only: unchecks never produce an event (the DB trigger
 // matches transitions, never state).
+//
+// Team Access (0044, copy batch drafted Oct 20 2026): invite-received,
+// invite-accepted, and member-step-activity bodies + the no-account
+// invite email are built by the plan*/build* team builders at the
+// bottom of this file; the drain decides recipients from live grant
+// state, never from the outbox payload alone.
 
 export type PushEvent =
   | 'step_done'
@@ -45,6 +51,16 @@ export type PushEvent =
   // P3 (0042): written to the outbox by ctc_maybe_push_halfway when an
   // escrow's checklist crosses 50%; never an HTTP payload either.
   | 'halfway_milestone'
+  // Team Access (0044): per-escrow Associate/TC grants. Written to the
+  // outbox by create_team_invite / respond_team_invite / the steps
+  // member-activity trigger; drained by the per-minute flush like the
+  // P1 kinds. NEVER valid HTTP trigger payloads — parseTriggerPayload
+  // rejects them; recipients and validity are decided at drain time
+  // from the live grant row (R4), and bodies come from the plan*
+  // builders below, not buildPushBody.
+  | 'team_invite_received'
+  | 'team_invite_accepted'
+  | 'member_step_activity'
   // Internal cron events (0024+): posted by pg_cron via push_cron_ping.
   // They carry no escrow_id; parseTriggerPayload accepts them bare.
   | 'flush_step_pushes'
@@ -65,7 +81,14 @@ export interface ExpoMessage {
   sound: 'default';
   title: string;
   body: string;
-  data: { escrowId: string; role: string };
+  data: {
+    escrowId: string;
+    role: string;
+    /** Team Access (0044) kinds carry their routing kind + the
+     *  contract's snake-case escrow id alongside the legacy keys. */
+    kind?: string;
+    escrow_id?: string;
+  };
 }
 
 const MONTHS = [
@@ -151,8 +174,12 @@ export function buildPushBody(
     case 'buyer_intake_submitted':
     case 'seller_intake_submitted':
     case 'halfway_milestone':
-      // P1 outbox events: bodies are built by buildEventBody from the
-      // outbox payload; this HTTP-path builder never serves them.
+    case 'team_invite_received':
+    case 'team_invite_accepted':
+    case 'member_step_activity':
+      // P1/Team outbox events: bodies are built by buildEventBody or
+      // the plan* builders below from the outbox payload; this
+      // HTTP-path builder never serves them.
       return null;
     case 'flush_step_pushes':
     case 'quiet_checkin_sweep':
@@ -632,4 +659,240 @@ export function withAddress(body: string, address: string, multiEscrow: boolean)
   const a = (address ?? '').trim();
   if (!a) return body;
   return `${body} (${a})`;
+}
+
+// ------------------------------------------------------ Team Access (0044) --
+//
+// Copy: Q3 copy batch (team-access-copy-batch.md, drafted Oct 20 2026
+// for Anuraj's approval). The drain decides everything at send time
+// (R4): the outbox row is only a fact ("an invite was created", "a
+// member touched a step"); the grant's CURRENT state decides whether
+// anyone is notified and through which channel. Branch exclusivity for
+// invites: an invitee WITH an account gets the push and never the
+// email; an invitee WITHOUT an account gets the email and never a
+// push. The invite email carries no address or deal details (R7) — the
+// builder below takes no such input by construction.
+
+export type TeamRole = 'associate' | 'tc';
+
+/** Snapshot of the grant row the drain decides from (escrow_team_grants). */
+export interface TeamGrantSnapshot {
+  id: string;
+  escrow_id: string;
+  invited_email: string;
+  user_id: string | null;
+  role: string;
+  status: string;
+  invited_by: string;
+}
+
+/** Per-owner invite-email cap: at most this many per rolling 24h (R5). */
+export const INVITE_EMAIL_CAP_PER_24H = 20;
+
+/** Role phrase for the invite-received PUSH ("join an escrow as ..."). */
+export function teamRolePushPhrase(role: string | null | undefined): string {
+  return role === 'tc' ? 'its transaction coordinator' : 'an Associate';
+}
+
+/** Role phrase for the invite EMAIL ("help with an escrow as ..."). */
+export function teamRoleEmailPhrase(role: string | null | undefined): string {
+  return role === 'tc' ? 'the transaction coordinator' : 'an Associate';
+}
+
+function trimmedOrNull(v: string | null | undefined): string | null {
+  const s = (v ?? '').trim();
+  return s || null;
+}
+
+export type TeamInviteReceivedPlan =
+  /** Grant gone or no longer pending: notify nobody. */
+  | { action: 'drop' }
+  /** Account invitee: push to their own devices only, never email. */
+  | { action: 'push'; body: string }
+  /** No-account invitee: email only, never a push. */
+  | { action: 'email' }
+  /** Email wanted but suppressed (cap reached or sending unconfigured):
+   *  the row is still consumed, silently. */
+  | { action: 'skip'; reason: 'cap' | 'unconfigured' };
+
+/**
+ * Quiet-hours decision for a team push to ONE token (merge addition,
+ * Oct 2026): team pushes follow the same per-token quiet hours as
+ * every other push in this function — during quiet hours the push is
+ * queued for 08:00 recipient-local (push_queue, kind 'event'; the team
+ * kind rides in data) instead of buzzing immediately. The validity
+ * decision (R4) already happened in the planners above; this only
+ * shifts delivery time, exactly like deliver()'s queued rows.
+ */
+export function teamQuietQueue(
+  at: Date,
+  timezone: string | null | undefined,
+): { queued: boolean; sendAfter: string | null } {
+  if (!isQuietHour(at, timezone)) return { queued: false, sendAfter: null };
+  return { queued: true, sendAfter: nextMorning8am(at, timezone).toISOString() };
+}
+
+/**
+ * Decide a team_invite_received outbox row from the grant's live state.
+ * `inviteEmailsSentLast24h` counts the OWNER's invite emails in the
+ * trailing 24h; `emailConfigured` is true only when both the Resend key
+ * and the From address are present.
+ */
+export function planTeamInviteReceived(
+  grant: TeamGrantSnapshot | null,
+  ctx: {
+    ownerName: string | null | undefined;
+    inviteEmailsSentLast24h: number;
+    emailConfigured: boolean;
+  },
+): TeamInviteReceivedPlan {
+  if (!grant || grant.status !== 'pending') return { action: 'drop' };
+  if (grant.user_id) {
+    const owner = trimmedOrNull(ctx.ownerName) ?? 'Your realtor';
+    return {
+      action: 'push',
+      body: `${owner} invited you to join an escrow as ${teamRolePushPhrase(grant.role)}.`,
+    };
+  }
+  if (ctx.inviteEmailsSentLast24h >= INVITE_EMAIL_CAP_PER_24H) {
+    return { action: 'skip', reason: 'cap' };
+  }
+  if (!ctx.emailConfigured) return { action: 'skip', reason: 'unconfigured' };
+  return { action: 'email' };
+}
+
+export type TeamInviteAcceptedPlan =
+  | { action: 'drop' }
+  | { action: 'push'; body: string };
+
+/**
+ * Decide a team_invite_accepted outbox row: the escrow OWNER hears
+ * about it only while the grant stands accepted (a grant removed
+ * before the drain sends nothing). Copy needs the street; without one
+ * the plan drops rather than improvise (house rule).
+ */
+export function planTeamInviteAccepted(
+  grant: TeamGrantSnapshot | null,
+  ctx: { memberName: string | null | undefined; street: string | null | undefined },
+): TeamInviteAcceptedPlan {
+  if (!grant || grant.status !== 'accepted') return { action: 'drop' };
+  const street = trimmedOrNull(ctx.street);
+  if (!street) return { action: 'drop' };
+  const name = trimmedOrNull(ctx.memberName) ?? 'Someone';
+  return { action: 'push', body: `${name} accepted your invitation to join ${street}.` };
+}
+
+export interface MemberActivityFact {
+  actor_id: string | null;
+  action: string | null;
+  title: string | null;
+}
+
+/**
+ * Group member_step_activity rows by escrow, preserving fetch order.
+ * The drain sends ONE summary push per escrow per pass and consumes
+ * every grouped row.
+ */
+export function groupMemberActivityRows<T extends { escrow_id: string }>(
+  rows: T[],
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const g = groups.get(r.escrow_id) ?? [];
+    g.push(r);
+    groups.set(r.escrow_id, g);
+  }
+  return groups;
+}
+
+const MEMBER_ACTIVITY_VERBS: Record<string, string> = {
+  checked: 'checked off',
+  unchecked: 'unchecked',
+  added: 'added a step',
+};
+
+/**
+ * Owner summary for one escrow's member step activity (copy batch).
+ * One fact renders the verb form ("Alex Rivera checked off “Appraisal
+ * ordered” on Maple Grove Dr."); several collapse to the count form.
+ * A single fact whose verb/title cannot render honestly (unknown
+ * action, missing title) also falls back to the count form. Returns
+ * null without a street — the copy names the property.
+ */
+export function buildMemberActivityBody(
+  facts: MemberActivityFact[],
+  actorName: string | null | undefined,
+  street: string | null | undefined,
+): string | null {
+  if (facts.length === 0) return null;
+  const st = trimmedOrNull(street);
+  if (!st) return null;
+  const actor = trimmedOrNull(actorName) ?? 'Your associate';
+  if (facts.length === 1) {
+    const f = facts[0];
+    const verb = MEMBER_ACTIVITY_VERBS[f.action ?? ''];
+    const title = trimmedOrNull(f.title);
+    if (verb && f.action !== 'added' && title) {
+      return `${actor} ${verb} “${title}” on ${st}.`;
+    }
+    if (verb && f.action === 'added') {
+      return `${actor} added a step on ${st}.`;
+    }
+  }
+  const n = facts.length;
+  return `${actor} made ${n} checklist update${n === 1 ? '' : 's'} on ${st}.`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+export interface TeamInviteEmail {
+  subject: string;
+  text: string;
+  html: string;
+}
+
+/**
+ * The no-account invite email (copy batch, R7): inviter name, role,
+ * the invited email, and the app link ONLY — no address, party names,
+ * dates, or amounts appear anywhere in it. The batch's
+ * "[Open Clear to Close]" link placeholder renders as a labeled link
+ * in HTML and as a label line + URL in plain text.
+ */
+export function buildTeamInviteEmail(ctx: {
+  ownerName: string | null | undefined;
+  role: string | null | undefined;
+  invitedEmail: string;
+  appLink: string;
+}): TeamInviteEmail {
+  const owner = trimmedOrNull(ctx.ownerName) ?? 'Your realtor';
+  const phrase = teamRoleEmailPhrase(ctx.role);
+  const email = ctx.invitedEmail;
+  const link = ctx.appLink;
+  const subject = `${owner} invited you to Clear to Close`;
+  const text = [
+    'Hi there,',
+    '',
+    `${owner} invited you to help with an escrow as ${phrase} in Clear to Close, the app they use to keep every escrow step in one place.`,
+    '',
+    `To accept, sign up with this email address (${email}) and the invitation will be waiting for you in the app.`,
+    '',
+    'Open Clear to Close:',
+    link,
+    '',
+    'If you were not expecting this, you can ignore this email.',
+  ].join('\n');
+  const html = [
+    '<p>Hi there,</p>',
+    `<p>${escapeHtml(owner)} invited you to help with an escrow as ${escapeHtml(phrase)} in Clear to Close, the app they use to keep every escrow step in one place.</p>`,
+    `<p>To accept, sign up with this email address (${escapeHtml(email)}) and the invitation will be waiting for you in the app.</p>`,
+    `<p><a href="${escapeHtml(link)}">Open Clear to Close</a></p>`,
+    '<p>If you were not expecting this, you can ignore this email.</p>',
+  ].join('\n');
+  return { subject, text, html };
 }

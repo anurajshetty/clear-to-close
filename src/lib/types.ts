@@ -5,6 +5,18 @@ export type Side = 'buy' | 'sell' | 'both';
 
 export type ClientRole = 'buyer' | 'seller' | 'tc';
 
+/**
+ * Team Access (Oct 2026, migration 0044): the signed-in account's access
+ * to an escrow. 'owner' is the escrow's realtor; 'associate' and 'tc'
+ * are per-escrow grants (escrow_team_grants) accepted by another
+ * realtor-side account. Client roles (buyer/seller/tc invite links) are a
+ * separate axis — see ClientRole.
+ */
+export type TeamRole = 'owner' | 'associate' | 'tc';
+
+/** The grantable team roles (an owner never holds a grant on their own escrow). */
+export type TeamGrantRole = 'associate' | 'tc';
+
 export interface StepT {
   id: string;
   title: string;
@@ -13,6 +25,16 @@ export interface StepT {
   custom: boolean;
   order: number;
   completedAt: string | null;
+  /**
+   * Team Access actor stamps (Oct 2026, migration 0044): the auth user id
+   * of the account that checked this step off (rides completedAt — set on
+   * check, cleared on uncheck) and of the account that created a custom
+   * step. Nullable/optional: rows written before 0044 (and the local-only
+   * store, which has no account identity) carry no stamp. Cloud-synced
+   * (steps.completed_by / steps.created_by).
+   */
+  completedBy?: string | null;
+  createdBy?: string | null;
   /**
    * Step explainer (Sept 28, 2026, Anuraj-approved): the realtor's optional
    * one-line "What does this step mean?" on custom steps, shown when the
@@ -121,6 +143,19 @@ export interface Escrow {
    * simply don't carry it.
    */
   lastAction?: RealtorAction | null;
+  /**
+   * Team Access (Oct 2026, migration 0044): this account's access to the
+   * escrow and, for invited escrows, the owning realtor's display name /
+   * photo. Optional on the type so snapshots and fixtures written before
+   * this release still compile (the repo's key-dates precedent); every
+   * producer populates them — fromEscrowRow/creation default to 'owner'
+   * with null owner fields, and store.refreshTeam sets the grant role +
+   * owner identity on invited escrows. A missing accessRole means
+   * 'owner' (see teamModel.deriveAccessRole).
+   */
+  accessRole?: TeamRole;
+  ownerName?: string | null;
+  ownerPhotoUrl?: string | null;
 }
 
 export interface CreateEscrowInput {

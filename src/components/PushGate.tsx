@@ -44,8 +44,8 @@ export function PushGate(): React.ReactElement | null {
   const realtorEvaluated = useRef(false);
 
   const routeToEscrow = useCallback(
-    (escrowId: string, role: string) => {
-      router.replace(pushTapRoute(escrowId, role) as never);
+    (escrowId: string, role: string, kind?: string | null) => {
+      router.replace(pushTapRoute(escrowId, role, kind) as never);
     },
     [router],
   );

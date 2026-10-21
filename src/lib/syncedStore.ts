@@ -74,12 +74,25 @@ import {
   pushTcIntakeNow,
   pullBuyerIntake,
   pushBuyerIntakeNow,
+  pullStepsByEscrow,
+  fromEscrowRow,
   withWriteTimeout,
   WriteTimeoutError,
   type Cloud,
   type OutboxOp,
   type PingResult,
 } from './cloudSync';
+import {
+  decorateInvitedEscrow,
+  mapEscrowActivity,
+  mapEscrowParticipants,
+  mapInvitedEscrowEntries,
+  mapPendingTeamInvites,
+  teamResultFromRpc,
+  type TeamActionResult,
+  type TeamActivityEntry,
+  type TeamParticipants,
+} from './teamModel';
 import type { MediaKind } from './mediaUpload';
 import type { TcIntakeData } from './tcIntake';
 import type { BuyerIntakeData } from './buyerIntake';
@@ -193,6 +206,14 @@ export function createSyncedStore(
   let ping: PingResult | null = null;
   let userId: string | null = null;
   const profileCache = new Map<string, RealtorProfile | null>();
+  /**
+   * Team Access (Oct 2026): escrow id -> the escrow OWNER's auth uid for
+   * escrows this account is a guest on, learned from list_invited_escrows
+   * during refreshTeam. Intake saves must stamp owner_id with the owner's
+   * uid (the RLS policy requires it), not the writer's; own escrows are
+   * absent from the map and resolve to the session uid.
+   */
+  const escrowOwnerIds = new Map<string, string>();
 
   const cloudOk = (): boolean => ping?.ok === true && !!userId;
   // An explicit override returning null means "no client" (used by tests to
@@ -560,6 +581,104 @@ export function createSyncedStore(
     await writeJson(kv, K_CLOUD_LINKS, links);
   }
 
+  /**
+   * Team Access convergence (Oct 2026, migration 0044). Pull-only, like
+   * every boot/foreground refresh: claim any pending grants addressed to
+   * this account's verified email (claim links them; it does NOT
+   * accept), then converge the pending-invite list and merge accepted
+   * invited escrows (with their steps, pulled by escrow id — RLS now
+   * permits the grant holder) into the same local escrow list as own
+   * escrows. Merge-only, mirroring pullEscrowsFromCloud: local rows are
+   * never deleted by a pull, and a failed read leaves state untouched.
+   * NEVER throws — team state is additive and must not block boot.
+   */
+  async function refreshTeam(): Promise<void> {
+    try {
+      const session = await serverSession();
+      if (!session) {
+        await local.setPendingTeamInvites([]);
+        return;
+      }
+      const { c } = session;
+      // Best-effort: claim failures are ignored — the lists below simply
+      // reflect whatever is already linked to this account.
+      try {
+        await c.rpc('claim_team_invites');
+      } catch {
+        // ignored by contract
+      }
+      try {
+        const invRes = await c.rpc('list_my_team_invites');
+        if (!invRes.error) {
+          await local.setPendingTeamInvites(mapPendingTeamInvites(invRes.data));
+        }
+      } catch {
+        // Pending list keeps its last converged state.
+      }
+      try {
+        const escRes = await c.rpc('list_invited_escrows');
+        if (!escRes.error) {
+          const entries = mapInvitedEscrowEntries(escRes.data);
+          const freshIds = new Set(entries.map((en) => String(en.escrowRow.id ?? '')));
+          if (entries.length > 0) {
+            const ids = entries.map((en) => String(en.escrowRow.id ?? ''));
+            const stepsByEscrow = await pullStepsByEscrow(c, ids);
+            for (const entry of entries) {
+              const escrow = fromEscrowRow(entry.escrowRow);
+              const g = stepsByEscrow?.get(escrow.id);
+              escrow.buyerSteps = g?.buyer ?? [];
+              escrow.sellerSteps = g?.seller ?? [];
+              const ownerUid =
+                typeof entry.escrowRow.user_id === 'string' ? entry.escrowRow.user_id : '';
+              if (ownerUid) escrowOwnerIds.set(escrow.id, ownerUid);
+              await local.replaceEscrow(decorateInvitedEscrow(escrow, entry));
+            }
+          }
+          // Prune (merge lead, Oct 2026): a grant that ended (removed /
+          // left) drops the local invited copy on the next successful
+          // converge — the server already denies access; the local list
+          // must not keep presenting the escrow as shared. Own escrows
+          // (accessRole 'owner' or unset) are never pruned here.
+          const localEscrows = await local.listEscrows();
+          for (const le of localEscrows) {
+            if (
+              (le.accessRole === 'associate' || le.accessRole === 'tc') &&
+              !freshIds.has(le.id)
+            ) {
+              await local.removeLocalEscrow(le.id);
+              escrowOwnerIds.delete(le.id);
+            }
+          }
+        }
+      } catch {
+        // Invited merge keeps local state as-is on failure.
+      }
+    } catch {
+      // Team refresh is non-fatal by contract.
+    }
+  }
+
+  /**
+   * One team action RPC (create/respond/remove/cancel/leave). A missing
+   * session or a transport failure maps to { ok: false, error:
+   * 'network' }; the RPC's own { ok, error } jsonb passes through
+   * (e.g. 'seat_taken', 'not_found').
+   */
+  async function teamRpc(
+    name: string,
+    params?: Record<string, unknown>,
+  ): Promise<TeamActionResult> {
+    const session = await serverSession();
+    if (!session) return { ok: false, error: 'network' };
+    try {
+      const { data, error } = await session.c.rpc(name, params);
+      if (error) return { ok: false, error: 'network' };
+      return teamResultFromRpc(data);
+    } catch {
+      return { ok: false, error: 'network' };
+    }
+  }
+
   async function initCloudSync(): Promise<PingResult> {
     const c = client();
     const result = await pingCloud(c);
@@ -665,6 +784,11 @@ export function createSyncedStore(
       } catch {
         // Pull failure keeps the local list as-is.
       }
+      // Team Access (Oct 2026): after the signed-in initialization above,
+      // converge team state (pending invites + invited escrows).
+      // Non-fatal by contract — refreshTeam never throws, and a failure
+      // leaves team state empty rather than blocking boot.
+      await refreshTeam();
       // Server-is-truth (Anuraj, Sept 2026): boot and foreground return are
       // PULL ONLY. The old "push everything to converge" background
       // reconcile is deleted as a pattern — pushing clean local snapshots
@@ -831,6 +955,84 @@ export function createSyncedStore(
       local.previewRegenerateInvite(inviteId, codeOverride, newId),
     commitPreview: (p) => local.commitPreview(p),
 
+    // --------------------------------------------------- Team Access ----
+    // Team Access (Oct 2026, migration 0044): pending invites live in the
+    // local store's cache; the actions are thin RPC wrappers whose
+    // { ok, error } results pass through to the caller.
+    get pendingTeamInvites() {
+      return local.pendingTeamInvites;
+    },
+
+    refreshTeam,
+
+    setPendingTeamInvites: (invites) => local.setPendingTeamInvites(invites),
+
+    respondToTeamInvite: async (grantId: string, accept: boolean): Promise<TeamActionResult> => {
+      const result = await teamRpc('respond_team_invite', {
+        p_grant_id: grantId,
+        p_accept: accept,
+      });
+      // An accept merges the escrow (and a decline drops the card) via a
+      // full team reconverge.
+      if (result.ok) await refreshTeam();
+      return result;
+    },
+
+    createTeamInvite: async (
+      escrowId: string,
+      email: string,
+      role: 'associate' | 'tc',
+    ): Promise<TeamActionResult> => {
+      return teamRpc('create_team_invite', {
+        p_escrow_id: escrowId,
+        p_email: email,
+        p_role: role,
+      });
+    },
+
+    removeTeamMember: async (grantId: string): Promise<TeamActionResult> => {
+      return teamRpc('remove_team_member', { p_grant_id: grantId });
+    },
+
+    cancelTeamInvite: async (grantId: string): Promise<TeamActionResult> => {
+      return teamRpc('cancel_team_invite', { p_grant_id: grantId });
+    },
+
+    leaveTeamEscrow: async (grantId: string): Promise<TeamActionResult> => {
+      const result = await teamRpc('leave_team_escrow', { p_grant_id: grantId });
+      // Leaving drops the local invited copy via the reconverge prune.
+      if (result.ok) await refreshTeam();
+      return result;
+    },
+
+    getEscrowParticipants: async (escrowId: string): Promise<TeamParticipants | null> => {
+      const session = await serverSession();
+      if (!session) return null;
+      try {
+        const { data, error } = await session.c.rpc('get_escrow_participants', {
+          p_escrow_id: escrowId,
+        });
+        if (error) return null;
+        return mapEscrowParticipants(data);
+      } catch {
+        return null;
+      }
+    },
+
+    listEscrowActivity: async (escrowId: string): Promise<TeamActivityEntry[]> => {
+      const session = await serverSession();
+      if (!session) return [];
+      try {
+        const { data, error } = await session.c.rpc('list_escrow_activity', {
+          p_escrow_id: escrowId,
+        });
+        if (error) return [];
+        return mapEscrowActivity(data);
+      } catch {
+        return [];
+      }
+    },
+
     /**
      * Logout wipe (Sept 2026): drop every account-scoped artifact so a
      * different realtor using this device next never sees the previous
@@ -869,6 +1071,7 @@ export function createSyncedStore(
       }
       await local.clear();
       profileCache.clear();
+      escrowOwnerIds.clear();
       ping = null;
       userId = null;
       await Promise.all([
@@ -1025,6 +1228,7 @@ export function createSyncedStore(
     listEscrows: () => local.listEscrows(),
     getEscrow: (id: string) => local.getEscrow(id),
     replaceEscrow: (e: Escrow) => local.replaceEscrow(e),
+    removeLocalEscrow: (id: string) => local.removeLocalEscrow(id),
 
     /**
      * TC intake (Sept 29, 2026, Anuraj-approved mockup 04): server-first
@@ -1038,7 +1242,10 @@ export function createSyncedStore(
         `tc-intake:${escrowId}`,
         () => local.previewSaveTcIntake(escrowId, data),
         async ({ c, uid }) => {
-          await pushTcIntakeNow(c, uid, escrowId, data);
+          // Team Access (Oct 2026): owner_id names the escrow's owner
+          // (from the invited-escrow map; own escrows resolve to the
+          // session uid) while updated_by names the saving account.
+          await pushTcIntakeNow(c, uid, escrowId, data, escrowOwnerIds.get(escrowId) ?? uid);
         },
       );
     },
@@ -1087,7 +1294,8 @@ export function createSyncedStore(
         `buyer-intake:${escrowId}`,
         () => local.previewSaveBuyerIntake(escrowId, data),
         async ({ c, uid }) => {
-          await pushBuyerIntakeNow(c, uid, escrowId, data);
+          // Team Access (Oct 2026): owner/writer split — see saveTcIntake.
+          await pushBuyerIntakeNow(c, uid, escrowId, data, escrowOwnerIds.get(escrowId) ?? uid);
         },
       );
     },
@@ -1139,16 +1347,39 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewToggleStep(escrowId, role, stepId),
         async ({ c, uid }, escrow) => {
+          // Team Access actor stamp (Oct 2026): the account checking the
+          // step off is recorded on the step itself. The mutation lands
+          // on the preview draft BEFORE the push, so the pushed row and
+          // the committed local copy carry the same stamp (an uncheck
+          // clears it, riding completedAt). toStepRows maps it to
+          // steps.completed_by.
+          const step = (role === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps).find(
+            (s) => s.id === stepId,
+          );
+          if (step) step.completedBy = step.done ? uid : null;
           await pushEscrowNow(c, uid, escrow);
         },
       );
     },
 
     addCustomStep: async (escrowId, role, title, explainer): Promise<Escrow> => {
+      // Ids present before the write: the push callback stamps only the
+      // step(s) this call created.
+      const beforeIds = new Set(
+        ((await local.getEscrow(escrowId))?.[role === 'buyer' ? 'buyerSteps' : 'sellerSteps'] ?? []).map(
+          (s) => s.id,
+        ),
+      );
       return confirmedWrite<Escrow>(
         `escrow:${escrowId}`,
         () => local.previewAddCustomStep(escrowId, role, title, explainer),
         async ({ c, uid }, escrow) => {
+          // Team Access creator stamp (Oct 2026): steps.created_by names
+          // the account that created the custom step. Same draft-mutation
+          // pattern as toggleStep: pushed row and local copy agree.
+          for (const s of role === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps) {
+            if (s.custom && !beforeIds.has(s.id) && s.createdBy == null) s.createdBy = uid;
+          }
           await pushEscrowNow(c, uid, escrow);
         },
       );
@@ -1180,10 +1411,29 @@ export function createSyncedStore(
       role: ClientRole,
       steps: ChecklistDraftStep[],
     ): Promise<Escrow> => {
+      // Team Access stamps (Oct 2026): pre-write step states, so the push
+      // callback can stamp steps whose done state flipped in this edit and
+      // brand-new custom steps. computeApplyChecklist already preserves
+      // existing stamps; this only ADDS attribution for changes the edit
+      // itself makes.
+      const beforeSteps = new Map(
+        ((await local.getEscrow(escrowId))?.[role === 'buyer' ? 'buyerSteps' : 'sellerSteps'] ?? []).map(
+          (s) => [s.id, s] as const,
+        ),
+      );
       const { escrow } = await confirmedWrite<ApplyChecklistResult>(
         `escrow:${escrowId}`,
         () => local.previewApplyChecklist(escrowId, role, steps),
         async ({ c, uid }, { escrow: candidate, removedStepIds }) => {
+          for (const s of role === 'buyer' ? candidate.buyerSteps : candidate.sellerSteps) {
+            const prev = beforeSteps.get(s.id);
+            if (!prev) {
+              if (s.custom && s.createdBy == null) s.createdBy = uid;
+              if (s.done && s.completedBy == null) s.completedBy = uid;
+            } else if (prev.done !== s.done) {
+              s.completedBy = s.done ? uid : null;
+            }
+          }
           await pushEscrowNow(c, uid, candidate);
           await deleteStepRowsNow(c, removedStepIds);
         },

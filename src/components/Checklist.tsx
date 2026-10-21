@@ -112,6 +112,12 @@ export type EditableChecklistProps = {
    * Undefined renders no dates. Never passed for client read-only views.
    */
   keyDates?: StepKeyDates;
+  /**
+   * Check-off attribution (Team Access, Oct 20, 2026): resolves a done
+   * step's "Checked off by {name} · {date}" line, or null when the actor
+   * cannot be named. Undefined (every existing caller) renders nothing.
+   */
+  checkedByFor?: (step: StepT) => string | null;
 };
 
 /**
@@ -135,6 +141,7 @@ export function EditableChecklist({
   listRef,
   role,
   keyDates,
+  checkedByFor,
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
 
@@ -273,6 +280,7 @@ export function EditableChecklist({
             onDragStart={drag}
             dragHandle={editing ? renderGrip(item.title, drag) : undefined}
             keyDateLabel={keyDateLabelFor(item)}
+            checkedByLine={editing ? null : checkedByFor?.(item) ?? null}
           />
         </ChecklistRow>
       )}

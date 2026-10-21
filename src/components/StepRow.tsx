@@ -53,6 +53,14 @@ type StepRowBase = {
    * read-only views never pass this (out of scope).
    */
   keyDateLabel?: string | null;
+  /**
+   * Check-off attribution (Team Access, Oct 20, 2026): interactive
+   * (realtor) rows show a quiet muted "Checked off by {name} · {date}"
+   * line on done steps when the caller can name the actor (steps carry
+   * completed_by since migration 0044). Null/undefined renders nothing —
+   * rows whose actor cannot be named stay exactly as before.
+   */
+  checkedByLine?: string | null;
 };
 
 type StepRowProps = StepRowBase &
@@ -137,6 +145,9 @@ export function StepRow(props: StepRowProps) {
         <Text style={styles.completedAt}>
           Completed {formatCompletedDate(props.completedAt)}
         </Text>
+      ) : null}
+      {interactive && done && props.checkedByLine ? (
+        <Text style={styles.completedAt}>{props.checkedByLine}</Text>
       ) : null}
       {props.upNext && !done ? (
         <View style={styles.upNextWrap}>

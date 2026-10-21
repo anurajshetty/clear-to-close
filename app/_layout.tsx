@@ -222,6 +222,8 @@ export default function RootLayout() {
         <Stack.Screen name="link-dead" />
         <Stack.Screen name="escrow/[id]" />
         <Stack.Screen name="share/[id]" />
+        <Stack.Screen name="team/[id]" />
+        <Stack.Screen name="activity/[id]" />
         <Stack.Screen name="redeem" />
         <Stack.Screen name="profile-setup" />
         <Stack.Screen name="client/buyer/[id]" />

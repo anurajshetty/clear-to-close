@@ -185,10 +185,39 @@ export function shouldShowRealtorPrePrompt(args: {
  * Where a push tap lands, by the tapped payload's role. Realtor pushes
  * (P1) carry role 'realtor' and open the realtor escrow screen; client
  * pushes open the role's client home (clientHomeRoute).
+ *
+ * Team Access (Oct 2026): when the payload also carries a team `kind`,
+ * the kind wins — see teamPushTapRoute. Callers that never pass a kind
+ * keep the exact pre-team behavior.
  */
-export function pushTapRoute(escrowId: string, role: string): string {
+export function pushTapRoute(escrowId: string, role: string, kind?: string | null): string {
+  if (kind) {
+    const teamRoute = teamPushTapRoute(kind, escrowId);
+    if (teamRoute) return teamRoute;
+  }
   if (role === 'realtor') return `/escrow/${escrowId}`;
   return clientHomeRoute(escrowId, role);
+}
+
+/**
+ * Team Access push tap routes (Oct 2026, migration 0044 events):
+ * - 'team_invite_received' lands on the deal-list home, where the
+ *   pending-invite card lives (there is no escrow to open yet).
+ * - 'team_invite_accepted' opens the escrow the invite was for.
+ * - 'member_step_activity' opens the escrow's activity timeline.
+ * Returns null for anything else so callers fall back to role routing.
+ */
+export function teamPushTapRoute(kind: string, escrowId: string): string | null {
+  switch (kind) {
+    case 'team_invite_received':
+      return '/';
+    case 'team_invite_accepted':
+      return `/escrow/${escrowId}`;
+    case 'member_step_activity':
+      return `/activity/${escrowId}`;
+    default:
+      return null;
+  }
 }
 
 /**
@@ -198,6 +227,8 @@ export function pushTapRoute(escrowId: string, role: string): string {
 export function escrowRouteFromResponse(response: unknown): {
   escrowId: string;
   role: 'buyer' | 'seller' | 'tc' | 'realtor';
+  /** Team Access event kind from the payload (null for non-team pushes). */
+  kind: string | null;
 } | null {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -215,7 +246,8 @@ export function escrowRouteFromResponse(response: unknown): {
           : data.role === 'realtor'
             ? 'realtor'
             : 'buyer';
-    return { escrowId, role };
+    const kind = typeof data.kind === 'string' ? data.kind : null;
+    return { escrowId, role, kind };
   } catch {
     return null;
   }
@@ -520,7 +552,9 @@ export async function retryPendingRealtorUnregister(): Promise<void> {
  * the notification's { escrowId, role } data. Also handles the cold-start
  * case (tap launched the app from killed).
  */
-export function setupPushHandling(onOpenEscrow: (escrowId: string, role: string) => void): () => void {
+export function setupPushHandling(
+  onOpenEscrow: (escrowId: string, role: string, kind?: string | null) => void,
+): () => void {
   const N = loadNotifications();
   if (!N) return () => {};
   const cleanups: Array<() => void> = [];
@@ -539,7 +573,7 @@ export function setupPushHandling(onOpenEscrow: (escrowId: string, role: string)
 
   const routeResponse = (response: unknown) => {
     const target = escrowRouteFromResponse(response);
-    if (target) onOpenEscrow(target.escrowId, target.role);
+    if (target) onOpenEscrow(target.escrowId, target.role, target.kind);
   };
 
   try {

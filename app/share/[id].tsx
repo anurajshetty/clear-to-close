@@ -454,9 +454,11 @@ export default function ShareEscrow() {
         </Text>
       </View>
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-        <Text style={styles.hintLine}>Invite your clients and your TC. Each person gets a name and a one-time code.</Text>
+        <Text style={styles.hintLine}>Invite your clients. Each person gets a name and a one-time code.</Text>
         {/* Oct 2026, Anuraj: single-side escrows show only their side's
-            section + TC; legacy 'both' shows all three. */}
+            section; legacy 'both' shows both client sections. The TC
+            section left this screen with Team Access (Oct 20, 2026) —
+            team invites live on the Team sheet. */}
         <Card>{visibleShareSections(escrow.side).map(renderSection)}</Card>
       </ScrollView>
       {toastVisible && toastMsg ? (

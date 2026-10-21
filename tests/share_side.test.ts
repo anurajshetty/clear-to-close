@@ -26,24 +26,29 @@ async function newEscrow(store: ReturnType<typeof createStore>, side: 'buy' | 's
 }
 
 async function main(): Promise<void> {
-  // visibleShareSections: buy-side shows Buyers + TC only.
+  // visibleShareSections: buy-side shows Buyers only (Team Access,
+  // Oct 20, 2026: the TC section left the share screen for the Team sheet).
   const buySections = visibleShareSections('buy').map((s) => s.role);
-  assert(JSON.stringify(buySections) === JSON.stringify(['buyer', 'tc']), 'buy side shows buyer + tc sections');
+  assert(JSON.stringify(buySections) === JSON.stringify(['buyer']), 'buy side shows buyer section only');
 
-  // visibleShareSections: sell-side shows Sellers + TC only.
+  // visibleShareSections: sell-side shows Sellers only.
   const sellSections = visibleShareSections('sell').map((s) => s.role);
-  assert(JSON.stringify(sellSections) === JSON.stringify(['seller', 'tc']), 'sell side shows seller + tc sections');
+  assert(JSON.stringify(sellSections) === JSON.stringify(['seller']), 'sell side shows seller section only');
 
-  // visibleShareSections: legacy both shows all three.
+  // visibleShareSections: legacy both shows both client sections.
   const bothSections = visibleShareSections('both').map((s) => s.role);
   assert(
-    JSON.stringify(bothSections) === JSON.stringify(['buyer', 'seller', 'tc']),
-    'both side shows all three sections',
+    JSON.stringify(bothSections) === JSON.stringify(['buyer', 'seller']),
+    'both side shows both client sections',
   );
 
-  // visibleShareSections: null/undefined fails open to all three.
-  assert(visibleShareSections(null).length === 3, 'null side fails open to all sections');
-  assert(visibleShareSections(undefined).length === 3, 'undefined side fails open to all sections');
+  // visibleShareSections: null/undefined fails open to both client sections.
+  assert(visibleShareSections(null).length === 2, 'null side fails open to both client sections');
+  assert(visibleShareSections(undefined).length === 2, 'undefined side fails open to both client sections');
+  assert(
+    !visibleShareSections('both').some((s) => s.role === 'tc'),
+    'the TC section never appears on the share screen (Team Access)',
+  );
 
   // isInviteRoleAllowedForSide: the full matrix.
   assert(isInviteRoleAllowedForSide('buyer', 'buy') === true, 'buyer allowed on buy side');

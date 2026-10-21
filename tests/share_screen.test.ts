@@ -127,8 +127,10 @@ assert(has('escrowOpen && count >= s.cap'), 'cap note hidden on closed/cancelled
 assert(has('BackChevron') && has("label=\"Details\""), 'back button reads "‹ Details" via BackChevron');
 assert(has('>Share this escrow</Text>'), 'title "Share this escrow"');
 assert(has('{escrow.address} · {escrow.city}'), 'subtitle is address · city');
-assert(has('Invite your clients and your TC. Each person gets a name and a one-time code.'),
-  'hint line copy under the header');
+assert(has('Invite your clients. Each person gets a name and a one-time code.'),
+  'hint line copy under the header (TC mention left with the TC section, Team Access)');
+assert(!has('Invite your clients and your TC'),
+  'hint line no longer promises a TC section on this screen');
 assert(!has('ProgressRing') && !has('TimeTrackerCard'),
   'no progress ring or time-tracker card on this screen (mockup 05)');
 
