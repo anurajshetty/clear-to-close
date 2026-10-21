@@ -96,8 +96,10 @@ central user; the buyers and sellers they represent are the other parties.
   checklist: "Invite clients" for buyer/seller codes, "Invite team" for
   account invites; the client share screen no longer carries a TC section,
   and a redeemed legacy TC link is managed from the Team sheet instead).
-  Invitees sign in with their own accounts; people without an account get
-  an email with the app link (never any address or deal details). Pending
+  Invitees sign in with their own accounts. Every invite also sends
+  an email (inviter name, role, the property address, and the app
+  link — never party names, dates, or amounts); account holders get
+  a push as well. Pending
   invites appear at the top of the invitee's **Invited escrows** home
   section with Accept/Reject; accepting adds the escrow to that section.
   **Associates** edit everything in the escrow (checklist, custom steps,
@@ -848,8 +850,8 @@ Supabase dashboard (one-time):
 11. Run `supabase/migrations/0044_team_access.sql` in the SQL editor,
     then redeploy the `send-client-push` Edge Function from the
     regenerated single file (Team Access drains: team invite /
-    accepted / member-activity kinds). For invite EMAILS to people
-    without an account, also: set the function's `RESEND_API_KEY`
+    accepted / member-activity kinds). For the invite EMAILS (sent on
+    every team invite), also: set the function's `RESEND_API_KEY`
     secret (Supabase → Edge Functions → send-client-push → Secrets)
     and the From address —
     `insert into push_config (key, value) values ('invite_from_email', 'Clear to Close <invites@YOURDOMAIN>') on conflict (key) do update set value = excluded.value;`

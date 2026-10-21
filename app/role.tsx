@@ -95,7 +95,7 @@ export default function RolePicker() {
           {card(
             'realtor',
             "I'm a Realtor",
-            'Open escrows and track every deal from one place. Sign up or log in.',
+            'For realtors, associates, and transaction coordinators. Sign up or log in.',
             <HouseIcon />,
           )}
           {card('client', "I'm a client", 'I have an invite code', <KeyIcon />)}
