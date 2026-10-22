@@ -102,6 +102,8 @@ central user; the buyers and sellers they represent are the other parties.
   a push as well. Pending
   invites appear at the top of the invitee's **Invited escrows** home
   section with Accept/Reject; accepting adds the escrow to that section.
+  The section always renders on the home screen; when it is empty it
+  shows "No invites yet." (Oct 22, 2026).
   **Associates** edit everything in the escrow (checklist, custom steps,
   intakes, key dates, property details, client codes); **TCs** edit the
   intakes only and view the rest. Only the owner creates, closes, cancels,
@@ -140,12 +142,21 @@ central user; the buyers and sellers they represent are the other parties.
   "Compass Realty", shown on the branded client
   surfaces as "Compass Realty · DRE #01998877"), about/bio, areas served,
   and optional license number (shown on the
-  client-facing profile only if entered). Full name, email, phone, and
-  broker are **required** (Anuraj, Oct 14, 2026): saving with any of them
+  client-facing profile only if entered). Full name, email, and phone
+  are **required** (Anuraj, Oct 14, 2026; broker was required too until
+  Oct 22, 2026, when it became optional again — Associates and TCs
+  hold their own accounts and may not belong to a brokerage): saving
+  with any of them
   empty shows an inline "Required" error under each empty field and
   blocks the save, on all three form screens (profile setup, onboarding
   profile creation, profile update); onboarding's Skip path never
-  validates. Email and phone also carry basic **format validation**
+  validates. A blocked save also shows the summary line "Please fill
+  in the required fields above." directly above the save button
+  (Oct 22, 2026). The contact email pre-fills with the signed-in
+  account's email whenever the stored profile email is empty
+  (Oct 22, 2026); a stored email always wins, the field stays fully
+  editable, and nothing syncs between the login email and the contact
+  email afterwards. Email and phone also carry basic **format validation**
   (same day): a malformed email ("Enter a valid email address" — no
   spaces, one @, a dot in the domain) or phone ("Enter a valid phone
   number" — 10 digits, or 11 starting with 1, ignoring spaces, dashes,

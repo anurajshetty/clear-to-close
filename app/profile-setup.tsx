@@ -9,10 +9,11 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
+import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import { Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
-import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
+import { profileFieldErrors, hasProfileFieldErrors, prefillProfileEmail } from '../src/lib/profileRequired';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
@@ -35,6 +36,9 @@ export default function ProfileSetup() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [brokerError, setBrokerError] = useState<string | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  // Save blocked by required/format validation (Oct 22, 2026): drives
+  // the summary line above the Save button.
+  const [validationBlocked, setValidationBlocked] = useState(false);
   const [saving, setSaving] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile (and its photo/banner) is not confirmed on the server — the
@@ -53,9 +57,8 @@ export default function ProfileSetup() {
   useFocusEffect(
     useCallback(() => {
       let active = true;
-      store
-        .getProfile()
-        .then((p) => {
+      Promise.all([store.getProfile(), auth.getSessionEmail().catch(() => null)])
+        .then(([p, sessionEmail]) => {
           if (!p || !active) return;
           setDraft({
             name: p.name ?? '',
@@ -63,7 +66,9 @@ export default function ProfileSetup() {
             banner_image: p.banner_image ?? null,
             about: p.about ?? '',
             yearsExperience: p.yearsExperience ?? '',
-            email: p.email ?? '',
+            // Email pre-fill (Oct 22, 2026): stored wins; empty stored
+            // falls back to the account's signup email.
+            email: prefillProfileEmail(p.email, sessionEmail),
             areasServed: p.areasServed ?? '',
             phone: p.phone ?? '',
             dreLicense: p.dreLicense ?? '',
@@ -86,16 +91,18 @@ export default function ProfileSetup() {
   );
 
   const onSave = async () => {
-    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
-    // phone, broker — every error surfaces together on this one attempt
+    // Required + format validation (Anuraj, Oct 14, 2026; broker
+    // optional since Oct 22, 2026): name, email, phone — every error surfaces together on this one attempt
     // and any error blocks the save.
     const errors = profileFieldErrors(draft);
     setNameError(errors.name);
     setBrokerError(errors.broker);
     if (hasProfileFieldErrors(errors)) {
       setSubmitAttempted(true);
+      setValidationBlocked(true);
       return;
     }
+    setValidationBlocked(false);
     setSaving(true);
     setSaveError(null);
     try {
@@ -149,6 +156,9 @@ export default function ProfileSetup() {
         submitAttempted={submitAttempted}
       />
 
+      {validationBlocked && hasProfileFieldErrors(profileFieldErrors(draft)) ? (
+        <Text style={styles.error}>Please fill in the required fields above.</Text>
+      ) : null}
       {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
       <View style={styles.saveWrap}>
         <PrimaryButton title={saving ? 'Saving…' : 'Save profile'} onPress={onSave} disabled={saving} />

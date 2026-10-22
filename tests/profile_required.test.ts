@@ -1,7 +1,10 @@
-// profile_required.test.ts — Email, Phone, Broker are REQUIRED in the
+// profile_required.test.ts — Email and Phone are REQUIRED in the
 // profile form (Anuraj, Oct 14, 2026: "Those marked fields cannot be
 // optional", annotated Update-profile screenshot), and email/phone also
-// carry FORMAT validation (Amendment 3, same day).
+// carry FORMAT validation (Amendment 3, same day). Broker was required
+// by the same Oct 14 call and is OPTIONAL again since Oct 22, 2026
+// (Anuraj's reversal: with Team Access, Associates/TCs hold accounts
+// and may not belong to a brokerage).
 //
 // The matrix:
 //   - each required field empty (or whitespace-only) -> save blocked and
@@ -14,8 +17,8 @@
 //     digits, or 11 beginning with 1; anything else ->
 //     "Enter a valid phone number", blocked. Values are stored/displayed
 //     exactly as typed (validation only, no reformatting);
-//   - Broker is non-empty-only; License number and the review links stay
-//     optional;
+//   - Broker never blocks and never errors (optional, Oct 22, 2026);
+//     License number and the review links stay optional;
 //   - onboarding stays skippable: the Skip path never validates.
 //
 // Behavior is tested against the shared helpers (src/lib/profileRequired.ts)
@@ -33,6 +36,7 @@ import {
   profilePhoneError,
   profileFieldErrors,
   hasProfileFieldErrors,
+  prefillProfileEmail,
 } from '../src/lib/profileRequired';
 
 declare const process: { env: Record<string, string | undefined>; exitCode?: number };
@@ -48,14 +52,13 @@ const FULL = { name: 'Maya Chen', email: 'maya@compass.com', phone: '818-331-279
 // --- 1. The matrix ----------------------------------------------------------
 assert(
   JSON.stringify(missingRequiredProfileFields({ name: '', email: '', phone: '', realty_group: '' })) ===
-    JSON.stringify(['name', 'email', 'phone', 'broker']),
-  'all empty -> all four missing, in form order (errors shown together)',
+    JSON.stringify(['name', 'email', 'phone']),
+  'all empty -> the three required fields missing, in form order (errors shown together)',
 );
 for (const [field, patch] of [
   ['name', { name: '' }],
   ['email', { email: '' }],
   ['phone', { phone: '' }],
-  ['broker', { realty_group: '' }],
 ] as const) {
   const missing = missingRequiredProfileFields({ ...FULL, ...patch });
   assert(
@@ -73,8 +76,9 @@ assert(
   'whitespace-only phone counts as empty',
 );
 assert(
-  missingRequiredProfileFields({ ...FULL, realty_group: ' ' }).includes('broker'),
-  'whitespace-only broker counts as empty',
+  missingRequiredProfileFields({ ...FULL, realty_group: '' }).length === 0 &&
+    missingRequiredProfileFields({ ...FULL, realty_group: ' ' }).length === 0,
+  'empty or whitespace broker never blocks (optional since Oct 22, 2026)',
 );
 assert(
   missingRequiredProfileFields(FULL).length === 0,
@@ -82,7 +86,7 @@ assert(
 );
 assert(
   requiredErrorFor([], 'email') === null && requiredErrorFor([], 'phone') === null &&
-    requiredErrorFor([], 'broker') === null && requiredErrorFor([], 'name') === null,
+    requiredErrorFor([], 'name') === null,
   'all filled -> no inline errors',
 );
 // --- 1b. Format validation (Amendment 3) ------------------------------------
@@ -113,8 +117,12 @@ assert(!hasProfileFieldErrors(profileFieldErrors(FULL)), 'combined: valid draft 
 assert(hasProfileFieldErrors(profileFieldErrors({ ...FULL, email: 'nope' })), 'combined: malformed email blocks');
 assert(hasProfileFieldErrors(profileFieldErrors({ ...FULL, phone: '123' })), 'combined: malformed phone blocks');
 assert(
-  profileFieldErrors({ ...FULL, realty_group: '' }).broker === 'Required',
-  'combined: broker stays non-empty-only (Required, never a format error)',
+  profileFieldErrors({ ...FULL, realty_group: '' }).broker === null,
+  'combined: broker carries no error even when empty (Oct 22, 2026)',
+);
+assert(
+  !hasProfileFieldErrors(profileFieldErrors({ ...FULL, realty_group: '' })),
+  'combined: a broker-empty profile saves (Oct 22, 2026)',
 );
 assert(
   profileFieldErrors({ name: '', email: '', phone: '', realty_group: '' }).email === 'Required',
@@ -128,10 +136,9 @@ const srcFile = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), '
 const form = srcFile('src/components/ProfileForm.tsx');
 assert(form.includes('label="Email"'), 'form: Email label has no "(optional)"');
 assert(form.includes('label="Phone"'), 'form: Phone label has no "(optional)"');
-assert(form.includes('label="Broker"'), 'form: Broker label has no "(optional)"');
+assert(form.includes('label="Broker (optional)"'), 'form: Broker carries the "(optional)" suffix like the other optional fields (Anuraj, Oct 22, 2026)');
 assert(!form.includes('label="Email (optional)"'), 'form: old Email (optional) label gone');
 assert(!form.includes('label="Phone (optional)"'), 'form: old Phone (optional) label gone');
-assert(!form.includes('label="Broker (optional)"'), 'form: old Broker (optional) label gone');
 assert(form.includes('label="License number (optional)"'), 'form: License stays optional');
 assert(form.includes('label="Google review link · optional"'), 'form: Google link stays optional');
 assert(form.includes('label="Other review link · optional"'), 'form: Other link stays optional');
@@ -168,5 +175,51 @@ assert(
   'create: required validation runs inside the non-skip branch only',
 );
 assert(create.includes("onPress={() => finish(true)}"), 'create: Skip still calls finish(true) (no validation)');
+
+// --- 5. Blocked-save summary line (Oct 22, 2026) -----------------------------
+// A blocked save used to only red-mark fields inline, which read as
+// "nothing happened". Every save screen now also shows the summary
+// line directly above its save button, gated on a blocked attempt AND
+// the draft still failing validation (fixing the fields hides it).
+for (const screen of ['app/profile-update.tsx', 'app/profile-create.tsx', 'app/profile-setup.tsx']) {
+  const s = srcFile(screen);
+  assert(s.includes('Please fill in the required fields above.'), `${screen}: carries the blocked-save summary copy (exact)`);
+  assert(s.includes('validationBlocked && hasProfileFieldErrors(profileFieldErrors(draft))'), `${screen}: summary shows only for a blocked attempt with errors still present`);
+  assert(s.includes('setValidationBlocked(true)'), `${screen}: a blocked attempt sets the summary state`);
+  assert(s.includes('setValidationBlocked(false)'), `${screen}: a passing attempt clears the summary state`);
+}
+
+// --- 6. Email pre-fill (Oct 22, 2026) -----------------------------------------
+// The contact Email pre-fills with the signed-in account's email when
+// the stored profile email is empty; a stored email always wins.
+assert(prefillProfileEmail('', 'signup@mail.com') === 'signup@mail.com', 'prefill: fresh account (empty stored) -> signup email');
+assert(prefillProfileEmail(null, 'signup@mail.com') === 'signup@mail.com', 'prefill: fresh account (no profile) -> signup email');
+assert(prefillProfileEmail(undefined, 'signup@mail.com') === 'signup@mail.com', 'prefill: undefined stored -> signup email');
+assert(prefillProfileEmail('  ', 'signup@mail.com') === 'signup@mail.com', 'prefill: whitespace stored counts as empty');
+assert(
+  prefillProfileEmail('stored@mail.com', 'signup@mail.com') === 'stored@mail.com',
+  'prefill: a stored email always wins, shown unchanged',
+);
+assert(prefillProfileEmail('', null) === '' && prefillProfileEmail(null, null) === '', 'prefill: no session email -> stays empty');
+// Cleared after pre-fill, the field is just empty again: the required
+// check (and the item-2 summary gate) still applies.
+assert(
+  profileEmailError('') === 'Required' && hasProfileFieldErrors(profileFieldErrors({ ...FULL, email: '' })),
+  'prefill: a cleared email still hits the required check on save',
+);
+// Wiring pins: create reads the session email and prefills once per
+// mount (never resurrecting a cleared value on refocus); setup/update
+// prefill at draft build from the stored profile.
+const createSrc = srcFile('app/profile-create.tsx');
+assert(createSrc.includes('auth.getSessionEmail()'), 'create: reads the signed-in account email');
+assert(createSrc.includes('prefillProfileEmail(existing?.email, sessionEmail)'), 'create: prefill goes through the shared helper (stored wins)');
+assert(createSrc.includes('emailPrefilledRef'), 'create: prefill is once-per-mount (no resurrection on refocus)');
+for (const screen of ['app/profile-setup.tsx', 'app/profile-update.tsx']) {
+  const s = srcFile(screen);
+  assert(s.includes('prefillProfileEmail(p.email, sessionEmail)'), `${screen}: draft email pre-fills via the shared helper`);
+  assert(s.includes('auth.getSessionEmail()'), `${screen}: reads the signed-in account email`);
+}
+const authSrc = srcFile('src/lib/auth.ts');
+assert(authSrc.includes('async getSessionEmail()'), 'auth: exposes the session email accessor');
 
 summary('profile-required');

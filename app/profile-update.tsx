@@ -21,7 +21,7 @@ import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { isValidReviewLink } from '../src/lib/reviewLinks';
 import { unregisterRealtorPushToken } from '../src/lib/push';
-import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
+import { profileFieldErrors, hasProfileFieldErrors, prefillProfileEmail } from '../src/lib/profileRequired';
 import type { RealtorProfile } from '../src/lib/types';
 import { colors } from '../src/theme';
 
@@ -54,6 +54,9 @@ export default function ProfileUpdate() {
   // Review links (Oct 2026): a save attempt with invalid links forces the
   // inline errors visible.
   const [linksSubmitAttempted, setLinksSubmitAttempted] = useState(false);
+  // Save blocked by required/format validation (Oct 22, 2026): drives
+  // the summary line above the Save button.
+  const [validationBlocked, setValidationBlocked] = useState(false);
   const [saving, setSaving] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile (and its photo/banner) is not confirmed on the server — the
@@ -89,9 +92,8 @@ export default function ProfileUpdate() {
 
   const load = useCallback(() => {
     let active = true;
-    store
-      .getProfile()
-      .then((p) => {
+    Promise.all([store.getProfile(), auth.getSessionEmail().catch(() => null)])
+      .then(([p, sessionEmail]) => {
         // Never overwrite in-progress typing: if the user touched the form
         // while the read was in flight, keep their draft.
         if (!p || !active || editedRef.current) return;
@@ -101,7 +103,9 @@ export default function ProfileUpdate() {
           banner_image: p.banner_image ?? null,
           about: p.about ?? '',
           yearsExperience: p.yearsExperience ?? '',
-          email: p.email ?? '',
+          // Email pre-fill (Oct 22, 2026): stored wins; empty stored
+          // falls back to the account's signup email.
+          email: prefillProfileEmail(p.email, sessionEmail),
           areasServed: p.areasServed ?? '',
           phone: p.phone ?? '',
           dreLicense: p.dreLicense ?? '',
@@ -146,8 +150,8 @@ export default function ProfileUpdate() {
   }, [load]);
 
   const onSave = async () => {
-    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
-    // phone, broker. Every error surfaces together on this one attempt —
+    // Required + format validation (Anuraj, Oct 14, 2026; broker
+    // optional since Oct 22, 2026): name, email, phone. Every error surfaces together on this one attempt —
     // name/broker via the error props, email/phone live in the form
     // (submitAttempted reveals them) — and any error blocks the save.
     const errors = profileFieldErrors(draft);
@@ -155,8 +159,10 @@ export default function ProfileUpdate() {
     setBrokerError(errors.broker);
     if (hasProfileFieldErrors(errors)) {
       setLinksSubmitAttempted(true);
+      setValidationBlocked(true);
       return;
     }
+    setValidationBlocked(false);
     // Review links (Oct 2026): an invalid link blocks save — the inline
     // errors are forced visible so the realtor sees what to fix.
     if (!isValidReviewLink(draft.googleReviewLink) || !isValidReviewLink(draft.realtorComReviewLink)) {
@@ -252,6 +258,9 @@ export default function ProfileUpdate() {
           submitAttempted={linksSubmitAttempted}
         />
 
+        {validationBlocked && hasProfileFieldErrors(profileFieldErrors(draft)) ? (
+          <Text style={styles.error}>Please fill in the required fields above.</Text>
+        ) : null}
         {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>
           <PrimaryButton

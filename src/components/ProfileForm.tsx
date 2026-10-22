@@ -68,10 +68,12 @@ interface ProfileFormProps {
   value: ProfileDraft;
   onChange: (patch: Partial<ProfileDraft>) => void;
   /**
-   * Inline errors shown under the REQUIRED name/broker fields (the
-   * "Required" state) — the parent screens own this validation (see
+   * Inline error shown under the REQUIRED name field (the "Required"
+   * state) — the parent screens own this validation (see
    * src/lib/profileRequired.ts). Email and phone errors are computed
    * live inside the form (required + format, review-link pattern).
+   * brokerError is retained for prop compatibility and is always null
+   * since broker became optional (Oct 22, 2026).
    */
   nameError?: string | null;
   brokerError?: string | null;
@@ -381,7 +383,7 @@ export function ProfileForm({ value, onChange, nameError, brokerError, showRevie
       />
       {/* 6. Broker */}
       <Field
-        label="Broker"
+        label="Broker (optional)"
         value={value.realty_group}
         onChangeText={set('realty_group')}
         placeholder="e.g. Compass Realty"

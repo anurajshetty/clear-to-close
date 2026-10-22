@@ -2,7 +2,7 @@
 // Step 2 of 2. No back chevron (the account already exists).
 // Continue → deal list · Skip for now → deal list (+ "Complete your profile"
 // nudge on the empty deal list). Profile stays editable via profile-update.
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -15,7 +15,7 @@ import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import { Kicker, PrimaryButton, TextLink, useKeyboardHeight } from '../src/components/ui';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
-import { profileFieldErrors, hasProfileFieldErrors } from '../src/lib/profileRequired';
+import { profileFieldErrors, hasProfileFieldErrors, prefillProfileEmail } from '../src/lib/profileRequired';
 import { colors } from '../src/theme';
 
 export default function ProfileCreate() {
@@ -28,6 +28,9 @@ export default function ProfileCreate() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [brokerError, setBrokerError] = useState<string | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
+  // Save blocked by required/format validation (Oct 22, 2026): drives
+  // the summary line above the Continue button.
+  const [validationBlocked, setValidationBlocked] = useState(false);
   const [busy, setBusy] = useState(false);
   // Synchronous writes (Sept 28, 2026): saveProfile throws when the
   // profile is not confirmed on the server — the failure must be visible
@@ -37,6 +40,10 @@ export default function ProfileCreate() {
   // account + correct password). Armed by the signup screen via
   // setExistingAccountNotice; consumed here so it shows exactly once.
   const [showSignedInNotice, setShowSignedInNotice] = useState(false);
+  // Email pre-fill runs at most once per mount (Oct 22, 2026): it is
+  // an initial value, never a sync — refocusing must not resurrect an
+  // address the realtor deliberately cleared.
+  const emailPrefilledRef = useRef(false);
 
   const patch = useCallback(
     (p: Partial<ProfileDraft>) => {
@@ -51,9 +58,10 @@ export default function ProfileCreate() {
     useCallback(() => {
       let active = true;
       (async () => {
-        const [existing, pending] = await Promise.all([
+        const [existing, pending, sessionEmail] = await Promise.all([
           store.getProfile().catch(() => null),
           auth.takePendingProfileName().catch(() => null),
+          auth.getSessionEmail().catch(() => null),
         ]);
         const notice = await auth.takeExistingAccountNotice().catch(() => false);
         if (!active) return;
@@ -64,6 +72,16 @@ export default function ProfileCreate() {
         const existingName = existing?.name?.trim();
         const prefill = existingName ? existing!.name : pending;
         if (prefill) setDraft((d) => ({ ...d, name: prefill }));
+        // Email pre-fill (Oct 22, 2026): the stored profile email wins;
+        // an empty stored value falls back to the account's signup
+        // email. Once per mount, and never over a value already there.
+        if (!emailPrefilledRef.current) {
+          emailPrefilledRef.current = true;
+          const emailPrefill = prefillProfileEmail(existing?.email, sessionEmail);
+          if (emailPrefill) {
+            setDraft((d) => (d.email ? d : { ...d, email: emailPrefill }));
+          }
+        }
         if (notice) setShowSignedInNotice(true);
       })();
       return () => {
@@ -74,16 +92,18 @@ export default function ProfileCreate() {
 
   const finish = async (skipped: boolean) => {
     if (busy) return;
-    // Required + format validation (Anuraj, Oct 14, 2026): name, email,
-    // phone, broker — on Continue only. The Skip path never validates.
+    // Required + format validation (Anuraj, Oct 14, 2026; broker
+    // optional since Oct 22, 2026): name, email, phone — on Continue only. The Skip path never validates.
     if (!skipped) {
       const errors = profileFieldErrors(draft);
       setNameError(errors.name);
       setBrokerError(errors.broker);
       if (hasProfileFieldErrors(errors)) {
         setSubmitAttempted(true);
+        setValidationBlocked(true);
         return;
       }
+      setValidationBlocked(false);
     }
     setBusy(true);
     setSaveError(null);
@@ -151,6 +171,9 @@ export default function ProfileCreate() {
           submitAttempted={submitAttempted}
         />
 
+        {validationBlocked && hasProfileFieldErrors(profileFieldErrors(draft)) ? (
+          <Text style={styles.error}>Please fill in the required fields above.</Text>
+        ) : null}
         {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         <View style={styles.cta}>
           <PrimaryButton

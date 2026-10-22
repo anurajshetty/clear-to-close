@@ -622,6 +622,18 @@ export function createAuthService(deps: AuthServiceDeps) {
       }
     },
 
+    /** The signed-in account's email (the signup/login email), or null. */
+    async getSessionEmail(): Promise<string | null> {
+      const client = deps.getClient();
+      if (!client) return null;
+      try {
+        const { data } = await client.auth.getSession();
+        return data?.session?.user?.email ?? null;
+      } catch {
+        return null;
+      }
+    },
+
     onAuthStateChange(
       cb: (event: string, session: { user?: { id?: string } } | null) => void,
     ): (() => void) | null {

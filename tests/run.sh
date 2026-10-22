@@ -116,6 +116,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/cancel_sync_writes.test.ts" \
   "$ROOT/tests/account_isolation.test.ts" \
   "$ROOT/tests/identity_rederive.test.ts" \
+  "$ROOT/tests/home_invited_section.test.ts" \
   "$ROOT/tests/photo_cropper.test.ts" \
   "$ROOT/tests/profile_form_fields.test.ts" \
   "$ROOT/tests/profile_required.test.ts" \
@@ -241,6 +242,7 @@ node "$OUT/tests/close_revoke_converges.test.js"
 node "$OUT/tests/cancel_sync_writes.test.js"
 node "$OUT/tests/account_isolation.test.js"
 node "$OUT/tests/identity_rederive.test.js"
+node "$OUT/tests/home_invited_section.test.js"
 node "$OUT/tests/photo_cropper.test.js"
 node "$OUT/tests/profile_form_fields.test.js"
 node "$OUT/tests/profile_required.test.js"

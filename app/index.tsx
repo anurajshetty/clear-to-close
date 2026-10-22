@@ -563,25 +563,27 @@ export default function DealList() {
 
           {/* Team Access (frames 1/2/4): the Invited escrows group sits
               below Your escrows — pending invites first, then the
-              "Shared with you" cards. */}
-          {(pendingInvites.length > 0 || invitedEscrows.length > 0) && (
-            <>
-              <Text style={styles.groupLabel}>Invited escrows</Text>
-              {pendingInvites.map(renderPendingInvite)}
-              {invitedEscrows.length > 0 && (
-                <>
-                  <SectionHeader
-                    title="Shared with you"
-                    count={invitedEscrows.length}
-                    expanded={invitedOpen}
-                    onToggle={() => setInvitedOpen((v) => !v)}
-                    testID="section-invited"
-                  />
-                  {invitedOpen && invitedEscrows.map(renderInvitedDeal)}
-                </>
-              )}
-            </>
-          )}
+              "Shared with you" cards. The section ALWAYS renders
+              (Oct 22, 2026): empty shows the "No invites yet." line. */}
+          <>
+            <Text style={styles.groupLabel}>Invited escrows</Text>
+            {pendingInvites.map(renderPendingInvite)}
+            {invitedEscrows.length > 0 && (
+              <>
+                <SectionHeader
+                  title="Shared with you"
+                  count={invitedEscrows.length}
+                  expanded={invitedOpen}
+                  onToggle={() => setInvitedOpen((v) => !v)}
+                  testID="section-invited"
+                />
+                {invitedOpen && invitedEscrows.map(renderInvitedDeal)}
+              </>
+            )}
+            {pendingInvites.length === 0 && invitedEscrows.length === 0 && (
+              <Text style={styles.emptyText}>No invites yet.</Text>
+            )}
+          </>
         </>
       )}
 

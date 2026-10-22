@@ -1668,3 +1668,20 @@ migration chain was exonerated by replaying the app's exact writes
 against the disposable chain — when the app and the database
 disagree, check the identity the APP is stamping before suspecting
 the policies. Regression: tests/identity_rederive.test.ts.
+
+## Pre-fill is an initial value, never a sync (Oct 22, 2026)
+The profile contact email now pre-fills from the signed-in account's
+email when the stored profile email is empty. Three rules keep it
+honest: a stored value always wins (returned exactly as stored); the
+prefill runs at most once per mount on profile-create (a ref guard),
+so refocusing the screen never resurrects an address the realtor
+deliberately cleared — a cleared field must still hit the required
+check on save; and nothing syncs afterwards in either direction.
+Implemented as one pure helper (prefillProfileEmail in
+src/lib/profileRequired.ts) shared by all three profile screens, so
+the rule is unit-tested once and cannot drift per screen. A blocked
+save also needs a visible reason, not just red field marks: the
+three screens share the summary line "Please fill in the required
+fields above." above the save button, gated on a blocked attempt AND
+the draft still failing validation, so it disappears the moment the
+fields are fixed.

@@ -48,7 +48,7 @@ const ORDER = [
   'label="Full name"',
   'label="Email"',
   'label="Phone"',
-  'label="Broker"',
+  'label="Broker (optional)"',
   'label="About"',
   'label="Areas served"',
   'label="License number (optional)"',
@@ -66,15 +66,18 @@ assert(form.indexOf('yearsExperience: string') !== -1, 'yearsExperience key kept
 
 // --- 2. Broker rename -----------------------------------------------------
 assert(form.indexOf('label="Realty group"') === -1, '"Realty group" label is gone');
-assert(form.indexOf('label="Broker"') !== -1, '"Broker" label present');
+assert(form.indexOf('label="Broker (optional)"') !== -1, '"Broker (optional)" label present');
 assert(form.indexOf('realty_group') !== -1, 'realty_group field key kept (contractual)');
 
-// --- 2b. Email/Phone/Broker are REQUIRED (Anuraj, Oct 14, 2026) -----------
-// Labels drop "(optional)"; the validation matrix lives in
-// tests/profile_required.test.ts. License stays optional.
-for (const opt of ['label="Email (optional)"', 'label="Phone (optional)"', 'label="Broker (optional)"']) {
+// --- 2b. Email/Phone are REQUIRED (Anuraj, Oct 14, 2026) -------------------
+// Their labels drop "(optional)"; the validation matrix lives in
+// tests/profile_required.test.ts. Broker was required by the same
+// call and is OPTIONAL again since Oct 22, 2026 (Anuraj), so its
+// "(optional)" suffix is back. License stays optional.
+for (const opt of ['label="Email (optional)"', 'label="Phone (optional)"']) {
   assert(form.indexOf(opt) === -1, `${opt} is gone (field is required now)`);
 }
+assert(form.indexOf('label="Broker (optional)"') !== -1, 'broker is optional again (Oct 22, 2026): suffix present');
 assert(form.indexOf('label="License number (optional)"') !== -1, 'license stays optional');
 
 // --- 3. Email/Phone on the draft and in storage ---------------------------
