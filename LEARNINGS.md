@@ -1643,3 +1643,28 @@ check-off copy; `tests/run.sh` wires both.
   make_send_client_push_single.py itself, which now fails loudly
   instead of handing over an unparsable file. Grep verifies content;
   only a parser verifies grammar.
+
+## Identity is re-derived at write time, never captured once (Oct 21, 2026)
+
+Live incident: every escrow create/update failed in production with
+the generic "Couldn't save" while profile saves worked. Postgres
+logs showed 42501 (RLS WITH CHECK) on every escrow upsert. Root
+cause: the synced store captured its userId once (boot/login ping)
+and serverSession() returned the capture forever — when the session
+changed underneath the store (a reused browser carrying the prior
+test run's persisted session; the new account's session landing via
+the email-confirmation flow after an anti-enumeration sign-up), every
+escrow kept stamping the OLD account's uid while the JWT carried the
+new one. This is the sync-outbox rule again, one level up: stamp the
+LIVE session's auth.uid(), never an identity captured earlier.
+Fix: serverSession() re-derives from the live session on every call;
+on divergence from the capture it throws IdentityMismatchError
+(classified 'rejected' — the Sept 28, 2026 mismatch contract: refuse
+loudly, commit nothing, wipe nothing) instead of stamping either
+identity silently; initCloudSync remains the sanctioned re-capture,
+and app/_layout now also fires it on SIGNED_IN so a confirmation
+landing re-captures without waiting for a login screen. The repo
+migration chain was exonerated by replaying the app's exact writes
+against the disposable chain — when the app and the database
+disagree, check the identity the APP is stamping before suspecting
+the policies. Regression: tests/identity_rederive.test.ts.

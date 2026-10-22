@@ -998,6 +998,28 @@ export class SyncNotAppliedError extends Error {
   }
 }
 
+/**
+ * The live session belongs to a different account than the identity
+ * the store's local data was captured under (Oct 21, 2026 incident).
+ * Raised by the synced store's session resolution BEFORE any row is
+ * stamped: stamping one account's writes with another account's uid
+ * either fails at RLS (42501) or, worse, lands data in the wrong
+ * account. Classified 'rejected' so the user sees the refused copy.
+ */
+export class IdentityMismatchError extends Error {
+  readonly sessionUid: string;
+  readonly storeUid: string;
+  constructor(sessionUid: string, storeUid: string) {
+    super(
+      `cloudSync: session identity ${sessionUid} does not match the store identity ${storeUid}. ` +
+        `The write was refused before anything was stamped or sent.`,
+    );
+    this.name = 'IdentityMismatchError';
+    this.sessionUid = sessionUid;
+    this.storeUid = storeUid;
+  }
+}
+
 async function upsertAll(client: Cloud, table: string, rows: Record<string, unknown>[], onConflict: string): Promise<void> {
   // .select(onConflict) asks PostgREST for the affected rows (RETURNING):
   // without it a write rejected by an RLS owner-policy looks identical to

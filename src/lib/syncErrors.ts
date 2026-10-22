@@ -14,7 +14,7 @@
 //
 // This module is UI-free so the node unit tests can drive it directly.
 import type { KV } from './store';
-import { SyncNotAppliedError } from './cloudSync';
+import { IdentityMismatchError, SyncNotAppliedError } from './cloudSync';
 
 export type SyncOpKind =
   | 'pushEscrow'
@@ -87,6 +87,7 @@ function isNetworkLike(error: unknown): boolean {
 /** Classify a push failure for plain-words copy. */
 export function classifySyncError(error: unknown): SyncErrorKind {
   if (error instanceof SyncNotAppliedError) return 'rejected';
+  if (error instanceof IdentityMismatchError) return 'rejected';
   if (isNetworkLike(error)) return 'network';
   return 'unknown';
 }

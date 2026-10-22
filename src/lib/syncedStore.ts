@@ -49,6 +49,7 @@ import {
   drainOutbox,
   ensureCloudUser,
   fetchCloudView,
+  IdentityMismatchError,
   isCapViolation,
   logConflict,
   mediaKindsRemoved,
@@ -301,13 +302,39 @@ export function createSyncedStore(
     if (!cloudConfigured()) return null;
     const c = client();
     if (!c) return null;
-    if (userId) return { c, uid: userId };
+    // Identity is re-derived from the LIVE session on every call. The
+    // boot/login-time capture (userId) is only a fallback for when no
+    // session resolves (offline / ping never ran) — it must never
+    // outrank the live session: a capture goes stale when the session
+    // changes underneath the store (email-confirmation landing after
+    // an anti-enumeration sign-up, signing in as a different account),
+    // and every write stamped with the dead uid is refused by RLS.
+    // Live incident, Oct 21, 2026: escrow upserts failed 42501 in
+    // production while profile saves (own identity path) kept working.
+    // A write to a row owned by the PREVIOUS account still fails
+    // loudly under the live uid (the zero-affected guard in upsertAll)
+    // — exactly the Sept 28, 2026 mismatch contract; nothing here
+    // wipes local data on a switch (that stays a logout-time rule).
+    let liveUid: string | null = null;
     try {
-      const uid = await ensureCloudUser(c);
-      return uid ? { c, uid } : null;
+      liveUid = await ensureCloudUser(c);
     } catch {
-      return null;
+      liveUid = null;
     }
+    if (liveUid) {
+      if (userId && userId !== liveUid) {
+        // Divergence: refuse loudly BEFORE anything is stamped (the
+        // Sept 28, 2026 mismatch contract — the store's data belongs
+        // to the captured account). A sanctioned re-init
+        // (initCloudSync at boot / login / sign-in, or the logout
+        // wipe) re-captures identity; a write never silently adopts.
+        throw new IdentityMismatchError(liveUid, userId);
+      }
+      userId = liveUid;
+      return { c, uid: liveUid };
+    }
+    if (userId) return { c, uid: userId };
+    return null;
   }
 
   /**

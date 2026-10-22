@@ -186,6 +186,16 @@ export default function RootLayout() {
     // to login with the approved "session expired" copy. Our own sign-out
     // sets the expectation flag and navigates to /role itself.
     const off = auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN') {
+        // A session landing outside the login/signup screens (the
+        // email-confirmation link is the main one) must re-capture the
+        // store identity, or the store keeps the previous session's
+        // identity and every write refuses on the mismatch (live
+        // incident, Oct 21, 2026). Idempotent with the screens' own
+        // init calls.
+        void initCloudSync().catch(() => {});
+        return;
+      }
       if (event !== 'SIGNED_OUT') return;
       if (takeExpectSignOut()) return;
       void auth.getRole().then((role) => {
