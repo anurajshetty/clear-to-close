@@ -38,6 +38,7 @@ import type {
 } from '../../src/lib/teamModel';
 import { checkedOffByLine, activitySummaryLine } from '../../src/lib/teamActivityText';
 import { ProgressRing } from '../../src/components/ProgressRing';
+import { ScreenErrorBoundary } from '../../src/components/ScreenErrorBoundary';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard } from '../../src/components/TcIntakeEntry';
 import { describeTcIntakeStatus, showTcIntakeForRealtorSide } from '../../src/lib/tcIntake';
@@ -164,7 +165,7 @@ function BuyerIntakeEntryRow({
   );
 }
 
-export default function TransactionDetail() {
+export function TransactionDetail() {
   const router = useRouter();
   // iOS (Sept 2026): the back button rendered under the status bar and was
   // effectively untappable. Clear the safe-area inset plus a deliberate gap
@@ -386,6 +387,19 @@ export default function TransactionDetail() {
     }
   };
 
+  // ---- Team Access derivations (Oct 20, 2026) ----
+  // Hooks-order law (Oct 22, 2026): this useMemo must stay ABOVE the
+  // early returns below. It originally sat under them, so the first
+  // render (loading state) skipped it and the render that received
+  // the escrow called MORE hooks than the previous one — React error
+  // #310 killed the tree and, with no error boundary, the detail
+  // screen white-screened for every escrow. participantNameMap(null)
+  // is a safe empty Map, so the memo is valid before data lands.
+  const nameById = useMemo(
+    () => participantNameMap(participants),
+    [participants],
+  );
+
   if (!loaded) {
     return (
       <View style={styles.center}>
@@ -415,10 +429,8 @@ export default function TransactionDetail() {
   const isMember = isMemberRole(accessRole);
   const memberReadOnly = isMember && escrow.status !== 'open';
   const canEdit = canEditChecklist(accessRole) && !memberReadOnly;
-  const nameById = useMemo(
-    () => participantNameMap(participants),
-    [participants],
-  );
+  // nameById (participantNameMap memo) is derived above the early
+  // returns — see the hooks-order note there.
   // Frame 6/7: a done step names who checked it off when the actor
   // resolves (participants or, for the owner, the owner row). Unknown
   // actor → no line at all.
@@ -1466,3 +1478,19 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
   },
 });
+
+// Default export: the detail screen behind its error boundary
+// (Oct 22, 2026). A render crash here must show the fallback, never a
+// blank white page — see ScreenErrorBoundary.
+export default function EscrowDetailRoute() {
+  const router = useRouter();
+  return (
+    <ScreenErrorBoundary
+      title="Escrow"
+      actionLabel="Back to escrows"
+      onAction={() => router.back()}
+    >
+      <TransactionDetail />
+    </ScreenErrorBoundary>
+  );
+}

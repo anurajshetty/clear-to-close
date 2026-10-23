@@ -1685,3 +1685,32 @@ three screens share the summary line "Please fill in the required
 fields above." above the save button, gated on a blocked attempt AND
 the draft still failing validation, so it disappears the moment the
 fields are fixed.
+
+## RLS SELECT policies are checked on INSERT ... RETURNING — and function lookups cannot see the row being inserted (Oct 22, 2026)
+Escrow CREATE failed with 42501 for EVERY account from the moment
+0044 shipped, while reads, updates, invites, and profile saves all
+worked. 0044's escrows_select resolved access through
+escrow_access_role(id), a function whose internal table scan cannot
+see the row the current statement is inserting (statement snapshot),
+so it returned NULL for every brand-new row — and PostgREST upserts
+always run INSERT ... ON CONFLICT ... RETURNING, where Postgres
+applies the SELECT policy to the returned rows. Two process lessons.
+(1) A policy whose qual does a table lookup on the row's own table
+must always carry a tuple-visible disjunct for the row itself
+(0045: `user_id = auth.uid() or escrow_access_role(id) is not null` —
+the disjunct is exactly the function's 'owner' set, so nothing
+widens). (2) Harness fidelity: my Oct 21 chain replay "with the
+app's exact write shapes" used plain INSERTs and never reproduced
+the defect — replay must use the WIRE shape (the PostgREST CTE with
+RETURNING), or a green pass proves nothing about the real path.
+The incident was doubly masked: Oct 21's failures were genuinely
+caused by the identity bug's wrong-uid body (a real WITH CHECK
+failure), so nobody saw that a second, independent defect would
+have failed the same writes anyway. When two defects produce the
+same error, fixing the first and re-testing the SAME flow is the
+only way to surface the second — and "live-verified" must name the
+exact flows it exercised.
+
+## Hooks must never sit below an early return (Oct 22, 2026)
+- The escrow detail screen white-screened for EVERY escrow (owner-reproduced live, both after create and from the list) while home, edit, and "Escrow not found" all rendered fine. Cause: the Team Access build (Oct 20) derived `nameById` with a `useMemo` placed after the screen's `if (!loaded)` / `if (!escrow)` early returns. The loading render skipped the hook; the loaded render called one hook more than the previous render; React error #310 unmounted the tree and, with no error boundary anywhere, the page went blank with no message. The not-found path survived because it also returns before the hook, which masked the pattern in review.
+- Rules banked: (1) every hook in a component runs unconditionally at the top, above any early return — derivations that need loaded data take nullable inputs (`participantNameMap(null)` is an empty Map) instead of moving below the guards. (2) Screens that can crash get an error boundary with a VISIBLE fallback (`src/components/ScreenErrorBoundary.tsx`); a silent white page is never an acceptable failure mode. (3) Regression shape: `tests/escrow_detail_hooks.test.ts` pins both (no hook call after the first early return inside the component body; the boundary wraps the default export). (4) Reproduction discipline: the production bundle is minified, but React error #310 + a headless run of the exact live bundle with real row shapes (network stubbed at the Playwright layer) identified the class in one shot; bundle-presence checks would never have found it.
