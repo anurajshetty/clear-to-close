@@ -290,7 +290,12 @@ central user; the buyers and sellers they represent are the other parties.
   with an explicit redirect to the app's public web address
   (`AUTH_EMAIL_REDIRECT_URL`, from the single `APP_PUBLIC_URL`
   definition) — without it, Supabase's default drops the address's
-  /clear-to-close path and the link lands on the bare domain's 404. The session persists on both
+  /clear-to-close path and the link lands on the bare domain's 404.
+  Signup confirmation and resend links land one path deeper, on the
+  text-only **/email-confirmed** page (`AUTH_CONFIRM_REDIRECT_URL`),
+  which states the outcome — "Your account is confirmed" or "This link
+  has expired" — instead of dropping every outcome silently on the
+  login page (Oct 23, 2026). The session persists on both
   platforms — **web** in localStorage, **native iOS** in its own storage —
   so a refresh keeps the realtor signed in, on the same screen. The session
   ends on Log out, or when the browser/incognito session ends.

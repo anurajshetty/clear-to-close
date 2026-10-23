@@ -68,7 +68,14 @@ export default function RootLayout() {
           Platform.OS === 'web' && typeof window !== 'undefined'
             ? window.location.href
             : null;
-        const recovery = parseRecoveryLink(launchUrl ?? '');
+        // Email confirmation landing (Oct 23, 2026): that page owns its
+        // fragment (it states the outcome; it never consumes tokens) —
+        // the recovery branches must not hijack an expired confirmation
+        // link into the reset-password flow.
+        const recovery =
+          pathname === '/email-confirmed'
+            ? ({ kind: 'none' } as const)
+            : parseRecoveryLink(launchUrl ?? '');
         if (recovery.kind === 'recovery') {
           clearRecoveryFragment();
           const consumed = await auth.consumeRecoverySession(
@@ -97,7 +104,8 @@ export default function RootLayout() {
         if (
           pathname.startsWith('/realtor/') ||
           pathname.startsWith('/invite/') ||
-          pathname === '/realtor-profile'
+          pathname === '/realtor-profile' ||
+          pathname === '/email-confirmed'
         )
           return;
         const isWeb = auth.isWeb();
@@ -227,6 +235,7 @@ export default function RootLayout() {
         <Stack.Screen name="signup" />
         <Stack.Screen name="login" />
         <Stack.Screen name="reset-password" />
+        <Stack.Screen name="email-confirmed" />
         <Stack.Screen name="profile-create" />
         <Stack.Screen name="profile-update" />
         <Stack.Screen name="link-dead" />

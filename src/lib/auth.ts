@@ -35,6 +35,17 @@ import { APP_PUBLIC_URL } from './shareCopy';
  */
 export const AUTH_EMAIL_REDIRECT_URL = APP_PUBLIC_URL;
 
+/**
+ * Signup confirmation links land on their own page (Oct 23, 2026): the
+ * text-only /email-confirmed screen states the outcome (confirmed vs
+ * expired/used/invalid) instead of the old silent landing. A distinct
+ * path is what lets the app tell a confirmation return apart from a
+ * recovery return — error fragments carry no type, so at the shared
+ * root an expired confirmation link is indistinguishable from an
+ * expired reset link. Password reset keeps the root URL above.
+ */
+export const AUTH_CONFIRM_REDIRECT_URL = `${APP_PUBLIC_URL}/email-confirmed`;
+
 export type PlatformKind = 'web' | 'native';
 
 export function detectPlatform(): PlatformKind {
@@ -276,6 +287,42 @@ export function parseRecoveryLink(rawUrl: string): RecoveryLink {
   const refreshToken = get('refresh_token');
   if (type === 'recovery' && accessToken && refreshToken) {
     return { kind: 'recovery', accessToken, refreshToken };
+  }
+  return { kind: 'none' };
+}
+
+/**
+ * Parse a web launch URL for a signup confirmation outcome (Oct 23,
+ * 2026). Confirmation links land on /email-confirmed (see
+ * AUTH_CONFIRM_REDIRECT_URL); Supabase appends the outcome to that
+ * URL's fragment: a verified signup returns
+ * `#access_token=…&type=signup`, an expired/used/invalid link returns
+ * `#error=…&error_code=otp_expired…`. The page is presentation only —
+ * it reads the outcome and states it; it never consumes the tokens.
+ * Fragment-only, like parseRecoveryLink (L9): the query string is
+ * deliberately never read.
+ */
+export type ConfirmationLink =
+  | { kind: 'confirmed' }
+  | { kind: 'expired' }
+  | { kind: 'none' };
+
+export function parseConfirmationLink(rawUrl: string): ConfirmationLink {
+  let hash = '';
+  try {
+    const u = rawUrl.startsWith('#')
+      ? new URL(`x://x/${rawUrl}`)
+      : new URL(rawUrl, 'x://x');
+    hash = u.hash;
+  } catch {
+    return { kind: 'none' };
+  }
+  const frag = hash.startsWith('#') ? hash.slice(1) : hash;
+  if (!frag) return { kind: 'none' };
+  const fp = new URLSearchParams(frag);
+  if (fp.get('error') || fp.get('error_code')) return { kind: 'expired' };
+  if (fp.get('type') === 'signup' && fp.get('access_token')) {
+    return { kind: 'confirmed' };
   }
   return { kind: 'none' };
 }
@@ -667,7 +714,7 @@ export function createAuthService(deps: AuthServiceDeps) {
           password,
           options: {
             data: { name: name.trim() },
-            emailRedirectTo: AUTH_EMAIL_REDIRECT_URL,
+            emailRedirectTo: AUTH_CONFIRM_REDIRECT_URL,
           },
         });
         if (error) return { ok: false, code: mapSignUpError(error) };
@@ -784,7 +831,7 @@ export function createAuthService(deps: AuthServiceDeps) {
         const { error } = await client.auth.resend({
           type: 'signup',
           email: email.trim(),
-          options: { emailRedirectTo: AUTH_EMAIL_REDIRECT_URL },
+          options: { emailRedirectTo: AUTH_CONFIRM_REDIRECT_URL },
         });
         if (!error) return { ok: true };
         if (isNetworkError(error)) return { ok: false, code: 'network' };

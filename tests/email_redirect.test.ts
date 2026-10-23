@@ -13,11 +13,18 @@
 // and all three flows (signUp, resendConfirmation, sendPasswordReset)
 // pass it explicitly — on every platform, since the link always opens
 // in a browser.
+//
+// Oct 23, 2026 split: signUp + resendConfirmation now pass
+// AUTH_CONFIRM_REDIRECT_URL (…/email-confirmed) so the confirmation
+// link lands on the text-only outcome page; sendPasswordReset keeps
+// the root URL. parseConfirmationLink cases live below.
 import { assert, summary } from './assert';
 import { memoryKV } from '../src/lib/kv';
 import {
+  AUTH_CONFIRM_REDIRECT_URL,
   AUTH_EMAIL_REDIRECT_URL,
   createAuthService,
+  parseConfirmationLink,
   type AuthClientLike,
 } from '../src/lib/auth';
 import { APP_PUBLIC_URL } from '../src/lib/shareCopy';
@@ -69,6 +76,13 @@ async function main(): Promise<void> {
     AUTH_EMAIL_REDIRECT_URL === APP_PUBLIC_URL,
     'the redirect derives from the single APP_PUBLIC_URL definition (no second copy of the origin)',
   );
+  // Oct 23, 2026: confirmation links land on their own text-only page so
+  // the outcome can be stated; reset keeps the root.
+  const EXPECTED_CONFIRM = `${EXPECTED}/email-confirmed`;
+  assert(
+    AUTH_CONFIRM_REDIRECT_URL === EXPECTED_CONFIRM,
+    'the confirmation redirect is the app address + /email-confirmed',
+  );
 
   // --- signUp -----------------------------------------------------------------
   const cap1: Captured = {};
@@ -76,8 +90,8 @@ async function main(): Promise<void> {
   const up = await svc1.signUp('Maya Sharma', 'maya@example.com', 'password123');
   assert(up.ok, 'signUp succeeds against the capturing mock');
   assert(
-    cap1.signUpArgs?.options?.emailRedirectTo === EXPECTED,
-    'signUp passes options.emailRedirectTo = the app address',
+    cap1.signUpArgs?.options?.emailRedirectTo === EXPECTED_CONFIRM,
+    'signUp passes options.emailRedirectTo = the confirmation landing page',
   );
 
   // --- resend confirmation ------------------------------------------------------
@@ -87,8 +101,8 @@ async function main(): Promise<void> {
   assert(re.ok, 'resendConfirmation succeeds against the capturing mock');
   assert(cap2.resendArgs?.type === 'signup', 'resend stays type signup');
   assert(
-    cap2.resendArgs?.options?.emailRedirectTo === EXPECTED,
-    'resend passes options.emailRedirectTo = the app address',
+    cap2.resendArgs?.options?.emailRedirectTo === EXPECTED_CONFIRM,
+    'resend passes options.emailRedirectTo = the confirmation landing page',
   );
 
   // --- password reset -------------------------------------------------------------
@@ -100,6 +114,39 @@ async function main(): Promise<void> {
     cap3.resetOptions?.redirectTo === EXPECTED,
     'resetPasswordForEmail passes redirectTo = the app address (native included: the link opens in a browser)',
   );
+
+  // --- confirmation outcome parsing (Oct 23, 2026) --------------------------------
+  {
+    const base = 'https://anurajshetty.github.io/clear-to-close/email-confirmed';
+    assert(
+      parseConfirmationLink(`${base}#access_token=tok&refresh_token=r&type=signup`).kind === 'confirmed',
+      'a verified signup fragment reads confirmed',
+    );
+    assert(
+      parseConfirmationLink(`${base}#error=access_denied&error_code=otp_expired&error_description=expired`).kind === 'expired',
+      'an otp_expired error fragment reads expired',
+    );
+    assert(
+      parseConfirmationLink(`${base}#error_code=otp_expired`).kind === 'expired',
+      'an error_code-only fragment reads expired',
+    );
+    assert(
+      parseConfirmationLink(base).kind === 'none',
+      'a bare landing URL has no outcome (the page shows the expired state)',
+    );
+    assert(
+      parseConfirmationLink(`${base}#access_token=tok&type=recovery`).kind === 'none',
+      'a recovery fragment is not a confirmation outcome',
+    );
+    assert(
+      parseConfirmationLink(`${base}?error=access_denied#access_token=tok&type=signup`).kind === 'confirmed',
+      'query params are never read (fragment-only, L9): a query error cannot flip a confirmed fragment',
+    );
+    assert(
+      parseConfirmationLink(`${base}?access_token=tok&type=signup`).kind === 'none',
+      'tokens in the query string are ignored (fragment-only, L9)',
+    );
+  }
 
   summary('email_redirect');
 }
