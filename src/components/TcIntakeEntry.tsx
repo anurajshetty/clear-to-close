@@ -19,7 +19,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { Kicker } from './ui';
-import { buildTcIntakeSections, type TcIntakeData } from '../lib/tcIntake';
+import { buildTcIntakeSections, tcIntakeHero, type TcIntakeData } from '../lib/tcIntake';
 import { colors } from '../theme';
 
 export interface TcEntryCardProps {
@@ -114,6 +114,66 @@ export function TcEntryCard({
 
 
 /**
+ * TC-view hero intake card (TC view mockup, approved Oct 23, 2026): on an
+ * escrow where the viewer is the TC, the plain entry row becomes this
+ * hero — accent border, clipboard chip, status pill, the workspace line,
+ * and a full-width action button. The realtor/associate entry row above
+ * is unchanged. The button opens the same TC intake form as the row.
+ */
+export function TcIntakeHeroCard({
+  started,
+  complete,
+  onPress,
+}: {
+  started: boolean;
+  complete: boolean;
+  onPress: () => void;
+}) {
+  const hero = tcIntakeHero({ started, complete });
+  return (
+    <View style={styles.heroCard} testID="tc-intake-hero">
+      <View style={styles.heroTop}>
+        <View style={styles.heroIcon} aria-hidden={true}>
+          <ClipboardIcon />
+        </View>
+        <View>
+          <Text style={styles.heroTitle}>TC intake</Text>
+          <View
+            style={[
+              styles.heroPill,
+              hero.tone === 'sage' ? styles.heroPillSage : styles.heroPillAmber,
+            ]}
+          >
+            <Text
+              style={[
+                styles.heroPillText,
+                hero.tone === 'sage' ? styles.heroPillTextSage : styles.heroPillTextAmber,
+              ]}
+            >
+              {hero.pill}
+            </Text>
+          </View>
+        </View>
+      </View>
+      <Text style={styles.heroSub}>
+        This is your workspace on this escrow. The intake form is yours to fill in and keep
+        current.
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${hero.button}.`}
+        accessibilityHint="Opens the editable TC intake form for the listing."
+        onPress={onPress}
+        testID="tc-intake-entry"
+        style={({ pressed }) => [styles.heroBtn, pressed && { opacity: 0.85 }]}
+      >
+        <Text style={styles.heroBtnText}>{hero.button}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+/**
  * Generic read-only section renderer (Oct 1, 2026, buyer intake mockup 08):
  * the TcIntakeSections layout factored out so the buyer intake reuses the
  * exact same renderer — one renderer, no divergent copies. Accepts any
@@ -175,6 +235,78 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 4,
     marginBottom: 18,
+  },
+  // TC hero card (approved Oct 23, 2026): mockup metrics — 2px accent
+  // border, radius 16, soft accent shadow, 18px bottom margin matching
+  // the entry rows it replaces.
+  heroCard: {
+    backgroundColor: colors.card,
+    borderWidth: 2,
+    borderColor: colors.accent,
+    borderRadius: 16,
+    paddingTop: 16,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    marginBottom: 18,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.14,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3,
+  },
+  heroTop: {
+    flexDirection: 'row',
+    gap: 11,
+    alignItems: 'flex-start',
+  },
+  heroIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  heroTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  heroPill: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    marginTop: 4,
+  },
+  heroPillAmber: { backgroundColor: colors.amberSoft },
+  heroPillSage: { backgroundColor: colors.sageSoft },
+  heroPillText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+  },
+  heroPillTextAmber: { color: colors.amber },
+  heroPillTextSage: { color: colors.sage },
+  heroSub: {
+    fontSize: 13,
+    color: colors.body,
+    lineHeight: 19.5,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  heroBtn: {
+    backgroundColor: colors.accent,
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  heroBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.card,
   },
   iconCircle: {
     width: 44,

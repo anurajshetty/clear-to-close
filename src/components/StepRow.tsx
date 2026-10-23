@@ -61,6 +61,15 @@ type StepRowBase = {
    * rows whose actor cannot be named stay exactly as before.
    */
   checkedByLine?: string | null;
+  /**
+   * TC read-only tone (TC view mockup, approved Oct 23, 2026): the row
+   * renders in the muted watch-only treatment — sage check dots, hollow
+   * open dots, body-color titles, "Up next" as a plain line, no chips,
+   * no tap targets. Only the escrow detail screen passes this, and only
+   * when the viewer's role on that escrow is TC. Undefined everywhere
+   * else renders exactly as before.
+   */
+  tone?: 'tc';
 };
 
 type StepRowProps = StepRowBase &
@@ -189,6 +198,44 @@ export function StepRow(props: StepRowProps) {
   // View-mode checkbox press plumbing (hooks stay above every early return).
   const suppressCheckboxToggle = useRef(false);
   const [checkboxPressed, setCheckboxPressed] = useState(false);
+
+  if (props.tone === 'tc') {
+    // TC read-only tone (approved Oct 23, 2026): a plain View — no
+    // checkbox, no pressables, no chips. All the data still renders:
+    // subtitle, the checked-off-by line, the key date, and "Up next" as
+    // a plain sub-line instead of the chip.
+    return (
+      <View style={styles.tcRow} testID="tc-step-row">
+        <View style={[styles.tcDot, done ? styles.tcDotDone : styles.tcDotOpen]}>
+          {done && (
+            <Svg width={12} height={10} viewBox="0 0 13 11" aria-hidden={true}>
+              <Path
+                d="M1.5 5.8L5 9.3L11.5 1.5"
+                stroke={colors.sage}
+                strokeWidth={2.6}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                fill="none"
+              />
+            </Svg>
+          )}
+        </View>
+        <View style={styles.tcBody}>
+          <Text style={styles.tcTitle}>
+            {title}
+            {props.keyDateLabel ? (
+              <Text style={styles.keyDate}> ({props.keyDateLabel})</Text>
+            ) : null}
+          </Text>
+          {subtitle ? <Text style={styles.tcSub}>{subtitle}</Text> : null}
+          {done && props.checkedByLine ? (
+            <Text style={styles.tcSub}>{props.checkedByLine}</Text>
+          ) : null}
+          {props.upNext && !done ? <Text style={styles.tcSub}>Up next</Text> : null}
+        </View>
+      </View>
+    );
+  }
 
   if (interactive && props.editMode) {
     // Edit mode: the whole row is inert — taps do nothing — and the row
@@ -382,4 +429,31 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     paddingHorizontal: 8,
   },
+  // TC read-only tone (approved Oct 23, 2026): mockup metrics — compact
+  // rows, 24px dots (sage fill + sage check when done; hollow photoBorder
+  // circle when open), titles in body color, 12px muted sub-lines.
+  tcRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 7,
+    paddingHorizontal: 4,
+  },
+  tcDot: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    flexShrink: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+  },
+  tcDotDone: { backgroundColor: colors.sageSoft },
+  tcDotOpen: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: colors.photoBorder,
+  },
+  tcBody: { flex: 1, marginLeft: 12, paddingTop: 2 },
+  tcTitle: { fontSize: 15, fontWeight: '600', color: colors.body },
+  tcSub: { fontSize: 12, color: colors.muted, marginTop: 1, lineHeight: 17 },
 });

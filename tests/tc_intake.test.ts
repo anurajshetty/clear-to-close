@@ -26,7 +26,7 @@ import {
   buildTcIntakeShareText,
   countTcIntake,
   describeTcIntakeStatus,
-  emptyTcIntake,
+  tcIntakeHero,  emptyTcIntake,
   formatTcIntakeDate,
   normalizeTcIntake,
   showTcDetailsForTcView,
@@ -145,6 +145,16 @@ async function main(): Promise<void> {
     assert(s1.text === '2 of 27 filled' && s1.started && !s1.complete, 'saved partial row -> "X of Y filled"');
     const s2 = describeTcIntakeStatus(fullIntake());
     assert(s2.text === 'Complete' && s2.complete, 'saved full row -> "Complete"');
+  }
+
+  // ------------------------------------------- TC hero card (Oct 23, 2026) ---
+  {
+    const h0 = tcIntakeHero({ started: false, complete: false });
+    assert(h0.pill === 'NOT STARTED' && h0.tone === 'amber' && h0.button === 'Start the intake', 'hero: not started');
+    const h1 = tcIntakeHero({ started: true, complete: false });
+    assert(h1.pill === 'IN PROGRESS' && h1.tone === 'amber' && h1.button === 'Continue the intake', 'hero: in progress');
+    const h2 = tcIntakeHero({ started: true, complete: true });
+    assert(h2.pill === 'DONE' && h2.tone === 'sage' && h2.button === 'View the intake', 'hero: complete');
   }
 
   // ---------------------------------------------------------- visibility ---

@@ -40,7 +40,7 @@ import { checkedOffByLine, activitySummaryLine } from '../../src/lib/teamActivit
 import { ProgressRing } from '../../src/components/ProgressRing';
 import { ScreenErrorBoundary } from '../../src/components/ScreenErrorBoundary';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
-import { TcEntryCard } from '../../src/components/TcIntakeEntry';
+import { TcEntryCard, TcIntakeHeroCard } from '../../src/components/TcIntakeEntry';
 import { describeTcIntakeStatus, showTcIntakeForRealtorSide } from '../../src/lib/tcIntake';
 import {
   describeBuyerIntakeStatus,
@@ -77,10 +77,14 @@ function TcIntakeEntryRow({
   escrowId,
   side,
   tab,
+  hero,
 }: {
   escrowId: string;
   side: 'buy' | 'sell' | 'both';
   tab: ClientRole;
+  /** TC view (approved Oct 23, 2026): when the viewer is this escrow's
+   * TC, the entry row renders as the hero card instead. */
+  hero?: boolean;
 }) {
   const rowRouter = useRouter();
   const [status, setStatus] = useState(describeTcIntakeStatus(null));
@@ -100,6 +104,15 @@ function TcIntakeEntryRow({
     }, [escrowId]),
   );
   if (!showTcIntakeForRealtorSide(side, tab === 'seller' ? 'seller' : 'buyer')) return null;
+  if (hero) {
+    return (
+      <TcIntakeHeroCard
+        started={status.started}
+        complete={status.complete}
+        onPress={() => rowRouter.push(`/tc-intake/${escrowId}`)}
+      />
+    );
+  }
   return (
     <TcEntryCard
       title="TC intake"
@@ -477,6 +490,30 @@ export function TransactionDetail() {
     );
   };
 
+  // TC view (approved Oct 23, 2026): the VIEW ONLY pill beside the
+  // checklist heading and the one-line note under it. TC viewers only;
+  // every other role's header renders exactly as before.
+  const renderViewOnlyPill = () => {
+    if (accessRole !== 'tc') return null;
+    return (
+      <View style={styles.viewOnlyPill} testID="tc-view-only-pill">
+        <Text style={styles.viewOnlyText}>👁 VIEW ONLY</Text>
+      </View>
+    );
+  };
+
+  const renderTcChecklistNote = () => {
+    if (accessRole !== 'tc') return null;
+    const owner = participants?.owner?.name?.trim() || ownerNameOf(escrow);
+    return (
+      <Text style={styles.tcNote} testID="tc-checklist-note">
+        {owner
+          ? `Follow progress here. ${owner} and the associate manage the checklist itself.`
+          : 'Follow progress here. The owner and the associate manage the checklist itself.'}
+      </Text>
+    );
+  };
+
   // Escrow lifecycle (approved Sept 2026): the all-steps-complete sage
   // banner carries the close button — once closed it becomes the "Closed"
   // indicator (sage tag + "Closed {date}.", no button). Unchecking any step
@@ -732,6 +769,7 @@ export function TransactionDetail() {
                 </Svg>
               </Pressable>
             ) : null}
+            {renderViewOnlyPill()}
           </>
         )}
       </View>
@@ -802,8 +840,12 @@ export function TransactionDetail() {
                 </Svg>
               </Pressable>
             ) : null}
+            {renderViewOnlyPill()}
           </View>
         )}
+        {accessRole === 'tc' ? (
+          <View style={styles.tcNotePad}>{renderTcChecklistNote()}</View>
+        ) : null}
         {renderLifecycle(r)}
         <View style={styles.listWrap}>
           <EditableChecklist
@@ -816,6 +858,7 @@ export function TransactionDetail() {
               loanApprovalDate: escrow?.loanApprovalDate ?? null,
             }}
             checkedByFor={checkedByFor}
+            rowTone={accessRole === 'tc' ? 'tc' : undefined}
             editing={isEditing}
             onToggle={(id) => toggle(r, id)}
             onReorder={reorderDraft}
@@ -826,9 +869,11 @@ export function TransactionDetail() {
                 <View style={styles.stickySpacer} />
               ) : (
                 <View>
-                  <Text style={styles.footnote}>
-                    {'Tap the circle to check a step off. Tap it again to undo.'}
-                  </Text>
+                  {accessRole !== 'tc' ? (
+                    <Text style={styles.footnote}>
+                      {'Tap the circle to check a step off. Tap it again to undo.'}
+                    </Text>
+                  ) : null}
                   {renderInviteFooter()}
                 </View>
               )
@@ -890,7 +935,7 @@ export function TransactionDetail() {
               openDate={escrow.openDate}
               closeDate={escrow.closeDate}
             />
-            <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
+            <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} hero={accessRole === 'tc'} />
             <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
             <View
               style={styles.tabSwitch}
@@ -939,6 +984,7 @@ export function TransactionDetail() {
               loanApprovalDate: escrow?.loanApprovalDate ?? null,
             }}
             checkedByFor={checkedByFor}
+            rowTone={accessRole === 'tc' ? 'tc' : undefined}
             editing={editingRole === role}
             onToggle={(id) => toggle(role, id)}
             onReorder={reorderDraft}
@@ -951,9 +997,10 @@ export function TransactionDetail() {
                   openDate={escrow.openDate}
                   closeDate={escrow.closeDate}
                 />
-                <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
+                <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} hero={accessRole === 'tc'} />
                 <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
                 {renderChecklistHead(role)}
+                {renderTcChecklistNote()}
                 {renderLifecycle(role)}
               </View>
             }
@@ -963,9 +1010,11 @@ export function TransactionDetail() {
                 <View style={styles.stickySpacer} />
               ) : (
                 <View>
-                  <Text style={styles.footnote}>
-                    {'Tap the circle to check a step off. Tap it again to undo.'}
-                  </Text>
+                  {accessRole !== 'tc' ? (
+                    <Text style={styles.footnote}>
+                      {'Tap the circle to check a step off. Tap it again to undo.'}
+                    </Text>
+                  ) : null}
                   {renderInviteFooter()}
                 </View>
               )
@@ -1277,6 +1326,31 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: colors.body,
     fontWeight: '600',
+  },
+  // TC view (approved Oct 23, 2026): VIEW ONLY pill (bothSoft/bothInk
+  // tokens, mockup metrics) and the checklist note line.
+  viewOnlyPill: {
+    backgroundColor: colors.bothSoft,
+    borderRadius: 999,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  viewOnlyText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    color: colors.bothInk,
+  },
+  tcNote: {
+    fontSize: 12,
+    color: colors.muted,
+    lineHeight: 17.5,
+    marginTop: 6,
+    marginBottom: 12,
+  },
+  // Dual-agency tab panel: the note aligns with the tab head's 24px pad.
+  tcNotePad: {
+    paddingHorizontal: 24,
   },
   // Team Access — end-of-checklist Invite card + Activity row (frames 6/7).
   inviteCard: {

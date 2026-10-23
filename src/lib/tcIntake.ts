@@ -277,6 +277,22 @@ export function describeTcIntakeStatus(data: TcIntakeData | null): {
 }
 
 /**
+ * TC-view hero card state (TC view mockup, approved Oct 23, 2026): the
+ * status pill + action button the TC's hero intake card shows, derived
+ * from the same started/complete flags as the entry-row status line.
+ * NOT STARTED and IN PROGRESS wear the amber pill; DONE wears sage.
+ */
+export function tcIntakeHero(status: { started: boolean; complete: boolean }): {
+  pill: string;
+  tone: 'amber' | 'sage';
+  button: string;
+} {
+  if (status.complete) return { pill: 'DONE', tone: 'sage', button: 'View the intake' };
+  if (status.started) return { pill: 'IN PROGRESS', tone: 'amber', button: 'Continue the intake' };
+  return { pill: 'NOT STARTED', tone: 'amber', button: 'Start the intake' };
+}
+
+/**
  * Realtor entry-row visibility (mockup ①): listing-side escrows only —
  * single-role seller escrows and the seller tab of dual-agency escrows.
  * Buyer-side never renders it.

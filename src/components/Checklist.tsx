@@ -52,16 +52,20 @@ const CIRCLE_BOTTOM = 43;
 export function ChecklistRow({
   index,
   count,
+  bare,
   children,
 }: {
   index: number;
   count: number;
+  /** TC tone (Oct 23, 2026): no connector segments — the mockup's
+   * read-only list is plain rows. Undefined renders as before. */
+  bare?: boolean;
   children: ReactNode;
 }) {
   return (
     <View style={styles.rowWrap}>
-      {index > 0 ? <View style={styles.connTop} testID="step-connector" /> : null}
-      {index < count - 1 ? <View style={styles.connBottom} testID="step-connector" /> : null}
+      {!bare && index > 0 ? <View style={styles.connTop} testID="step-connector" /> : null}
+      {!bare && index < count - 1 ? <View style={styles.connBottom} testID="step-connector" /> : null}
       {children}
     </View>
   );
@@ -118,6 +122,13 @@ export type EditableChecklistProps = {
    * cannot be named. Undefined (every existing caller) renders nothing.
    */
   checkedByFor?: (step: StepT) => string | null;
+  /**
+   * TC read-only tone (TC view mockup, approved Oct 23, 2026): rows
+   * render in StepRow's muted watch-only treatment and the connector
+   * segments are skipped. Only the escrow detail screen passes this,
+   * and only when the viewer's role on that escrow is TC.
+   */
+  rowTone?: 'tc';
 };
 
 /**
@@ -142,6 +153,7 @@ export function EditableChecklist({
   role,
   keyDates,
   checkedByFor,
+  rowTone,
 }: EditableChecklistProps) {
   const upNextId = steps.find((s) => !s.done)?.id;
 
@@ -265,7 +277,7 @@ export function EditableChecklist({
       contentContainerStyle={styles.listContent}
       ListHeaderComponent={ListHeaderComponent}
       renderItem={({ item, getIndex, drag, isActive }) => (
-        <ChecklistRow index={getIndex() ?? 0} count={steps.length}>
+        <ChecklistRow index={getIndex() ?? 0} count={steps.length} bare={rowTone === 'tc'}>
           <StepRow
             title={item.title}
             subtitle={item.subtitle}
@@ -281,6 +293,7 @@ export function EditableChecklist({
             dragHandle={editing ? renderGrip(item.title, drag) : undefined}
             keyDateLabel={keyDateLabelFor(item)}
             checkedByLine={editing ? null : checkedByFor?.(item) ?? null}
+            tone={rowTone}
           />
         </ChecklistRow>
       )}
