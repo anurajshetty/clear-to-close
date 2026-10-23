@@ -46,6 +46,7 @@ import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMed
 import { backfillTemplateKey } from './steps';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
+import { accessRoleOf } from './teamAccess';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -1172,6 +1173,11 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     delete legacy.loan_approval_date;
     await upsertAll(client, 'escrows', [legacy], 'id');
   }
+  await pushStepsNow(client, escrow);
+}
+
+/** Upsert the escrow's full step list (both sides), stamps included. */
+export async function pushStepsNow(client: Cloud, escrow: Escrow): Promise<void> {
   const steps = [
     ...toStepRows(escrow.id, 'buyer', escrow.buyerSteps),
     ...toStepRows(escrow.id, 'seller', escrow.sellerSteps),
@@ -1192,6 +1198,63 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
       });
       await upsertAll(client, 'steps', legacy, 'id');
     }
+  }
+}
+
+/**
+ * Member variant of the escrow push (Oct 23, 2026, Defect 1): an
+ * accepted Associate's save must never upsert the escrow row. The
+ * upsert is owner-only by construction — stamped with the member's
+ * uid it trips the 0044 lifecycle guard ("only the escrow owner can
+ * change its lifecycle"); stamped with the owner's uid it fails the
+ * upsert's INSERT-phase check (auth.uid() = user_id). Verified live
+ * both ways (403/42501) before this path existed.
+ *
+ * Instead the member PATCHes the escrow's content fields with a
+ * targeted UPDATE that never carries user_id (ownership), status or
+ * the per-side close stamps (lifecycle is owner-only), and never
+ * carries created_at. The existing escrows UPDATE policy authorizes
+ * an associate on an active escrow; a zero-row result (TC caller,
+ * closed escrow, lost grant) throws SyncNotAppliedError so the write
+ * fails loudly instead of reading as saved. Steps ride the same
+ * full-list upsert as the owner path — migration 0046 lets a member
+ * re-send teammates' unchanged stamps.
+ */
+export async function pushEscrowAsMemberNow(client: Cloud, escrow: Escrow): Promise<void> {
+  const full = toEscrowRow('', escrow);
+  const fields: Record<string, unknown> = { ...full };
+  delete fields.id;
+  delete fields.user_id;
+  delete fields.status;
+  delete fields.buyer_closed_at;
+  delete fields.seller_closed_at;
+  delete fields.created_at;
+  const { data, error } = await client
+    .from('escrows')
+    .update(fields)
+    .eq('id', escrow.id)
+    .select('id');
+  if (error) throw error;
+  const affected = Array.isArray(data) ? data.length : 0;
+  if (affected < 1) throw new SyncNotAppliedError('escrows', 1, affected);
+  await pushStepsNow(client, escrow);
+}
+
+/**
+ * Role-dispatching escrow push: owners take the whole-row upsert;
+ * members (associate/TC accessRole) take the member path. Every
+ * store write routes through here so no call site can stamp a
+ * member's session identity onto someone else's escrow again.
+ */
+export async function pushEscrowForRole(
+  client: Cloud,
+  userId: string,
+  escrow: Escrow,
+): Promise<void> {
+  if (accessRoleOf(escrow) === 'owner') {
+    await pushEscrowNow(client, userId, escrow);
+  } else {
+    await pushEscrowAsMemberNow(client, escrow);
   }
 }
 
@@ -2006,7 +2069,7 @@ async function drainOutboxLocked(
     try {
       if (op.op === 'pushEscrow' && op.escrowId) {
         const e = await load.getEscrow(op.escrowId);
-        if (e) await pushEscrowNow(client, userId, e);
+        if (e) await pushEscrowForRole(client, userId, e);
       } else if (op.op === 'pushProfile') {
         const p = await load.getProfile();
         if (p) {

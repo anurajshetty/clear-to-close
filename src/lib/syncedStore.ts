@@ -59,7 +59,7 @@ import {
   pullFullInvitesNow,
   pullInvitesNow,
   pullProfileNow,
-  pushEscrowNow,
+  pushEscrowForRole,
   pushInviteNow,
   pushProfileWithMedia,
   pushRevokeNow,
@@ -1364,7 +1364,7 @@ export function createSyncedStore(
         'escrow:new',
         () => local.previewCreateEscrow(input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1384,7 +1384,7 @@ export function createSyncedStore(
             (s) => s.id === stepId,
           );
           if (step) step.completedBy = step.done ? uid : null;
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1407,7 +1407,7 @@ export function createSyncedStore(
           for (const s of role === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps) {
             if (s.custom && !beforeIds.has(s.id) && s.createdBy == null) s.createdBy = uid;
           }
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1417,7 +1417,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewReorderSteps(escrowId, role, orderedIds),
         async ({ c, uid }, escrow) => {
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1461,7 +1461,7 @@ export function createSyncedStore(
               s.completedBy = s.done ? uid : null;
             }
           }
-          await pushEscrowNow(c, uid, candidate);
+          await pushEscrowForRole(c, uid, candidate);
           await deleteStepRowsNow(c, removedStepIds);
         },
       );
@@ -1473,7 +1473,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewUpdateTargetDate(escrowId, closeDate),
         async ({ c, uid }, escrow) => {
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1483,7 +1483,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewUpdateEscrow(escrowId, input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1493,7 +1493,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewActivateEscrow(escrowId, input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowNow(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow);
         },
       );
     },
@@ -1516,7 +1516,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewCancelEscrow(escrowId),
         async ({ c, uid }, { escrow: e, revokedInvites }) => {
-          await pushEscrowNow(c, uid, e);
+          await pushEscrowForRole(c, uid, e);
           for (const inv of revokedInvites) {
             await pushRevokeNow(c, inv.id, inv.revokedAt);
             // Zombie-link convergence, server-authoritative (Sept 28,
@@ -1552,7 +1552,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewCloseEscrow(escrowId, role),
         async ({ c, uid }, { escrow: e, revokedInvites }) => {
-          await pushEscrowNow(c, uid, e);
+          await pushEscrowForRole(c, uid, e);
           for (const inv of revokedInvites) {
             await pushRevokeNow(c, inv.id, inv.revokedAt);
             await convergeInviteLinkRevokesNow(c, inv.id, inv.revokedAt);
