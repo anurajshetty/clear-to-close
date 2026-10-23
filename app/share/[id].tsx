@@ -243,17 +243,20 @@ export default function ShareEscrow() {
               {accepted ? 'Accepted' : 'Invited'}
             </Text>
           </Text>
-          <Pressable
-            onPress={() => toggleRemove(inv.id)}
-            hitSlop={8}
-            style={styles.removeBtn}
-            accessibilityRole="button"
-            accessibilityLabel={`Remove invite for ${inv.partyName}`}
-          >
-            <Text style={styles.removeGlyph}>×</Text>
-          </Pressable>
+          {escrowOpen && (
+            <Pressable
+              onPress={() => toggleRemove(inv.id)}
+              hitSlop={8}
+              style={styles.removeBtn}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove invite for ${inv.partyName}`}
+            >
+              <Text style={styles.removeGlyph}>×</Text>
+            </Pressable>
+          )}
         </View>
-        <View style={styles.invActions}>
+        {escrowOpen && (
+          <View style={styles.invActions}>
           {!accepted && (
             <>
               <Text style={styles.codeChip}>{inv.code}</Text>
@@ -286,7 +289,8 @@ export default function ShareEscrow() {
           >
             <Text style={styles.regenText}>Regenerate</Text>
           </Pressable>
-        </View>
+          </View>
+        )}
         {removeId === inv.id && (
           <View style={styles.confirm}>
             <Text style={styles.confirmTitle}>Remove {inv.partyName}?</Text>
@@ -409,7 +413,9 @@ export default function ShareEscrow() {
     const count = rows.length;
     const formOpen = formRole === s.role;
     // Dead escrows never offer invite creation (Sept 28, 2026): the button,
-    // the form, and the cap note are hidden; rows stay manageable.
+    // the form, and the cap note are hidden. Oct 23, 2026 freeze: the rows
+    // also render read-only (no remove/regenerate/copy/share actions) —
+    // invites on a closed or cancelled escrow are the final record.
     const showInviteUi = escrowOpen && count < s.cap && !formOpen;
     const showCapNote = escrowOpen && count >= s.cap && s.cap > 1;
     const buttonTitle =

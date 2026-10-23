@@ -286,9 +286,15 @@ export default function DealList() {
     if (respondingId) return;
     setRespondingId(inv.grantId);
     try {
-      await store.respondToTeamInvite(inv.grantId, accept);
+      const result = await store.respondToTeamInvite(inv.grantId, accept);
       await load();
-      showToast(accept ? 'Invite accepted.' : 'Invite rejected.');
+      // Migration 0047 freeze: accepting on a closed/cancelled escrow is
+      // refused server-side; say so instead of claiming success.
+      if (!result.ok && result.error === 'escrow_not_active') {
+        showToast("This escrow is closed, so this invite can't be accepted.");
+      } else {
+        showToast(accept ? 'Invite accepted.' : 'Invite rejected.');
+      }
     } catch (err) {
       console.warn('respondToTeamInvite failed', err);
       showToast("Couldn't save your answer. Try again.");

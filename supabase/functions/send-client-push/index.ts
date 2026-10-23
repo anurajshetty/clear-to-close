@@ -245,8 +245,17 @@ async function getProfileName(supa: SupaClient, userId: string): Promise<string 
 
 const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
 
-/** Built-in app link when app_config has no usable client_app_link. */
-const FALLBACK_CLIENT_APP_LINK = 'https://anurajshetty.github.io/clear-to-close/redeem';
+/**
+ * Built-in team invite link (the app entry) when app_config has no
+ * usable team_app_link. Team invitees have no code: they must land on
+ * the app root (sign up / log in, the invitation waiting), NOT on
+ * /redeem — that is the client code-entry form. Anuraj, Oct 23, 2026:
+ * the link is the web app URL until an App Store listing exists; the
+ * swap is a config change (app_config team_app_link), never a code
+ * change. The client invite link (client_app_link -> /redeem) is a
+ * separate key and is not touched.
+ */
+const FALLBACK_TEAM_APP_LINK = 'https://anurajshetty.github.io/clear-to-close/';
 
 /** The live grant row a team outbox fact refers to (R4 decision input). */
 async function getTeamGrant(
@@ -271,14 +280,14 @@ async function getPushConfigValue(supa: SupaClient, key: string): Promise<string
   return v || null;
 }
 
-async function getClientAppLink(supa: SupaClient): Promise<string> {
+async function getTeamAppLink(supa: SupaClient): Promise<string> {
   const { data } = await supa
     .from('app_config')
     .select('value')
-    .eq('key', 'client_app_link')
+    .eq('key', 'team_app_link')
     .maybeSingle();
   const v = ((data as { value?: string } | null)?.value ?? '').trim();
-  return v.startsWith('https://') ? v : FALLBACK_CLIENT_APP_LINK;
+  return v.startsWith('https://') ? v : FALLBACK_TEAM_APP_LINK;
 }
 
 /** Invite emails this owner has sent in the trailing 24h (cap input). */
@@ -420,7 +429,7 @@ async function handleTeamInviteReceived(
       return sent;
     }
     if (!plan.email || !from) return sent;
-    const appLink = await getClientAppLink(supa);
+    const appLink = await getTeamAppLink(supa);
     const email = buildTeamInviteEmail({
       ownerName,
       role: grant.role,

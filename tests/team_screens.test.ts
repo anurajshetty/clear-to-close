@@ -28,16 +28,20 @@ function eq(actual: unknown, expected: unknown, msg?: string): void {
 import type { Escrow, Invite, StepT } from '../src/lib/types';
 import {
   accessRoleOf,
+  addInviteLabel,
   canEditChecklist,
   completedByOf,
+  invitesFrozen,
   isMemberRole,
   legacyTcInvite,
   memberStripSentence,
   ownerNameOf,
   participantNameMap,
   pendingInviteAbilityLine,
+  seatEmailLabel,
   seatFor,
   seatPillLabel,
+  teamFinalExplainer,
   teamRoleCapability,
   teamRoleLabel,
   teamRoleSeatTitle,
@@ -157,6 +161,32 @@ const participants: TeamParticipants = {
   eq(teamRoleSeatTitle('tc'), 'Transaction coordinator');
   eq(teamRoleCapability('associate'), 'Can edit everything');
   eq(teamRoleCapability('tc'), 'Edits intakes only');
+}
+
+// ---- per-seat invite forms + the closed/cancelled freeze (Oct 23, 2026) ----
+{
+  eq(addInviteLabel('associate'), '+ Add an associate');
+  eq(addInviteLabel('tc'), '+ Add a coordinator');
+  eq(seatEmailLabel('associate'), 'Associate’s email');
+  eq(seatEmailLabel('tc'), 'TC’s email');
+  const base = {
+    id: 'e1', address: '1 St', city: 'X', side: 'buy' as const,
+    buyerName: 'B', sellerName: null, openDate: '2026-10-01',
+    closeDate: '2026-12-01', buyerSteps: [], sellerSteps: [],
+    buyerClosedAt: null, sellerClosedAt: null, createdAt: '2026-10-01T00:00:00Z',
+  };
+  eq(invitesFrozen({ ...base, status: 'open' as const }), false);
+  eq(invitesFrozen({ ...base, status: 'closed' as const }), true);
+  eq(invitesFrozen({ ...base, status: 'cancelled' as const }), true);
+  eq(invitesFrozen(null), false);
+  eq(
+    teamFinalExplainer({ ...base, status: 'closed' as const }),
+    'This escrow is closed, so the team is final. No one can be invited or removed.',
+  );
+  eq(
+    teamFinalExplainer({ ...base, status: 'cancelled' as const }),
+    'This escrow is cancelled, so the team is final. No one can be invited or removed.',
+  );
 }
 
 // ---- seats ----

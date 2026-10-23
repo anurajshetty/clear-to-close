@@ -1,11 +1,13 @@
 // Clear to Close — Team on this escrow (Team Access, frame 3).
-// Faithful to APPROVED team-access mockup frame 3 (Oct 20, 2026): one
-// Associate seat ("Can edit everything") and one TC seat ("Edits
+// One Associate seat ("Can edit everything") and one TC seat ("Edits
 // intakes only") per escrow. Filled seats show the person + Remove;
-// pending seats show the invited email + Cancel; empty seats share one
-// invite form (email + the seat's role). A redeemed legacy TC code link
-// (from before Team Access) gets its own "view-only" row with Revoke
-// under the TC seat, whatever the account seat's state (Q1).
+// pending seats show the invited email + Cancel; each empty seat has
+// its own Add button opening that seat's invite form inline (Oct 23,
+// 2026 redesign, frames 1–4: no shared form, no placeholder card). A
+// redeemed legacy TC code link (from before Team Access) gets its own
+// "view-only" row with Revoke under the TC seat, whatever the account
+// seat's state (Q1). On a closed or cancelled escrow the sheet is the
+// final record: no invite or remove actions render at all.
 // Owner-only surface: members never see team management (frame 6).
 import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
@@ -16,8 +18,12 @@ import type { Escrow, Invite } from '../../src/lib/types';
 import { visibleInvites } from '../../src/lib/invites';
 import {
   accessRoleOf,
+  addInviteLabel,
+  invitesFrozen,
   legacyTcInvite,
+  seatEmailLabel,
   seatFor,
+  teamFinalExplainer,
   teamRoleCapability,
   teamRoleSeatTitle,
   waitingForName,
@@ -69,10 +75,21 @@ export default function TeamOnEscrow() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
-  const [email, setEmail] = useState('');
-  const [formRole, setFormRole] = useState<GrantRole>('associate');
-  const [formBusy, setFormBusy] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
+  // Per-seat invite forms (redesign frames 2–3): each seat's form opens
+  // independently, with its own email, busy, and error state.
+  interface SeatForm {
+    open: boolean;
+    email: string;
+    busy: boolean;
+    error: string | null;
+  }
+  const closedForm: SeatForm = { open: false, email: '', busy: false, error: null };
+  const [seatForms, setSeatForms] = useState<Record<GrantRole, SeatForm>>({
+    associate: closedForm,
+    tc: closedForm,
+  });
+  const patchForm = (role: GrantRole, patch: Partial<SeatForm>) =>
+    setSeatForms((prev) => ({ ...prev, [role]: { ...prev[role], ...patch } }));
 
   const [removing, setRemoving] = useState<TeamParticipantMember | null>(null);
   const [revokingLegacy, setRevokingLegacy] = useState(false);
@@ -121,38 +138,39 @@ export default function TeamOnEscrow() {
 
   const assocSeat = seatFor(participants, 'associate');
   const tcSeat = seatFor(participants, 'tc');
-  const emptyRoles: GrantRole[] = [];
-  if (participants && !assocSeat) emptyRoles.push('associate');
-  if (participants && !tcSeat) emptyRoles.push('tc');
-  const activeFormRole = emptyRoles.includes(formRole)
-    ? formRole
-    : (emptyRoles[0] ?? 'associate');
 
-  const sendInvite = async () => {
-    if (!escrowId || formBusy) return;
-    const value = email.trim();
+  const sendInvite = async (role: GrantRole) => {
+    const form = seatForms[role];
+    if (!escrowId || form.busy) return;
+    const value = form.email.trim();
     if (!/.+@.+\..+/.test(value)) {
-      setFormError('Enter a valid email address.');
+      patchForm(role, { error: 'Enter a valid email address.' });
       return;
     }
-    setFormBusy(true);
-    setFormError(null);
+    patchForm(role, { busy: true, error: null });
     try {
-      const res = await store.createTeamInvite(escrowId, value, activeFormRole);
+      const res = await store.createTeamInvite(escrowId, value, role);
       if (res && res.ok) {
-        setEmail('');
+        patchForm(role, { open: false, email: '', busy: false, error: null });
         await refresh();
         showToast('Invite sent.');
       } else if (res && res.error === 'seat_taken') {
-        setFormError('That seat is already taken. Remove the current person first.');
+        patchForm(role, {
+          busy: false,
+          error: 'That seat is already taken. Remove the current person first.',
+        });
       } else {
-        setFormError("Couldn't send the invite. Check the connection and try again.");
+        patchForm(role, {
+          busy: false,
+          error: "Couldn't send the invite. Check the connection and try again.",
+        });
       }
     } catch (err) {
       console.warn('createTeamInvite failed', err);
-      setFormError("Couldn't send the invite. Check the connection and try again.");
-    } finally {
-      setFormBusy(false);
+      patchForm(role, {
+        busy: false,
+        error: "Couldn't send the invite. Check the connection and try again.",
+      });
     }
   };
 
@@ -237,83 +255,131 @@ export default function TeamOnEscrow() {
     );
   }
 
-  const renderSeat = (role: GrantRole, seat: TeamParticipantMember | null) => (
-    <View key={role} style={styles.seat}>
-      <View style={styles.seatHead}>
-        <Text style={styles.seatTitle}>{teamRoleSeatTitle(role)}</Text>
-        <View style={[styles.capPill, role === 'tc' ? styles.capPillTc : styles.capPillAssoc]}>
-          <Text style={[styles.capPillText, role === 'tc' ? styles.capPillTextTc : styles.capPillTextAssoc]}>
-            {teamRoleCapability(role)}
-          </Text>
+  const frozen = invitesFrozen(escrow);
+
+  const renderSeat = (role: GrantRole, seat: TeamParticipantMember | null) => {
+    const form = seatForms[role];
+    return (
+      <View key={role} style={styles.seat}>
+        <View style={styles.seatHead}>
+          <Text style={styles.seatTitle}>{teamRoleSeatTitle(role)}</Text>
+          <View style={[styles.capPill, role === 'tc' ? styles.capPillTc : styles.capPillAssoc]}>
+            <Text style={[styles.capPillText, role === 'tc' ? styles.capPillTextTc : styles.capPillTextAssoc]}>
+              {teamRoleCapability(role)}
+            </Text>
+          </View>
         </View>
-      </View>
-      <Card style={styles.seatCard}>
-        {seat ? (
-          <View style={styles.personRow}>
-            <View style={[styles.avatar, role === 'tc' && styles.avatarGold]}>
-              <Text style={[styles.avatarText, role === 'tc' && styles.avatarTextGold]}>
-                {seatInitials(seat)}
-              </Text>
-            </View>
-            <View style={styles.personText}>
-              <Text style={styles.personName} numberOfLines={1}>
-                {seat.status === 'accepted'
-                  ? (seat.name ?? seat.invitedEmail ?? '')
-                  : (seat.invitedEmail ?? seat.name ?? '')}
-              </Text>
-              <Text style={styles.personStatus}>
-                {seat.status === 'accepted'
-                  ? `Accepted · on this escrow since ${seat.acceptedAt ? formatShortDate(seat.acceptedAt) : ''}`
-                  : `Invite sent · waiting for ${waitingForName(seat)} to accept`}
-              </Text>
-            </View>
-            {seat.status === 'accepted' ? (
-              <Pressable
-                onPress={() => setRemoving(seat)}
-                hitSlop={8}
-                style={styles.removeBtn}
-                accessibilityRole="button"
-                accessibilityLabel={`Remove ${seat.name ?? seat.invitedEmail ?? 'member'} from this escrow`}
-              >
-                <Text style={styles.removeText}>Remove</Text>
-              </Pressable>
-            ) : (
-              <Pressable
-                onPress={() => cancelPending(seat)}
-                hitSlop={8}
-                style={styles.removeBtn}
-                accessibilityRole="button"
-                accessibilityLabel={`Cancel the invite to ${seat.invitedEmail ?? 'this person'}`}
-              >
-                <Text style={styles.removeText}>Cancel</Text>
-              </Pressable>
-            )}
-          </View>
-        ) : (
-          <Text style={styles.seatEmpty}>No one in this seat yet.</Text>
-        )}
-        {role === 'tc' && legacyTc ? (
-          <View style={styles.legacyRow}>
-            <View style={styles.personText}>
-              <Text style={styles.legacyTitle}>TC link (from before) · view-only</Text>
-              <Text style={styles.personStatus}>
-                {legacyTc.partyName} joined with a code. That access still works.
-              </Text>
-            </View>
-            <Pressable
-              onPress={() => setRevokingLegacy(true)}
-              hitSlop={8}
-              style={styles.removeBtn}
-              accessibilityRole="button"
-              accessibilityLabel="Revoke the legacy TC link"
-            >
-              <Text style={styles.removeText}>Revoke</Text>
-            </Pressable>
-          </View>
+        {seat || (role === 'tc' && legacyTc) ? (
+          <Card style={styles.seatCard}>
+            {seat ? (
+              <View style={styles.personRow}>
+                <View style={[styles.avatar, role === 'tc' && styles.avatarGold]}>
+                  <Text style={[styles.avatarText, role === 'tc' && styles.avatarTextGold]}>
+                    {seatInitials(seat)}
+                  </Text>
+                </View>
+                <View style={styles.personText}>
+                  <Text style={styles.personName} numberOfLines={1}>
+                    {seat.status === 'accepted'
+                      ? (seat.name ?? seat.invitedEmail ?? '')
+                      : (seat.invitedEmail ?? seat.name ?? '')}
+                  </Text>
+                  <Text style={styles.personStatus}>
+                    {seat.status === 'accepted'
+                      ? `Accepted · on this escrow since ${seat.acceptedAt ? formatShortDate(seat.acceptedAt) : ''}`
+                      : `Invite sent · waiting for ${waitingForName(seat)} to accept`}
+                  </Text>
+                </View>
+                {!frozen && seat.status === 'accepted' ? (
+                  <Pressable
+                    onPress={() => setRemoving(seat)}
+                    hitSlop={8}
+                    style={styles.removeBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Remove ${seat.name ?? seat.invitedEmail ?? 'member'} from this escrow`}
+                  >
+                    <Text style={styles.removeText}>Remove</Text>
+                  </Pressable>
+                ) : !frozen ? (
+                  <Pressable
+                    onPress={() => cancelPending(seat)}
+                    hitSlop={8}
+                    style={styles.removeBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Cancel the invite to ${seat.invitedEmail ?? 'this person'}`}
+                  >
+                    <Text style={styles.removeText}>Cancel</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+            {role === 'tc' && legacyTc ? (
+              <View style={[styles.legacyRow, !seat && styles.legacyRowSolo]}>
+                <View style={styles.personText}>
+                  <Text style={styles.legacyTitle}>TC link (from before) · view-only</Text>
+                  <Text style={styles.personStatus}>
+                    {legacyTc.partyName} joined with a code. That access still works.
+                  </Text>
+                </View>
+                {!frozen ? (
+                  <Pressable
+                    onPress={() => setRevokingLegacy(true)}
+                    hitSlop={8}
+                    style={styles.removeBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Revoke the legacy TC link"
+                  >
+                    <Text style={styles.removeText}>Revoke</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+          </Card>
         ) : null}
-      </Card>
-    </View>
-  );
+        {!seat && !frozen ? (
+          form.open ? (
+            <View style={styles.seatForm}>
+              <Field
+                label={seatEmailLabel(role)}
+                value={form.email}
+                onChangeText={(t) => patchForm(role, { email: t.slice(0, 80) })}
+                placeholder="name@example.com"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID={`team-invite-email-${role}`}
+              />
+              {form.error ? <Text style={styles.error}>{form.error}</Text> : null}
+              <View style={styles.formBtn}>
+                <PrimaryButton
+                  title={form.busy ? 'Sending…' : 'Send invite'}
+                  onPress={() => sendInvite(role)}
+                  disabled={form.busy || !form.email.trim()}
+                />
+              </View>
+              <Pressable
+                onPress={() => patchForm(role, { open: false, email: '', error: null })}
+                style={styles.cancelBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={styles.cancelText}>Cancel</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable
+              onPress={() => patchForm(role, { open: true })}
+              style={styles.addBtn}
+              accessibilityRole="button"
+              accessibilityLabel={addInviteLabel(role)}
+            >
+              <Text style={styles.addBtnText}>{addInviteLabel(role)}</Text>
+            </Pressable>
+          )
+        ) : null}
+      </View>
+    );
+  };
 
   return (
     <View style={[styles.screen, { paddingBottom: kbHeight }]}>
@@ -322,7 +388,12 @@ export default function TeamOnEscrow() {
           <BackChevron label="Details" onPress={() => router.back()} />
         </View>
         <Text style={styles.kicker}>
-          {SIDE_KICKER[escrow.side]} · Closes {formatShortDate(escrow.closeDate)}
+          {SIDE_KICKER[escrow.side]} ·{' '}
+          {frozen
+            ? escrow.status === 'closed'
+              ? 'Closed'
+              : 'Cancelled'
+            : `Closes ${formatShortDate(escrow.closeDate)}`}
         </Text>
         <Text style={styles.title} numberOfLines={2}>
           {escrow.address}
@@ -334,8 +405,9 @@ export default function TeamOnEscrow() {
       <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
         <Text style={styles.h3}>Team on this escrow</Text>
         <Text style={styles.explainer}>
-          One Associate and one TC can help you on this escrow. They sign in
-          with their own accounts.
+          {frozen
+            ? teamFinalExplainer(escrow)
+            : 'One Associate and one TC can help you on this escrow. They sign in with their own accounts.'}
         </Text>
 
         {loadError ? (
@@ -346,56 +418,6 @@ export default function TeamOnEscrow() {
           <>
             {renderSeat('associate', assocSeat)}
             {renderSeat('tc', tcSeat)}
-
-            {emptyRoles.length > 0 ? (
-              <View style={styles.formWrap}>
-                <Text style={styles.formCaption}>When a seat is empty</Text>
-                <Field
-                  label="Email address"
-                  value={email}
-                  onChangeText={(t) => setEmail(t.slice(0, 80))}
-                  placeholder="name@example.com"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  testID="team-invite-email"
-                />
-                <Text style={styles.fieldLabel}>Role</Text>
-                <View style={styles.seg}>
-                  {emptyRoles.map((r) => (
-                    <Pressable
-                      key={r}
-                      onPress={() => setFormRole(r)}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: activeFormRole === r }}
-                      accessibilityLabel={`Invite as ${teamRoleSeatTitle(r)}`}
-                      style={[styles.segBtn, activeFormRole === r && styles.segBtnOn]}
-                    >
-                      <Text
-                        style={[
-                          styles.segText,
-                          activeFormRole === r && styles.segTextOn,
-                        ]}
-                      >
-                        {teamRoleSeatTitle(r)}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                {formError ? <Text style={styles.error}>{formError}</Text> : null}
-                <View style={styles.formBtn}>
-                  <PrimaryButton
-                    title={formBusy ? 'Sending…' : 'Send invite'}
-                    onPress={sendInvite}
-                    disabled={formBusy || !email.trim()}
-                  />
-                </View>
-                <Text style={styles.formNote}>
-                  If they don't have an account yet, the invite email walks
-                  them through signing up.
-                </Text>
-              </View>
-            ) : null}
           </>
         ) : (
           <Text style={styles.seatEmpty}>Loading the team…</Text>
@@ -612,57 +634,47 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
   },
+  legacyRowSolo: {
+    borderTopWidth: 0,
+    marginTop: 0,
+    paddingTop: 0,
+  },
   legacyTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: colors.ink,
   },
-  formWrap: {
-    marginTop: 22,
-  },
-  formCaption: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.body,
-    marginBottom: 10,
-  },
-  fieldLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.body,
-    marginTop: 14,
-    marginBottom: 6,
-  },
-  seg: {
-    flexDirection: 'row',
-    backgroundColor: colors.tabBg,
-    borderRadius: 12,
-    padding: 3,
-    gap: 3,
-  },
-  segBtn: {
-    flex: 1,
-    borderRadius: 9,
-    minHeight: 44,
+  addBtn: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: '#B9AE97',
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    minHeight: 48,
   },
-  segBtnOn: {
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#1E190F',
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    shadowOffset: { width: 0, height: 1 },
-    elevation: 2,
-  },
-  segText: {
-    fontSize: 14,
+  addBtnText: {
+    fontSize: 15,
     fontWeight: '700',
-    color: colors.body,
+    color: colors.accent,
   },
-  segTextOn: {
-    color: colors.ink,
+  seatForm: {
+    marginTop: 2,
+  },
+  cancelBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    minHeight: 44,
+  },
+  cancelText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.body,
   },
   error: {
     fontSize: 13,
@@ -671,12 +683,6 @@ const styles = StyleSheet.create({
   },
   formBtn: {
     marginTop: 16,
-  },
-  formNote: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: colors.muted,
-    marginTop: 12,
   },
   toast: {
     position: 'absolute',

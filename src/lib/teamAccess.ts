@@ -62,6 +62,33 @@ export function teamRoleCapability(role: GrantRole): string {
   return role === 'tc' ? 'Edits intakes only' : 'Can edit everything';
 }
 
+/** Add-button copy on an empty seat (redesign frames 1–3, Oct 23, 2026). */
+export function addInviteLabel(role: GrantRole): string {
+  return role === 'tc' ? '+ Add a coordinator' : '+ Add an associate';
+}
+
+/** Email field label inside a seat's inline invite form (frames 2–3). */
+export function seatEmailLabel(role: GrantRole): string {
+  return role === 'tc' ? 'TC’s email' : 'Associate’s email';
+}
+
+/**
+ * Invites freeze on a closed or cancelled escrow (Anuraj, Oct 23, 2026):
+ * the Team sheet and the Share screen render read-only, and migration
+ * 0047 refuses team invite creates and accepts server-side. Step
+ * check-offs are NOT part of the freeze.
+ */
+export function invitesFrozen(escrow: Escrow | null | undefined): boolean {
+  return escrow?.status === 'closed' || escrow?.status === 'cancelled';
+}
+
+/** The Team sheet explainer under the freeze (frame 4 copy). */
+export function teamFinalExplainer(escrow: Escrow | null | undefined): string {
+  return escrow?.status === 'cancelled'
+    ? 'This escrow is cancelled, so the team is final. No one can be invited or removed.'
+    : 'This escrow is closed, so the team is final. No one can be invited or removed.';
+}
+
 /**
  * The occupant of one seat: at most one active-or-pending grant exists per
  * role per escrow (data-layer invariant), so this is a plain find.
