@@ -71,12 +71,22 @@ central user; the buyers and sellers they represent are the other parties.
   picked. Two-phase create (Anuraj, Sept 28, 2026): submit validates, then
   shows a confirmation screen summarizing the side, property address,
   client name, and both dates — "Create escrow" creates it, "Back to edit"
-  returns to the form with every value preserved.
+  returns to the form with every value preserved. An optional **Property
+  details** section sits under the address (Oct 25, 2026): bedrooms,
+  bathrooms, square footage, lot size (sq ft or acres), property type,
+  year built, and listed price — every field optional, nothing blocks
+  creation. Whatever was entered shows as one compact line under the
+  address on the realtor's escrow page and on the client views (nothing
+  shows when all are empty). Server side: the eight columns on `escrows`
+  and the matching explicit keys in the client payload are migration
+  `supabase/migrations/0048_property_details.sql`.
 - **Edit escrow** — the pencil opens an "Update escrow" sheet identical to
   the new-escrow form with every value pre-populated and editable, EXCEPT
   the side: the side is locked after creation (Anuraj, Sept 28, 2026) and
   submits unchanged. Saving updates the card in place with an
-  "Escrow updated." toast.
+  "Escrow updated." toast. The Property details section edits the same
+  way (Oct 25, 2026); team members (Associate/TC) can edit the details
+  too — they ride the member write path like the other content fields.
 - **Activate escrow** — the same pencil on a closed or cancelled escrow opens
   the sheet with an "Activate escrow" submit button: saving the edits flips
   the escrow back to open and moves the card to the Active list ("Escrow
@@ -301,8 +311,11 @@ central user; the buyers and sellers they represent are the other parties.
   ends on Log out, or when the browser/incognito session ends.
 - **TC intake (Sept 2026)** — on seller-side escrows a **TC intake** row
   sits below the time-tracker card (seller tab only on dual-agency;
-  buyer-only escrows never show it): a full-screen six-section form
-  (Property, Sellers, Terms, Commission, Details, Vendors) with up to three
+  buyer-only escrows never show it): a full-screen form (Property, Sellers,
+  Terms, Commission, Details, Vendors — plus a closing **Property history**
+  section added Oct 25, 2026: Renovations and Death on the property Yes/No
+  questions with follow-ups revealed on Yes, Known property issues, and
+  Reason for selling) with up to three
   sellers, conditional fields (trust details, home-of-choice contingency, HOA
   amount, solar details), and the TC/broker fees prefilled at **$500 /
   $995** (editable). Oct 14, 2026 additions: a **Seller's agent %** in
@@ -324,7 +337,11 @@ central user; the buyers and sellers they represent are the other parties.
   **Offer terms**, **Commission**, **Dates**, **Contingencies**, **Property
   details**, in that order) with up to three buyers and conditional fields
   (contingency days
-  fields revealed on Yes; HOA amount, solar leased/owned + amount). Oct 14,
+  fields revealed on Yes; HOA amount, solar leased/owned + amount). Oct 25,
+  2026 addition: a **Lender** section (contact name, email, phone) follows
+  Offer terms — the form shows it only when a loan type is chosen and it
+  is not Cash, and the completion count, the read-only details, and the
+  share text follow the same rule. Oct 14,
   2026 additions: Offer terms gains **Type of loan** (single-select chips:
   Conventional / FHA / VA / Cash / Other), **Buyer credit** (Yes reveals a
   Credit amount that is required on save; No clears it), and **BRBC
@@ -364,6 +381,14 @@ central user; the buyers and sellers they represent are the other parties.
   device-local fallback); tapping it opens the realtor's profile **in-app**
   (never a browser tab). Redemption binds
   access to the device; reopening the app goes straight back into the escrow.
+  The first time a client opens the escrow itself, a one-time
+  **celebration card** sits above the home ("Congratulations, you're in
+  escrow!" with the realtor's name and the property address, Oct 25,
+  2026) — shown once per escrow on that device and never again; the
+  seen-marker is stored on the device only, with no server write. Below
+  the top card, the escrow's **property details** (bedrooms, bathrooms,
+  square footage, lot, type, year built, listed price) show as one compact
+  line when the realtor entered any of them.
 - **Multiple escrows on one device** (Sept 2026) — a client can join more
   than one escrow: each redeem adds that escrow's link, and one device holds
   one live link per escrow. With two or more links the app opens a **My

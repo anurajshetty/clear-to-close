@@ -15,7 +15,7 @@
 // in the realtor's order sits below — checked steps stay in place, UP NEXT on the first
 // remaining step, no tap targets, no drag grips, no Custom tag, no JUST NOW
 // markers. The standalone realtor card is removed (Sept 25).
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -27,6 +27,8 @@ import type { ClientView, RealtorProfile } from '../../../src/lib/types';
 import { SecondaryButton } from '../../../src/components/ui';
 import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/EscrowSwitcher';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
+import { ClientCelebrationCard } from '../../../src/components/ClientCelebrationCard';
+import { PropertyDetailsLine } from '../../../src/components/PropertyDetailsLine';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ClientTriumphSection, ShareProfileCard } from '../../../src/components/ClientTriumph';
@@ -46,6 +48,12 @@ export default function BuyerView() {
   const [view, setView] = useState<ClientView | null>(null);
   const [profile, setProfile] = useState<RealtorProfile | null>(null);
   const [partyName, setPartyName] = useState('');
+  // First-open celebration (Oct 25, 2026): the device link id whose
+  // one-time card should show (null = not eligible / already seen), and
+  // the in-visit dismiss. The seen-marker itself is device-local in the
+  // auth service; it is written when the card actually renders.
+  const [celebrationLinkId, setCelebrationLinkId] = useState<string | null>(null);
+  const [celebrationDismissed, setCelebrationDismissed] = useState(false);
   // "KEY DATES" sheet (Sept 28, 2026 amendment): entry point opens it.
   const [keyDatesOpen, setKeyDatesOpen] = useState(false);
   // Data load, shared by focus and foreground (Sept 2026
@@ -83,8 +91,16 @@ export default function BuyerView() {
     // entered at redeem).
     auth
       .getClientLinkForEscrow(id ?? '')
-      .then((link) => {
-        if (active && link) setPartyName(link.partyName);
+      .then(async (link) => {
+        if (active && link) {
+          setPartyName(link.partyName);
+          // First-open celebration eligibility (Oct 25, 2026): show the
+          // card only when this device has not seen it for this link.
+          try {
+            const seen = await auth.hasSeenCelebration(link.linkId, id);
+            if (active && !seen) setCelebrationLinkId(link.linkId);
+          } catch {}
+        }
       })
       .catch(() => {});
     return () => {
@@ -102,6 +118,21 @@ export default function BuyerView() {
   useClientRealtime(id, { enabled: gateState === 'valid', onDataChanged: load });
 
   useFocusEffect(load);
+
+  // First-open celebration (Oct 25, 2026): once the card is actually on
+  // screen (eligible link + a loaded view), record it as seen on this
+  // device so it never renders again for this link + escrow. The ✕ only
+  // hides it for the rest of this visit.
+  const showCelebration = !!celebrationLinkId && !celebrationDismissed && !!view;
+  useEffect(() => {
+    if (showCelebration && celebrationLinkId) {
+      auth.markCelebrationSeen(celebrationLinkId, id).catch(() => {});
+    }
+  }, [showCelebration, celebrationLinkId, id]);
+  const celebrationAddress =
+    view && view.city && !view.address.toLowerCase().includes(view.city.toLowerCase())
+      ? `${view.address}, ${view.city}`
+      : view?.address ?? '';
 
   const greeting = partyName.trim() ? `Hi ${partyName.trim()}` : 'Hi there';
   // Review gate (Anuraj's rule, Sept 2026): the triumph section shows only
@@ -129,6 +160,13 @@ export default function BuyerView() {
       ) : (
         <>
           <MyEscrowsBack />
+          {showCelebration ? (
+            <ClientCelebrationCard
+              realtorName={profile?.name ?? ''}
+              address={celebrationAddress}
+              onDismiss={() => setCelebrationDismissed(true)}
+            />
+          ) : null}
           <ClientTopCard
             greeting={greeting}
             kicker="Your transaction"
@@ -149,6 +187,10 @@ export default function BuyerView() {
               router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
           />
+
+          {/* Property details line (Oct 25, 2026): directly below the
+              top card; renders nothing when no details were entered. */}
+          <PropertyDetailsLine details={view.propertyDetails} variant="card" />
 
           {/* 100% celebration actions (Oct 14, 2026): the share card sits
               directly below the top card, highlighted; the review-links

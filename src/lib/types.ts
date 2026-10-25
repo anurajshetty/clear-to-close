@@ -156,6 +156,51 @@ export interface Escrow {
   accessRole?: TeamRole;
   ownerName?: string | null;
   ownerPhotoUrl?: string | null;
+  /**
+   * Property details (Oct 25, 2026, migration 0048): optional facts about
+   * the property itself, entered on the escrow form and shown as one
+   * compact line under the address (realtor page + client views). All
+   * optional; absent/null = not entered. Optional on the type per the
+   * key-dates precedent — producers populate them (creation defaults
+   * null, lotUnit 'sqft', propertyType ''). See src/lib/propertyDetails.ts.
+   */
+  bedrooms?: number | null;
+  bathrooms?: number | null;
+  sqft?: number | null;
+  lotSize?: number | null;
+  lotUnit?: LotUnit;
+  propertyType?: PropertyType;
+  yearBuilt?: number | null;
+  listedPrice?: number | null;
+}
+
+/** Lot-size unit for PropertyDetails.lotSize (Oct 25, 2026). */
+export type LotUnit = 'sqft' | 'acres';
+
+/** Property type single-select (Oct 25, 2026); '' = not chosen. */
+export type PropertyType =
+  | ''
+  | 'single_family'
+  | 'condo'
+  | 'townhouse'
+  | 'multi_family'
+  | 'land'
+  | 'other';
+
+/**
+ * The escrow's property details as one value (Oct 25, 2026): carried on
+ * the create/update inputs and the client view; the Escrow itself stores
+ * the same fields flat (above). All fields optional to fill.
+ */
+export interface PropertyDetails {
+  bedrooms: number | null;
+  bathrooms: number | null;
+  sqft: number | null;
+  lotSize: number | null;
+  lotUnit: LotUnit;
+  propertyType: PropertyType;
+  yearBuilt: number | null;
+  listedPrice: number | null;
 }
 
 export interface CreateEscrowInput {
@@ -171,6 +216,12 @@ export interface CreateEscrowInput {
   sellerName?: string;
   openDate: string;
   closeDate: string;
+  /**
+   * Property details (Oct 25, 2026): the create form shows the optional
+   * section, so creation carries the whole value (all-null = nothing
+   * entered).
+   */
+  propertyDetails?: PropertyDetails;
 }
 
 /**
@@ -196,6 +247,13 @@ export interface UpdateEscrowInput {
   inspectionDeadline?: string | null;
   appraisalDeadline?: string | null;
   loanApprovalDate?: string | null;
+  /**
+   * Property details (Oct 25, 2026): optional; when omitted the stored
+   * values are preserved. When provided, the whole value replaces the
+   * stored one (the form pre-fills from the escrow, so a cleared field
+   * submits null and clears).
+   */
+  propertyDetails?: PropertyDetails;
 }
 
 export interface RealtorProfile {
@@ -353,6 +411,13 @@ export interface ClientView {
   inspectionDeadline?: string | null;
   appraisalDeadline?: string | null;
   loanApprovalDate?: string | null;
+  /**
+   * Property details (Oct 25, 2026): the compact line under the client
+   * view's address. Carried by get_client_view as explicit escrow keys
+   * (migration 0048). Optional: views cached before the migration omit
+   * it; no line renders then.
+   */
+  propertyDetails?: PropertyDetails | null;
   /**
    * The realtor's id (auth user id) behind this escrow — feeds the public
    * profile URL in the profile share copy. Present on cloud-linked views

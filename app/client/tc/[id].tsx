@@ -16,6 +16,7 @@ import type { ClientView, RealtorProfile, TcView } from '../../../src/lib/types'
 import { Kicker, SecondaryButton } from '../../../src/components/ui';
 import { MyEscrowsBack, JoinAnotherEscrow } from '../../../src/components/EscrowSwitcher';
 import { ClientTopCard } from '../../../src/components/ClientTopCard';
+import { PropertyDetailsLine } from '../../../src/components/PropertyDetailsLine';
 import { LatestFromCard } from '../../../src/components/LatestFromCard';
 import { KeyDatesEntryPoint, KeyDatesSheet } from '../../../src/components/KeyDates';
 import { ReadOnlyChecklist } from '../../../src/components/Checklist';
@@ -163,6 +164,13 @@ export default function TcView() {
             onProfilePress={() =>
               router.push({ pathname: '/realtor-profile', params: { escrowId: id } })
             }
+          />
+
+          {/* Property details line (Oct 25, 2026): directly below the
+              top card; renders nothing when no details were entered. */}
+          <PropertyDetailsLine
+            details={view.buyer?.propertyDetails ?? view.seller?.propertyDetails}
+            variant="card"
           />
 
           {/* TC intake (Sept 29, 2026, mockup 04 device 4): "View listing

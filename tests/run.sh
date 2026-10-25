@@ -52,6 +52,7 @@ npx tsc --ignoreConfig \
   "$ROOT/src/lib/escrowList.ts" \
   "$ROOT/src/lib/tcIntake.ts" \
   "$ROOT/src/lib/buyerIntake.ts" \
+  "$ROOT/src/lib/propertyDetails.ts" \
   "$ROOT/supabase/functions/send-client-push/push.ts" \
   "$ROOT/tests/assert.ts" \
   "$ROOT/tests/outbox_seed.ts" \
@@ -96,6 +97,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/tc_view.test.ts" \
   "$ROOT/tests/tc_intake.test.ts" \
   "$ROOT/tests/buyer_intake.test.ts" \
+  "$ROOT/tests/property_details.test.ts" \
   "$ROOT/tests/invite_cap_sync.test.ts" \
   "$ROOT/tests/invite_closed_block.test.ts" \
   "$ROOT/tests/celebration_kicker.test.ts" \
@@ -216,6 +218,7 @@ node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/tc_view.test.js"
 node "$OUT/tests/tc_intake.test.js"
 node "$OUT/tests/buyer_intake.test.js"
+node "$OUT/tests/property_details.test.js"
 node "$OUT/tests/profilepull.test.js"
 node "$OUT/tests/realtygroup.test.js"
 node "$OUT/tests/reviews.test.js"

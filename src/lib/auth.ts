@@ -379,6 +379,7 @@ const K_PROFILE_SKIPPED = 'ctc:profileskipped';
 const K_PENDING_NAME = 'ctc:pendingname';
 const K_EXISTING_ACCOUNT_NOTICE = 'ctc:existingaccountnotice';
 const K_HAS_ACCOUNT = 'ctc:hasaccount';
+const K_CELEBRATION_SEEN = 'ctc:celebrationseen';
 
 export function createAuthService(deps: AuthServiceDeps) {
   const { kv, platform } = deps;
@@ -610,6 +611,33 @@ export function createAuthService(deps: AuthServiceDeps) {
         else await kv.removeItem(K_PROFILE_SKIPPED);
       } catch {
         // best-effort
+      }
+    },
+
+    // -- client first-open celebration marker (Oct 25, 2026) ----------------
+    // Device-local ONLY (auditor ruling): the set of "linkId:escrowId"
+    // pairs whose one-time celebration card has been shown on THIS
+    // device. No server write of any kind rides on it.
+    async hasSeenCelebration(linkId: string, escrowId: string): Promise<boolean> {
+      try {
+        const raw = await kv.getItem(K_CELEBRATION_SEEN);
+        if (!raw) return false;
+        const seen = JSON.parse(raw) as unknown;
+        return Array.isArray(seen) && seen.includes(`${linkId}:${escrowId}`);
+      } catch {
+        return false;
+      }
+    },
+    async markCelebrationSeen(linkId: string, escrowId: string): Promise<void> {
+      try {
+        const raw = await kv.getItem(K_CELEBRATION_SEEN);
+        const seen: unknown = raw ? JSON.parse(raw) : [];
+        const list = Array.isArray(seen) ? seen.filter((x) => typeof x === 'string') : [];
+        const key = `${linkId}:${escrowId}`;
+        if (!list.includes(key)) list.push(key);
+        await kv.setItem(K_CELEBRATION_SEEN, JSON.stringify(list));
+      } catch {
+        // best-effort: a lost marker only re-shows a friendly card
       }
     },
 

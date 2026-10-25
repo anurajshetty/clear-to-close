@@ -303,6 +303,20 @@ export default function TcIntakeScreen() {
             <Field label="NHD company" value={form.nhdCompany} onChangeText={(t) => update({ nhdCompany: t })} testID="tc-nhd-company" />
             <Field label="Home warranty company" value={form.warrantyCompany} onChangeText={(t) => update({ warrantyCompany: t })} testID="tc-warranty-company" />
             <Field label="Warranty amount" value={form.warrantyAmount} onChangeText={(t) => update({ warrantyAmount: t })} keyboardType="decimal-pad" testID="tc-warranty-amount" />
+
+            {/* 7 · Property history (Oct 25, 2026): the closing section.
+                The detail fields reveal only on a Yes answer. */}
+            <Kicker>Property history</Kicker>
+            <YesNoSeg label="Renovations?" value={form.renovations} onChange={(v) => update({ renovations: v as TcYesNo })} options={YES_NO} testID="tc-renovations" />
+            {form.renovations === 'yes' && (
+              <Field label="Tell us about the renovations" value={form.renovationsDetails} onChangeText={(t) => update({ renovationsDetails: t })} placeholder="Kitchen remodel in 2022, new roof in 2024…" multiline testID="tc-renovations-details" />
+            )}
+            <YesNoSeg label="Death on the property?" value={form.deathOnProperty} onChange={(v) => update({ deathOnProperty: v as TcYesNo })} options={YES_NO} testID="tc-death-on-property" />
+            {form.deathOnProperty === 'yes' && (
+              <Field label="Year of death" value={form.deathYear} onChangeText={(t) => update({ deathYear: t })} placeholder="e.g. 2019" keyboardType="numeric" testID="tc-death-year" />
+            )}
+            <Field label="Known property issues?" value={form.knownIssues} onChangeText={(t) => update({ knownIssues: t })} placeholder="Roof, plumbing, foundation, anything you know of…" multiline testID="tc-known-issues" />
+            <Field label="Reason for selling" value={form.reasonForSelling} onChangeText={(t) => update({ reasonForSelling: t })} placeholder="Relocating, upsizing, downsizing…" multiline testID="tc-reason-for-selling" />
           </>
         )}
       </ScrollView>

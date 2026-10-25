@@ -17,9 +17,18 @@ import {
   toggleSide,
   type SideSelection,
 } from '../lib/sidePicker';
-import type { CreateEscrowInput, Escrow, Side, UpdateEscrowInput } from '../lib/types';
+import type { CreateEscrowInput, Escrow, LotUnit, PropertyDetails, PropertyType, Side, UpdateEscrowInput } from '../lib/types';
 import { confirmSummaryRows } from '../lib/escrowConfirm';
+import {
+  EMPTY_PROPERTY_DETAILS,
+  LOT_UNIT_OPTIONS,
+  PROPERTY_TYPE_OPTIONS,
+  parsePropertyNumber,
+  propertyDetailsOf,
+  propertyNumberText,
+} from '../lib/propertyDetails';
 import { Field, Kicker, PrimaryButton, SecondaryButton, Sheet } from '../components/ui';
+import { OptionChips, YesNoSeg } from './YesNoSeg';
 import DateField from './DateField';
 import { colors } from '../theme';
 
@@ -36,6 +45,8 @@ export interface EscrowFormInitial {
   inspectionDeadline: string | null;
   appraisalDeadline: string | null;
   loanApprovalDate: string | null;
+  /** Property details (Oct 25, 2026): both modes — pre-populated on edit. */
+  property: PropertyDetails;
 }
 
 export function escrowToInitial(e: Escrow): EscrowFormInitial {
@@ -50,6 +61,7 @@ export function escrowToInitial(e: Escrow): EscrowFormInitial {
     inspectionDeadline: e.inspectionDeadline ?? null,
     appraisalDeadline: e.appraisalDeadline ?? null,
     loanApprovalDate: e.loanApprovalDate ?? null,
+    property: propertyDetailsOf(e),
   };
 }
 
@@ -164,6 +176,16 @@ export function EscrowFormSheet({
   const [inspectionDeadline, setInspectionDeadline] = useState('');
   const [appraisalDeadline, setAppraisalDeadline] = useState('');
   const [loanApprovalDate, setLoanApprovalDate] = useState('');
+  // Property details (Oct 25, 2026): optional, both modes. Text states
+  // (parsed on submit); lot unit + property type are pickers.
+  const [bedrooms, setBedrooms] = useState('');
+  const [bathrooms, setBathrooms] = useState('');
+  const [propSqft, setPropSqft] = useState('');
+  const [yearBuilt, setYearBuilt] = useState('');
+  const [lotSize, setLotSize] = useState('');
+  const [lotUnit, setLotUnit] = useState<LotUnit>('sqft');
+  const [propertyType, setPropertyType] = useState<PropertyType>('');
+  const [listedPrice, setListedPrice] = useState('');
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
   // Key-dates lifecycle lock (Sept 28, 2026, Anuraj): only an open escrow
@@ -194,6 +216,15 @@ export function EscrowFormSheet({
     setInspectionDeadline(initial?.inspectionDeadline ?? '');
     setAppraisalDeadline(initial?.appraisalDeadline ?? '');
     setLoanApprovalDate(initial?.loanApprovalDate ?? '');
+    const prop = initial?.property ?? EMPTY_PROPERTY_DETAILS;
+    setBedrooms(propertyNumberText(prop.bedrooms));
+    setBathrooms(propertyNumberText(prop.bathrooms));
+    setPropSqft(propertyNumberText(prop.sqft));
+    setYearBuilt(propertyNumberText(prop.yearBuilt));
+    setLotSize(propertyNumberText(prop.lotSize));
+    setLotUnit(prop.lotUnit);
+    setPropertyType(prop.propertyType);
+    setListedPrice(propertyNumberText(prop.listedPrice));
     setErrors({});
     setSaving(false);
     setConfirming(null);
@@ -282,6 +313,19 @@ export function EscrowFormSheet({
       keyDatesEditable ? appraisalDeadline.trim() || null : undefined,
     loanApprovalDate:
       keyDatesEditable ? loanApprovalDate.trim() || null : undefined,
+    // Property details (Oct 25, 2026): shown in BOTH modes — the parsed
+    // value always rides (blank/junk parses to null; every field is
+    // optional and nothing blocks the save).
+    propertyDetails: {
+      bedrooms: parsePropertyNumber(bedrooms),
+      bathrooms: parsePropertyNumber(bathrooms),
+      sqft: parsePropertyNumber(propSqft),
+      lotSize: parsePropertyNumber(lotSize),
+      lotUnit,
+      propertyType,
+      yearBuilt: parsePropertyNumber(yearBuilt),
+      listedPrice: parsePropertyNumber(listedPrice),
+    },
   });
 
   const performSave = async (input: CreateEscrowInput) => {
@@ -441,6 +485,98 @@ export function EscrowFormSheet({
           testID="escrow-address"
         />
       </FieldWrap>
+
+      {/* Property details (Oct 25, 2026): optional section directly under
+          the address, identical on the Open and Update sheets (this
+          shared form). Every field optional — nothing here validates or
+          blocks the save. */}
+      <Text style={styles.keyDatesLabel}>
+        Property details <Text style={styles.keyDatesOptional}>(optional)</Text>
+      </Text>
+      <View style={styles.propRow}>
+        <View style={styles.propCol}>
+          <Field
+            label="Bedrooms"
+            value={bedrooms}
+            onChangeText={setBedrooms}
+            placeholder="e.g. 4"
+            keyboardType="numeric"
+            testID="escrow-bedrooms"
+          />
+        </View>
+        <View style={styles.propCol}>
+          <Field
+            label="Bathrooms"
+            value={bathrooms}
+            onChangeText={setBathrooms}
+            placeholder="e.g. 2.5"
+            keyboardType="decimal-pad"
+            testID="escrow-bathrooms"
+          />
+        </View>
+      </View>
+      <View style={styles.propRow}>
+        <View style={styles.propCol}>
+          <Field
+            label="Square footage"
+            value={propSqft}
+            onChangeText={setPropSqft}
+            placeholder="e.g. 2,140"
+            keyboardType="numeric"
+            testID="escrow-sqft"
+          />
+        </View>
+        <View style={styles.propCol}>
+          <Field
+            label="Year built"
+            value={yearBuilt}
+            onChangeText={setYearBuilt}
+            placeholder="e.g. 1998"
+            keyboardType="numeric"
+            testID="escrow-year-built"
+          />
+        </View>
+      </View>
+      <View style={styles.propRow}>
+        <View style={styles.propColWide}>
+          <Field
+            label="Lot size"
+            value={lotSize}
+            onChangeText={setLotSize}
+            placeholder="e.g. 7,500"
+            keyboardType="decimal-pad"
+            testID="escrow-lot-size"
+          />
+        </View>
+        <View style={styles.propColSeg}>
+          <YesNoSeg
+            label="Unit"
+            value={lotUnit}
+            onChange={(v) => setLotUnit(v as LotUnit)}
+            options={LOT_UNIT_OPTIONS}
+            testID="escrow-lot-unit"
+          />
+        </View>
+      </View>
+      <OptionChips
+        label="Property type"
+        value={propertyType}
+        onChange={(v) =>
+          // Optional single-select: tapping the chosen chip again
+          // clears it (the shared chips never toggle off on their own).
+          setPropertyType(v === propertyType ? '' : (v as PropertyType))
+        }
+        options={PROPERTY_TYPE_OPTIONS}
+        testID="escrow-property-type"
+      />
+      <Field
+        label="Listed price"
+        value={listedPrice}
+        onChangeText={setListedPrice}
+        placeholder="$ e.g. 875,000"
+        keyboardType="decimal-pad"
+        testID="escrow-listed-price"
+      />
 
       {dual ? (
         <>
@@ -724,6 +860,20 @@ const styles = StyleSheet.create({
     color: colors.ink,
     marginTop: 20,
     marginBottom: 2,
+  },
+  // Property details (Oct 25, 2026): two-up field rows in the section.
+  propRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  propCol: {
+    flex: 1,
+  },
+  propColWide: {
+    flex: 1.4,
+  },
+  propColSeg: {
+    flex: 1,
   },
   keyDatesOptional: {
     fontWeight: '400',

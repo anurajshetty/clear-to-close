@@ -38,6 +38,8 @@ import type {
 } from '../../src/lib/teamModel';
 import { checkedOffByLine, activitySummaryLine } from '../../src/lib/teamActivityText';
 import { ProgressRing } from '../../src/components/ProgressRing';
+import { PropertyDetailsLine } from '../../src/components/PropertyDetailsLine';
+import { propertyDetailsOf } from '../../src/lib/propertyDetails';
 import { ScreenErrorBoundary } from '../../src/components/ScreenErrorBoundary';
 import { TimeTrackerCard } from '../../src/components/TimeTrackerCard';
 import { TcEntryCard, TcIntakeHeroCard } from '../../src/components/TcIntakeEntry';
@@ -914,6 +916,9 @@ export function TransactionDetail() {
             </View>
           )}
         </View>
+        {/* Property details line (Oct 25, 2026): under the address block;
+            renders nothing when no details were entered. */}
+        <PropertyDetailsLine details={propertyDetailsOf(escrow)} variant="ruled" />
       </View>
 
       {/* Synchronous write failures (Sept 28, 2026): the write threw and

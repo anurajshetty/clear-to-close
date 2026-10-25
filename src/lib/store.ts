@@ -11,6 +11,7 @@ import { daysToClose as dayCount } from './dates';
 import { applyDerivedStatus, todayLocalISO } from './lifecycle';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
+import { propertyDetailsOf } from './propertyDetails';
 import { isInviteRoleAllowedForSide } from './shareSections';
 import type {
   TeamActionResult,
@@ -885,6 +886,9 @@ export function createStore(kv: KV): Store {
       inspectionDeadline: e.inspectionDeadline,
       appraisalDeadline: e.appraisalDeadline,
       loanApprovalDate: e.loanApprovalDate,
+      // Property details (Oct 25, 2026): the compact line under the
+      // client view's address, same value the cloud path maps.
+      propertyDetails: propertyDetailsOf(e),
       lastAction: e.lastAction ?? null,
       openedAt: e.createdAt,
       // Escrow lifecycle status (Sept 2026, Anuraj's rule): feeds the review
@@ -970,6 +974,17 @@ export function createStore(kv: KV): Store {
       inspectionDeadline: null,
       appraisalDeadline: null,
       loanApprovalDate: null,
+      // Property details (Oct 25, 2026): the create form DOES show the
+      // optional section — entered values land here, all-null when the
+      // realtor skips it.
+      bedrooms: input.propertyDetails?.bedrooms ?? null,
+      bathrooms: input.propertyDetails?.bathrooms ?? null,
+      sqft: input.propertyDetails?.sqft ?? null,
+      lotSize: input.propertyDetails?.lotSize ?? null,
+      lotUnit: input.propertyDetails?.lotUnit ?? 'sqft',
+      propertyType: input.propertyDetails?.propertyType ?? '',
+      yearBuilt: input.propertyDetails?.yearBuilt ?? null,
+      listedPrice: input.propertyDetails?.listedPrice ?? null,
       createdAt: new Date().toISOString(),
       // Team Access (Oct 2026): a locally created escrow is this
       // account's own — owner role, no separate owner identity.
@@ -1217,6 +1232,21 @@ export function createStore(kv: KV): Store {
     if (input.loanApprovalDate !== undefined) {
       if (input.loanApprovalDate !== null) assertDate(input.loanApprovalDate, 'loanApprovalDate');
       e.loanApprovalDate = input.loanApprovalDate;
+    }
+    // Property details (Oct 25, 2026): when provided, the whole value
+    // replaces the stored one (the form pre-fills from the escrow, so a
+    // cleared field submits null and clears); omitted = preserved.
+    // Ordinary content fields like the address and names above — no
+    // lifecycle lock.
+    if (input.propertyDetails !== undefined) {
+      e.bedrooms = input.propertyDetails.bedrooms;
+      e.bathrooms = input.propertyDetails.bathrooms;
+      e.sqft = input.propertyDetails.sqft;
+      e.lotSize = input.propertyDetails.lotSize;
+      e.lotUnit = input.propertyDetails.lotUnit;
+      e.propertyType = input.propertyDetails.propertyType;
+      e.yearBuilt = input.propertyDetails.yearBuilt;
+      e.listedPrice = input.propertyDetails.listedPrice;
     }
     // Status and steps are never touched by an update: editing a closed
     // or cancelled escrow keeps it closed/cancelled with its steps intact.

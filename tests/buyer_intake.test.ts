@@ -79,6 +79,9 @@ function fullIntake(): BuyerIntakeData {
     buyerCredit: 'yes',
     buyerCreditAmount: '10000',
     brbcSigned: 'yes',
+    lenderName: 'Larry Lender',
+    lenderEmail: 'larry@lender.com',
+    lenderPhone: '(555) 222-3333',
     buyerAgentPct: '2.5',
     sellerAgentPct: '2.5',
     closeOfEscrow: '2026-10-15',
@@ -116,6 +119,18 @@ async function main(): Promise<void> {
     const capped = normalizeBuyerIntake({ buyers: [{ name: 'a' }, { name: 'b' }, { name: 'c' }, { name: 'd' }] });
     assert(capped.buyers.length === BUYER_INTAKE_MAX_BUYERS, 'normalize caps buyers at 3');
     assert(BUYER_INTAKE_MAX_BUYERS === 3, 'buyer block cap is 3');
+    // Lender keys (Oct 25, 2026): older saved intakes without them
+    // normalize to empty strings; present values survive.
+    const legacy = normalizeBuyerIntake({ loanType: 'fha' });
+    assert(
+      legacy.lenderName === '' && legacy.lenderEmail === '' && legacy.lenderPhone === '',
+      'legacy intake without lender keys normalizes them to empty',
+    );
+    const withLender = normalizeBuyerIntake({ lenderName: 'Larry', lenderEmail: 42, lenderPhone: '555' });
+    assert(
+      withLender.lenderName === 'Larry' && withLender.lenderEmail === '' && withLender.lenderPhone === '555',
+      'lender values survive normalize; junk coerces to empty',
+    );
   }
 
   // ----------------------------------------------------------------- count --
@@ -165,9 +180,26 @@ async function main(): Promise<void> {
     const cc = countBuyerIntake(creditYes);
     assert(cc.total === 29 && cc.filled === 1, 'buyer credit Yes -> amount counts, unfilled');
 
-    // Full intake: 2 buyers + all Yes answers.
+    // Lender (Oct 25, 2026): the section counts only while visible —
+    // a loan type is chosen and it is not cash. Cash and unset loan
+    // types keep the base totals, so a cash intake can still complete.
+    const cashLoan = emptyBuyerIntake();
+    cashLoan.loanType = 'cash';
+    cashLoan.lenderName = 'Larry Lender';
+    assert(countBuyerIntake(cashLoan).total === 28, 'cash loan: lender fields do not count');
+    const convLoan = emptyBuyerIntake();
+    convLoan.loanType = 'conventional';
+    assert(countBuyerIntake(convLoan).total === 31, 'conventional loan: 3 lender fields join the count');
+    convLoan.lenderName = 'Larry Lender';
+    convLoan.lenderEmail = 'larry@lender.com';
+    convLoan.lenderPhone = '(555) 222-3333';
+    assert(countBuyerIntake(convLoan).filled === 4, 'filled lender fields count while visible');
+    const noLoan = emptyBuyerIntake();
+    assert(countBuyerIntake(noLoan).total === 28, 'no loan type: lender section hidden from the count');
+
+    // Full intake: 2 buyers + all Yes answers + the visible lender section.
     const full = countBuyerIntake(fullIntake());
-    assert(full.total === 38 && full.filled === 38 && full.complete, 'fully filled intake is complete');
+    assert(full.total === 41 && full.filled === 41 && full.complete, 'fully filled intake is complete');
   }
 
   // ------------------------------------------------------------ auto-fill ---
@@ -245,8 +277,15 @@ async function main(): Promise<void> {
     const sections = buildBuyerIntakeSections(fullIntake(), '123 Main St');
     const titles = sections.map((s) => s.title);
     assert(
-      JSON.stringify(titles) === JSON.stringify(['Agent', 'Buyers', 'Offer terms', 'Commission', 'Dates', 'Contingencies', 'Property details']),
-      'seven sections in form order (Commission after Offer terms)',
+      JSON.stringify(titles) === JSON.stringify(['Agent', 'Buyers', 'Offer terms', 'Lender', 'Commission', 'Dates', 'Contingencies', 'Property details']),
+      'sections in form order (Lender after Offer terms — the fixture has a conventional loan)',
+    );
+    // Lender (Oct 25, 2026): rows ride the shared section model.
+    const lender = sections.find((s) => s.title === 'Lender')!;
+    assert(
+      lender.rows.map((r) => r.label).join(',') === 'Name,Email,Phone' &&
+        lender.rows[0].value === 'Larry Lender' && lender.rows[1].value === 'larry@lender.com',
+      'lender section carries name/email/phone',
     );
     const offer = sections.find((s) => s.title === 'Offer terms')!;
     const loanType = offer.rows.find((r) => r.label === 'Type of loan')!;
@@ -278,6 +317,19 @@ async function main(): Promise<void> {
     const solar = details.rows.find((r) => r.label === 'Solar')!;
     assert(solar.value.includes('Owned') && solar.value.includes('$18000'), 'solar shows leased/owned + amount');
 
+    // Lender visibility (Oct 25, 2026): cash hides the section from the
+    // shared model entirely, so the details screen and share text agree.
+    const cashData = emptyBuyerIntake();
+    cashData.loanType = 'cash';
+    cashData.lenderName = 'Larry Lender';
+    assert(
+      !buildBuyerIntakeSections(cashData, '123 Main St').some((s) => s.title === 'Lender'),
+      'cash loan: no Lender section in the details model',
+    );
+    assert(
+      !buildBuyerIntakeShareText(cashData, '123 Main St').includes('Larry'),
+      'cash loan: lender values stay out of the share text',
+    );
     // Unfilled values render "Not provided" with the muted treatment.
     const emptySections = buildBuyerIntakeSections(emptyBuyerIntake(), '123 Main St');
     const agent = emptySections.find((s) => s.title === 'Agent')!;
@@ -290,6 +342,7 @@ async function main(): Promise<void> {
     assert(text.startsWith('Buyer intake · 123 Main St'), 'share text is headed by the escrow');
     assert(text.includes('Offer terms') && text.includes('Contingencies'), 'share text carries all sections');
     assert(text.includes('Type of loan: Conventional'), 'share text carries the loan type');
+    assert(text.includes('Lender') && text.includes('Name: Larry Lender'), 'share text carries the lender section');
     assert(text.includes('Buyer credit: Yes, $10000'), 'share text carries the buyer credit');
     assert(text.includes('BRBC signed: Yes'), 'share text carries BRBC signed');
     assert(text.includes('Commission') && text.includes("Buyer's agent: 2.5%"), 'share text carries the commission section');

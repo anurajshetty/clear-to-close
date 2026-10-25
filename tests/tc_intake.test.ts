@@ -93,6 +93,12 @@ function fullIntake(): TcIntakeData {
     nhdCompany: 'NHD Solutions',
     warrantyCompany: 'First American',
     warrantyAmount: '$525',
+    renovations: 'yes',
+    renovationsDetails: 'Kitchen remodel in 2022, new roof in 2024',
+    deathOnProperty: 'yes',
+    deathYear: '2019',
+    knownIssues: 'Minor plumbing leak under the sink',
+    reasonForSelling: 'Relocating for work',
   };
 }
 
@@ -102,7 +108,7 @@ async function main(): Promise<void> {
     const empty = emptyTcIntake();
     assert(empty.tcFee === TC_FEE_DEFAULT && empty.brokerFee === BROKER_FEE_DEFAULT, 'fees prefill the brokerage defaults');
     const c = countTcIntake(empty);
-    assert(c.total === 27, `empty intake counts 27 visible fields (got ${c.total})`);
+    assert(c.total === 31, `empty intake counts 31 visible fields (got ${c.total})`);
     assert(c.filled === 2, `empty intake counts only the 2 prefilled fees as filled (got ${c.filled})`);
     assert(!c.complete, 'empty intake is not complete');
   }
@@ -110,17 +116,17 @@ async function main(): Promise<void> {
     // Conditional fields only count once their gate is answered Yes.
     const t = emptyTcIntake();
     t.inTrust = 'yes';
-    assert(countTcIntake(t).total === 31, 'trust fields add 4 visible fields when inTrust=yes');
+    assert(countTcIntake(t).total === 35, 'trust fields add 4 visible fields when inTrust=yes');
     t.buyingAnother = 'yes';
-    assert(countTcIntake(t).total === 32, 'home-of-choice adds 1 when buyingAnother=yes');
+    assert(countTcIntake(t).total === 36, 'home-of-choice adds 1 when buyingAnother=yes');
     t.hoa = 'yes';
-    assert(countTcIntake(t).total === 33, 'HOA amount adds 1 when hoa=yes');
+    assert(countTcIntake(t).total === 37, 'HOA amount adds 1 when hoa=yes');
     t.solar = 'yes';
-    assert(countTcIntake(t).total === 36, 'solar details add 3 when solar=yes');
+    assert(countTcIntake(t).total === 40, 'solar details add 3 when solar=yes');
     t.waterSoftener = 'yes';
-    assert(countTcIntake(t).total === 37, 'water softener Owned/Leased adds 1 when waterSoftener=yes');
+    assert(countTcIntake(t).total === 41, 'water softener Owned/Leased adds 1 when waterSoftener=yes');
     t.sellers.push({ name: '', phone: '', email: '' });
-    assert(countTcIntake(t).total === 40, 'a second seller block adds 3 fields');
+    assert(countTcIntake(t).total === 44, 'a second seller block adds 3 fields');
     // A "no" answer counts as answered and adds no conditional fields.
     const n = emptyTcIntake();
     n.inTrust = 'no';
@@ -129,12 +135,32 @@ async function main(): Promise<void> {
     n.solar = 'no';
     n.waterSoftener = 'no';
     const nc = countTcIntake(n);
-    assert(nc.total === 27 && nc.filled === 7, `"no" answers count as filled without adding conditionals (got ${nc.filled}/${nc.total})`);
+    assert(nc.total === 31 && nc.filled === 7, `"no" answers count as filled without adding conditionals (got ${nc.filled}/${nc.total})`);
   }
   {
     const full = fullIntake();
     const c = countTcIntake(full);
     assert(c.complete && c.filled === c.total, `fully-filled intake is complete (${c.filled}/${c.total})`);
+  }
+  {
+    // Property history conditionals (Oct 25, 2026): the follow-up
+    // fields count only while their Yes/No is answered Yes.
+    const h = emptyTcIntake();
+    const base = countTcIntake(h).total;
+    h.renovations = 'yes';
+    assert(countTcIntake(h).total === base + 1, 'renovations Yes reveals the details field in the count');
+    h.deathOnProperty = 'yes';
+    assert(countTcIntake(h).total === base + 2, 'death Yes reveals the year field in the count');
+    h.renovations = 'no';
+    h.renovationsDetails = 'stale';
+    assert(countTcIntake(h).total === base + 1, 'renovations No hides the details again (stale value uncounted)');
+    // Normalize: legacy rows without the history keys default cleanly.
+    const legacy = normalizeTcIntake({ sellers: [{ name: 'A' }] });
+    assert(
+      legacy.renovations === '' && legacy.deathOnProperty === '' && legacy.knownIssues === '' &&
+        legacy.reasonForSelling === '' && legacy.renovationsDetails === '' && legacy.deathYear === '',
+      'legacy intake without history keys normalizes them to empty',
+    );
   }
 
   // -------------------------------------------------------- entry status ---
@@ -142,7 +168,7 @@ async function main(): Promise<void> {
     const s0 = describeTcIntakeStatus(null);
     assert(s0.text === 'Not started' && !s0.started && !s0.complete, 'no saved row -> "Not started"');
     const s1 = describeTcIntakeStatus(emptyTcIntake());
-    assert(s1.text === '2 of 27 filled' && s1.started && !s1.complete, 'saved partial row -> "X of Y filled"');
+    assert(s1.text === '2 of 31 filled' && s1.started && !s1.complete, 'saved partial row -> "X of Y filled"');
     const s2 = describeTcIntakeStatus(fullIntake());
     assert(s2.text === 'Complete' && s2.complete, 'saved full row -> "Complete"');
   }
@@ -187,7 +213,7 @@ async function main(): Promise<void> {
   // ------------------------------------------------------------- section ---
   {
     const sections = buildTcIntakeSections(fullIntake(), '26207 Benito Ct');
-    assert(sections.length === 6, 'six sections');
+    assert(sections.length === 7, 'seven sections (Property history closes the list)');
     const prop = sections[0];
     assert(prop.title === 'Property · 26207 Benito Ct', 'property section carries the address');
     const trustDate = prop.rows.find((r) => r.label === 'Trust date');
@@ -211,6 +237,38 @@ async function main(): Promise<void> {
     assert(terms.rows.find((r) => r.label === 'Home of choice contingency')?.value === 'Yes', 'conditional row appears when buyingAnother=yes');
     const sellers = sections[1];
     assert(sellers.rows[0].value === 'Anaya Sharma\n(555) 123-4567\nanaya@email.com', 'seller rows are multi-line for the details page');
+    // Property history (Oct 25, 2026): the closing section, Yes answers
+    // fold their follow-up into the same row.
+    const history = sections[6];
+    assert(history.title === 'Property history', 'property history is the closing section');
+    assert(
+      history.rows.find((r) => r.label === 'Renovations')?.value ===
+        'Yes, Kitchen remodel in 2022, new roof in 2024',
+      'renovations Yes folds the details into the row',
+    );
+    assert(
+      history.rows.find((r) => r.label === 'Death on the property')?.value === 'Yes, 2019',
+      'death Yes folds the year into the row',
+    );
+    assert(
+      history.rows.find((r) => r.label === 'Known issues')?.value === 'Minor plumbing leak under the sink',
+      'known issues row',
+    );
+    assert(
+      history.rows.find((r) => r.label === 'Reason for selling')?.value === 'Relocating for work',
+      'reason for selling row',
+    );
+    const noHistory = emptyTcIntake();
+    noHistory.renovations = 'no';
+    noHistory.renovationsDetails = 'stale details';
+    noHistory.deathOnProperty = 'no';
+    noHistory.deathYear = '2019';
+    const noRows = buildTcIntakeSections(noHistory, '123 Main St')[6].rows;
+    assert(
+      noRows.find((r) => r.label === 'Renovations')?.value === 'No' &&
+        noRows.find((r) => r.label === 'Death on the property')?.value === 'No',
+      'No answers render plainly; stale follow-ups stay hidden',
+    );
   }
   {
     // Every unfilled value renders "Not provided".
@@ -235,6 +293,7 @@ async function main(): Promise<void> {
     assert(text.includes("Seller's agent: 2.5%"), 'share carries the seller agent % (Oct 14, 2026)');
     assert(text.includes('Water softener: Yes, Leased'), 'share carries the water softener');
     assert(text.includes('Escrow officer name: Dana Officer'), 'share carries the escrow officer');
+    assert(text.includes('Property history') && text.includes('Reason for selling: Relocating for work'), 'share carries the property history section');
     assert(text.includes('Trustees: Anaya Sharma, Vikram Sharma'), 'share joins multi-line values with commas');
     assert(text.includes('Contract: Jan 1, 2025 - Dec 31, 2025'), 'share contract range uses a hyphen');
     assert(!text.includes('—') && !text.includes('–'), 'share text has no em/en dashes');

@@ -73,6 +73,16 @@ export interface TcIntakeData {
   nhdCompany: string;
   warrantyCompany: string;
   warrantyAmount: string;
+  // Property history (Oct 25, 2026): the form's closing section. The
+  // detail fields are revealed on Yes; they always exist as keys so
+  // older payloads normalize cleanly.
+  renovations: TcYesNo;
+  renovationsDetails: string;
+  deathOnProperty: TcYesNo;
+  /** Year of death (free text, e.g. "2019"); revealed on Yes. */
+  deathYear: string;
+  knownIssues: string;
+  reasonForSelling: string;
 }
 
 /** Brokerage defaults (Anuraj, Sept 29, 2026): prefilled, editable. */
@@ -123,6 +133,12 @@ export function emptyTcIntake(): TcIntakeData {
     nhdCompany: '',
     warrantyCompany: '',
     warrantyAmount: '',
+    renovations: '',
+    renovationsDetails: '',
+    deathOnProperty: '',
+    deathYear: '',
+    knownIssues: '',
+    reasonForSelling: '',
   };
 }
 
@@ -191,6 +207,12 @@ export function normalizeTcIntake(raw: unknown): TcIntakeData {
     nhdCompany: asText(d.nhdCompany),
     warrantyCompany: asText(d.warrantyCompany),
     warrantyAmount: asText(d.warrantyAmount),
+    renovations: asYesNo(d.renovations),
+    renovationsDetails: asText(d.renovationsDetails),
+    deathOnProperty: asYesNo(d.deathOnProperty),
+    deathYear: asText(d.deathYear),
+    knownIssues: asText(d.knownIssues),
+    reasonForSelling: asText(d.reasonForSelling),
   };
 }
 
@@ -258,6 +280,14 @@ export function countTcIntake(data: TcIntakeData): {
   tx(data.nhdCompany);
   tx(data.warrantyCompany);
   tx(data.warrantyAmount);
+  // Property history (Oct 25, 2026): detail fields count only on Yes,
+  // the model's conditional-count rule.
+  yn(data.renovations);
+  if (data.renovations === 'yes') tx(data.renovationsDetails);
+  yn(data.deathOnProperty);
+  if (data.deathOnProperty === 'yes') tx(data.deathYear);
+  tx(data.knownIssues);
+  tx(data.reasonForSelling);
   return { filled, total, complete: total > 0 && filled === total };
 }
 
@@ -475,6 +505,32 @@ export function buildTcIntakeSections(
         row('Title', data.titleCompany),
         row('NHD', data.nhdCompany),
         row('Home warranty', warranty),
+      ],
+    },
+    {
+      // Property history (Oct 25, 2026): the closing section. A Yes
+      // answer folds its detail into the same row, mirroring the
+      // contingency pattern.
+      title: 'Property history',
+      rows: [
+        row(
+          'Renovations',
+          data.renovations === 'yes'
+            ? data.renovationsDetails.trim() !== ''
+              ? `Yes, ${data.renovationsDetails.trim()}`
+              : 'Yes'
+            : ynText(data.renovations),
+        ),
+        row(
+          'Death on the property',
+          data.deathOnProperty === 'yes'
+            ? data.deathYear.trim() !== ''
+              ? `Yes, ${data.deathYear.trim()}`
+              : 'Yes'
+            : ynText(data.deathOnProperty),
+        ),
+        row('Known issues', data.knownIssues),
+        row('Reason for selling', data.reasonForSelling),
       ],
     },
   ];

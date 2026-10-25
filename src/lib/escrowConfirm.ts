@@ -6,6 +6,7 @@
 // renders the rows with the existing components/tokens.
 
 import type { CreateEscrowInput, Side } from './types';
+import { formatPropertyLine } from './propertyDetails';
 
 /** Human label for the escrow side on the confirmation summary. */
 export function sideDisplayLabel(side: Side): 'Buy side' | 'Sell side' | 'Dual agency' {
@@ -52,5 +53,13 @@ export function confirmSummaryRows(input: CreateEscrowInput): ConfirmSummaryRow[
   }
   rows.push({ testID: 'confirm-open-date', label: 'Escrow open date', value: input.openDate });
   rows.push({ testID: 'confirm-close-date', label: 'Target close date', value: input.closeDate });
+  // Property details (Oct 25, 2026): summarized only when the realtor
+  // entered any — an untouched optional section adds no row.
+  if (input.propertyDetails) {
+    const line = formatPropertyLine(input.propertyDetails);
+    if (line) {
+      rows.push({ testID: 'confirm-property-details', label: 'Property details', value: line });
+    }
+  }
   return rows;
 }

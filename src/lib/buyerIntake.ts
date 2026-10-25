@@ -34,6 +34,16 @@ export function loanTypeLabel(v: BuyerLoanType): string {
   return LOAN_TYPE_OPTIONS.find((o) => o.value === v)?.label ?? '';
 }
 
+/**
+ * Lender section visibility (Oct 25, 2026): the section exists only
+ * when a loan type is chosen and it is not Cash. ONE predicate for
+ * every consumer — the form, the completion counter, and the section
+ * builder (TC details + share text) — so they can never disagree.
+ */
+export function lenderSectionVisible(data: Pick<BuyerIntakeData, 'loanType'>): boolean {
+  return data.loanType !== '' && data.loanType !== 'cash';
+}
+
 export interface BuyerIntakeBuyer {
   name: string;
   phone: string;
@@ -64,6 +74,12 @@ export interface BuyerIntakeData {
   buyerCreditAmount: string;
   /** BRBC signed (Oct 14, 2026). */
   brbcSigned: BuyerYesNo;
+  // Lender (Oct 25, 2026): shown on the form only when a loan type is
+  // chosen and it is not Cash (see lenderSectionVisible). The keys
+  // always exist so older payloads normalize cleanly.
+  lenderName: string;
+  lenderEmail: string;
+  lenderPhone: string;
   // Commission (Oct 14, 2026 — mirrors the TC form's section)
   buyerAgentPct: string;
   sellerAgentPct: string;
@@ -117,6 +133,9 @@ export function emptyBuyerIntake(): BuyerIntakeData {
     buyerCredit: '',
     buyerCreditAmount: '',
     brbcSigned: '',
+    lenderName: '',
+    lenderEmail: '',
+    lenderPhone: '',
     buyerAgentPct: '',
     sellerAgentPct: '',
     closeOfEscrow: '',
@@ -182,6 +201,9 @@ export function normalizeBuyerIntake(raw: unknown): BuyerIntakeData {
     buyerCredit: asYesNo(d.buyerCredit),
     buyerCreditAmount: asText(d.buyerCreditAmount),
     brbcSigned: asYesNo(d.brbcSigned),
+    lenderName: asText(d.lenderName),
+    lenderEmail: asText(d.lenderEmail),
+    lenderPhone: asText(d.lenderPhone),
     buyerAgentPct: asText(d.buyerAgentPct),
     sellerAgentPct: asText(d.sellerAgentPct),
     closeOfEscrow: asText(d.closeOfEscrow),
@@ -213,7 +235,8 @@ export function normalizeBuyerIntake(raw: unknown): BuyerIntakeData {
  * count. With one buyer block and no Yes answers the total is 28
  * (the mockup's original "5 of 23 filled" for the auto-filled draft, plus
  * the Oct 14, 2026 additions: loan type, buyer credit, BRBC, and the two
- * commission percents).
+ * commission percents). The Oct 25, 2026 lender fields add 3 more to the
+ * total only while the lender section is visible (non-cash loan type).
  */
 export function countBuyerIntake(data: BuyerIntakeData): {
   filled: number;
@@ -246,6 +269,13 @@ export function countBuyerIntake(data: BuyerIntakeData): {
   yn(data.buyerCredit);
   if (data.buyerCredit === 'yes') tx(data.buyerCreditAmount);
   yn(data.brbcSigned);
+  // Lender (Oct 25, 2026): counted only while the section is visible —
+  // hidden fields never block completion (the conditional-count rule).
+  if (lenderSectionVisible(data)) {
+    tx(data.lenderName);
+    tx(data.lenderEmail);
+    tx(data.lenderPhone);
+  }
   tx(data.buyerAgentPct);
   tx(data.sellerAgentPct);
   tx(data.closeOfEscrow);
@@ -470,6 +500,14 @@ export function buildBuyerIntakeSections(
     row('BRBC signed', ynText(data.brbcSigned)),
   ];
 
+  // Lender (Oct 25, 2026): rides directly after Offer terms, only
+  // while the section is visible (loan type chosen, not Cash).
+  const lenderRows: BuyerIntakeRow[] = [
+    row('Name', data.lenderName),
+    row('Email', data.lenderEmail),
+    row('Phone', data.lenderPhone),
+  ];
+
   const pct = (v: string) => (v.trim() !== '' ? `${v.trim()}%` : '');
   const commissionRows: BuyerIntakeRow[] = [
     row("Buyer's agent", pct(data.buyerAgentPct)),
@@ -504,6 +542,7 @@ export function buildBuyerIntakeSections(
     { title: 'Agent', rows: agentRows },
     { title: 'Buyers', rows: buyerRows },
     { title: 'Offer terms', rows: offerRows },
+    ...(lenderSectionVisible(data) ? [{ title: 'Lender', rows: lenderRows }] : []),
     { title: 'Commission', rows: commissionRows },
     { title: 'Dates', rows: dateRows },
     { title: 'Contingencies', rows: contingencyRows },

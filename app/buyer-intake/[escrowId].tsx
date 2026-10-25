@@ -38,6 +38,7 @@ import {
   checkBuyerIntakeMath,
   countBuyerIntake,
   emptyBuyerIntakeBuyer,
+  lenderSectionVisible,
   type BuyerIntakeBuyer,
   type BuyerIntakeData,
   type BuyerLoanType,
@@ -365,6 +366,40 @@ export default function BuyerIntakeScreen() {
                 testID="buyer-intake-brbc-signed"
               />
             </View>
+
+            {/* Lender (Oct 25, 2026): right after Offer terms, shown
+                only when a loan type is chosen and it is not Cash — the
+                model's one visibility predicate. */}
+            {lenderSectionVisible(form) && (
+              <View style={styles.section}>
+                <Kicker>Lender</Kicker>
+                <Field
+                  label="Lender contact name"
+                  value={form.lenderName}
+                  onChangeText={(t) => update({ lenderName: t })}
+                  placeholder="Full name"
+                  autoCapitalize="words"
+                  testID="buyer-intake-lender-name"
+                />
+                <Field
+                  label="Lender email"
+                  value={form.lenderEmail}
+                  onChangeText={(t) => update({ lenderEmail: t })}
+                  placeholder="name@lender.com"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  testID="buyer-intake-lender-email"
+                />
+                <Field
+                  label="Lender phone"
+                  value={form.lenderPhone}
+                  onChangeText={(t) => update({ lenderPhone: t })}
+                  placeholder="(555) 555-5555"
+                  keyboardType="phone-pad"
+                  testID="buyer-intake-lender-phone"
+                />
+              </View>
+            )}
 
             {/* Commission */}
             <View style={styles.section}>

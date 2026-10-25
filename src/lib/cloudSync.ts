@@ -46,6 +46,7 @@ import { deleteMediaAtPath, storagePathFor, storagePathFromUrl, uploadProfileMed
 import { backfillTemplateKey } from './steps';
 import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
+import { propertyDetailsFromRow } from './propertyDetails';
 import { accessRoleOf } from './teamAccess';
 
 const K_OUTBOX = 'ctc:outbox';
@@ -125,6 +126,16 @@ export function toEscrowRow(userId: string, e: Escrow): Record<string, unknown> 
     inspection_deadline: e.inspectionDeadline,
     appraisal_deadline: e.appraisalDeadline,
     loan_approval_date: e.loanApprovalDate,
+    // Property details (migration 0048): null until the realtor enters
+    // them. property_type stores null for "not chosen" ('' app-side).
+    bedrooms: e.bedrooms ?? null,
+    bathrooms: e.bathrooms ?? null,
+    sqft: e.sqft ?? null,
+    lot_size: e.lotSize ?? null,
+    lot_unit: e.lotUnit === 'acres' ? 'acres' : 'sqft',
+    property_type: e.propertyType ? e.propertyType : null,
+    year_built: e.yearBuilt ?? null,
+    listed_price: e.listedPrice ?? null,
     created_at: e.createdAt,
   };
 }
@@ -385,6 +396,17 @@ export function fromEscrowRow(row: Record<string, unknown>): Escrow {
   e.inspectionDeadline = keyDate(row.inspection_deadline);
   e.appraisalDeadline = keyDate(row.appraisal_deadline);
   e.loanApprovalDate = keyDate(row.loan_approval_date);
+  // Property details (migration 0048): absent on pre-0048 rows; the
+  // shared defensive mapper maps anything malformed to the defaults.
+  const pd = propertyDetailsFromRow(row);
+  e.bedrooms = pd.bedrooms;
+  e.bathrooms = pd.bathrooms;
+  e.sqft = pd.sqft;
+  e.lotSize = pd.lotSize;
+  e.lotUnit = pd.lotUnit;
+  e.propertyType = pd.propertyType;
+  e.yearBuilt = pd.yearBuilt;
+  e.listedPrice = pd.listedPrice;
   // Prefer the derived per-side status; a legacy 'closed' row from before
   // the per-side-close migration keeps its status (the UI renders it
   // without a date).
@@ -690,6 +712,10 @@ function buildRpcClientView(
       typeof e.appraisal_deadline === 'string' ? e.appraisal_deadline : null,
     loanApprovalDate:
       typeof e.loan_approval_date === 'string' ? e.loan_approval_date : null,
+    // Property details (migration 0048): explicit keys in the payload's
+    // escrow object; the defensive mapper tolerates pre-0048 payloads
+    // (all defaults, and no line renders).
+    propertyDetails: propertyDetailsFromRow(e),
     // The escrow row's user_id is the realtor behind this escrow — the
     // <realtor-id> in the public profile URL contract.
     realtorId: typeof e.user_id === 'string' ? e.user_id : undefined,
@@ -1171,6 +1197,16 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     delete legacy.inspection_deadline;
     delete legacy.appraisal_deadline;
     delete legacy.loan_approval_date;
+    // Migration 0048 (property details) not applied yet: same grace —
+    // the push lands, the details stay local until the migration runs.
+    delete legacy.bedrooms;
+    delete legacy.bathrooms;
+    delete legacy.sqft;
+    delete legacy.lot_size;
+    delete legacy.lot_unit;
+    delete legacy.property_type;
+    delete legacy.year_built;
+    delete legacy.listed_price;
     await upsertAll(client, 'escrows', [legacy], 'id');
   }
   await pushStepsNow(client, escrow);
@@ -1229,13 +1265,35 @@ export async function pushEscrowAsMemberNow(client: Cloud, escrow: Escrow): Prom
   delete fields.buyer_closed_at;
   delete fields.seller_closed_at;
   delete fields.created_at;
-  const { data, error } = await client
-    .from('escrows')
-    .update(fields)
-    .eq('id', escrow.id)
-    .select('id');
-  if (error) throw error;
-  const affected = Array.isArray(data) ? data.length : 0;
+  const applyUpdate = async (f: Record<string, unknown>): Promise<number> => {
+    const { data, error } = await client
+      .from('escrows')
+      .update(f)
+      .eq('id', escrow.id)
+      .select('id');
+    if (error) throw error;
+    return Array.isArray(data) ? data.length : 0;
+  };
+  let affected: number;
+  try {
+    affected = await applyUpdate(fields);
+  } catch (e) {
+    if (!isMissingColumnError(e)) throw e;
+    // Migration 0048 (property details) not applied yet: retry without
+    // the new columns so the member's save still lands — the same grace
+    // the owner upsert path gives its post-0001 columns. The zero-row
+    // loud failure below applies to the retry unchanged.
+    const legacy = { ...fields };
+    delete legacy.bedrooms;
+    delete legacy.bathrooms;
+    delete legacy.sqft;
+    delete legacy.lot_size;
+    delete legacy.lot_unit;
+    delete legacy.property_type;
+    delete legacy.year_built;
+    delete legacy.listed_price;
+    affected = await applyUpdate(legacy);
+  }
   if (affected < 1) throw new SyncNotAppliedError('escrows', 1, affected);
   await pushStepsNow(client, escrow);
 }
