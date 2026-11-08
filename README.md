@@ -118,11 +118,14 @@ central user; the buyers and sellers they represent are the other parties.
   intakes, key dates, property details, client codes); **TCs** edit the
   intakes only and view the rest. On an escrow where they are the TC,
   their detail view leads with a **TC intake hero card** (status pill and
-  a Start / Continue / View the intake button), and the checklist renders
+  a Start / Continue / View the intake button) — the buyer intake entry
+  renders as the same hero card for TCs (Oct 28, 2026) — and the checklist renders
   in a muted view-only treatment tagged **VIEW ONLY** (Oct 23, 2026). Only the owner creates, closes, cancels,
   manages the team, or edits the profile. Closed/cancelled escrows are
   read-only for members. Every change lands in the escrow's **Activity**
-  timeline with the actor's name (clients see none of this; their codes,
+  timeline with the actor's name — a frozen write-time snapshot when one
+  exists, otherwise the actor's current profile name resolved at read
+  time, otherwise "Someone" (Oct 28, 2026) — (clients see none of this; their codes,
   screens, and pushes are unchanged, and client-facing copy still says
   "your realtor"). Pushes: the invitee is notified on invite, the owner
   on acceptance, and the owner gets a coalesced summary when an Associate

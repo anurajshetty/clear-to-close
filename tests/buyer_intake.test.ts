@@ -705,6 +705,21 @@ async function main(): Promise<void> {
     assert(entries.length === 2, 'buyer intake entry row renders at both detail render sites');
     assert(detail.includes('showBuyerIntakeForRealtorSide'), 'entry row is side-gated');
 
+    // Fix B (Oct 28, 2026): for a TC viewer the buyer entry row renders
+    // as the shared hero card, exactly like the TC intake row — both
+    // render sites pass the hero flag off the same accessRole check, so
+    // a dual-agency escrow heroes BOTH intake rows for a TC while
+    // owner/associate rendering stays the plain row.
+    const heroEntries = detail.match(/<BuyerIntakeEntryRow[^>]*hero=\{accessRole === 'tc'\}/g) ?? [];
+    assert(heroEntries.length === 2, "both buyer entry sites pass hero={accessRole === 'tc'}");
+    assert(detail.includes('title="Buyer intake"'), 'buyer hero renders the shared hero card with the Buyer intake title');
+    assert(detail.includes('heroTestID="buyer-intake-hero"'), 'buyer hero carries the buyer-intake-hero testID');
+    assert(detail.includes('buttonTestID="buyer-intake-entry"'), 'buyer hero button keeps the buyer-intake-entry testID');
+    const heroComp = repoFile('src/components/TcIntakeEntry.tsx');
+    assert(heroComp.includes("title = 'TC intake'"), 'shared hero defaults keep the TC intake title');
+    assert(heroComp.includes("heroTestID = 'tc-intake-hero'"), 'shared hero defaults keep the tc-intake-hero testID');
+    assert(heroComp.includes("buttonTestID = 'tc-intake-entry'"), 'shared hero defaults keep the tc-intake-entry button testID');
+
     // TC card side gating: "View buyer details" below the listing-details
     // card, buyer-side TC views only.
     const tc = repoFile('app/client/tc/[id].tsx');

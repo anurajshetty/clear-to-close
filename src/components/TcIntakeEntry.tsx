@@ -114,30 +114,42 @@ export function TcEntryCard({
 
 
 /**
- * TC-view hero intake card (TC view mockup, approved Oct 23, 2026): on an
- * escrow where the viewer is the TC, the plain entry row becomes this
- * hero — accent border, clipboard chip, status pill, the workspace line,
- * and a full-width action button. The realtor/associate entry row above
- * is unchanged. The button opens the same TC intake form as the row.
+ * Shared TC-view hero intake card (TC view mockup, approved Oct 23,
+ * 2026): on an escrow where the viewer is the TC, the plain entry row
+ * becomes this hero — accent border, clipboard chip, status pill, the
+ * workspace line, and a full-width action button. The realtor/associate
+ * entry row is unchanged. The button opens the same intake form as the
+ * row. One component serves both intakes (Fix B, Oct 28, 2026): the TC
+ * intake renders it with the defaults; the buyer intake passes its own
+ * title, hint, and testIDs. The workspace line and the status-driven
+ * pill/button (tcIntakeHero) are shared verbatim.
  */
 export function TcIntakeHeroCard({
   started,
   complete,
   onPress,
+  title = 'TC intake',
+  accessibilityHint = 'Opens the editable TC intake form for the listing.',
+  heroTestID = 'tc-intake-hero',
+  buttonTestID = 'tc-intake-entry',
 }: {
   started: boolean;
   complete: boolean;
   onPress: () => void;
+  title?: string;
+  accessibilityHint?: string;
+  heroTestID?: string;
+  buttonTestID?: string;
 }) {
   const hero = tcIntakeHero({ started, complete });
   return (
-    <View style={styles.heroCard} testID="tc-intake-hero">
+    <View style={styles.heroCard} testID={heroTestID}>
       <View style={styles.heroTop}>
         <View style={styles.heroIcon} aria-hidden={true}>
           <ClipboardIcon />
         </View>
         <View>
-          <Text style={styles.heroTitle}>TC intake</Text>
+          <Text style={styles.heroTitle}>{title}</Text>
           <View
             style={[
               styles.heroPill,
@@ -162,9 +174,9 @@ export function TcIntakeHeroCard({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${hero.button}.`}
-        accessibilityHint="Opens the editable TC intake form for the listing."
+        accessibilityHint={accessibilityHint}
         onPress={onPress}
-        testID="tc-intake-entry"
+        testID={buttonTestID}
         style={({ pressed }) => [styles.heroBtn, pressed && { opacity: 0.85 }]}
       >
         <Text style={styles.heroBtnText}>{hero.button}</Text>

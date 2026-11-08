@@ -137,16 +137,23 @@ function TcIntakeEntryRow({
  * "X of Y filled"/"Complete" + the pencil-once-saved. Tapping always
  * opens the editable form (read-only on closed/cancelled escrows).
  * Reuses the TcEntryCard structural component — one card component for
- * both intake entries.
+ * both intake entries. For a TC viewer the row renders as the shared
+ * TcIntakeHeroCard instead (Fix B, Oct 28, 2026), mirroring the TC
+ * intake row's hero.
  */
 function BuyerIntakeEntryRow({
   escrowId,
   side,
   tab,
+  hero,
 }: {
   escrowId: string;
   side: 'buy' | 'sell' | 'both';
   tab: ClientRole;
+  /** TC view (Fix B, Oct 28, 2026): when the viewer is this escrow's
+   * TC, the entry row renders as the shared hero card instead — the
+   * same treatment the TC intake row got on Oct 23, 2026. */
+  hero?: boolean;
 }) {
   const rowRouter = useRouter();
   const [status, setStatus] = useState(describeBuyerIntakeStatus(null));
@@ -166,6 +173,19 @@ function BuyerIntakeEntryRow({
     }, [escrowId]),
   );
   if (!showBuyerIntakeForRealtorSide(side, tab === 'seller' ? 'seller' : 'buyer')) return null;
+  if (hero) {
+    return (
+      <TcIntakeHeroCard
+        title="Buyer intake"
+        started={status.started}
+        complete={status.complete}
+        onPress={() => rowRouter.push(`/buyer-intake/${escrowId}`)}
+        accessibilityHint="Opens the editable buyer intake form."
+        heroTestID="buyer-intake-hero"
+        buttonTestID="buyer-intake-entry"
+      />
+    );
+  }
   return (
     <TcEntryCard
       title="Buyer intake"
@@ -941,7 +961,7 @@ export function TransactionDetail() {
               closeDate={escrow.closeDate}
             />
             <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} hero={accessRole === 'tc'} />
-            <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} />
+            <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={tab} hero={accessRole === 'tc'} />
             <View
               style={styles.tabSwitch}
               accessibilityRole="tablist"
@@ -1003,7 +1023,7 @@ export function TransactionDetail() {
                   closeDate={escrow.closeDate}
                 />
                 <TcIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} hero={accessRole === 'tc'} />
-                <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} />
+                <BuyerIntakeEntryRow escrowId={escrow.id} side={escrow.side} tab={role} hero={accessRole === 'tc'} />
                 {renderChecklistHead(role)}
                 {renderTcChecklistNote()}
                 {renderLifecycle(role)}
