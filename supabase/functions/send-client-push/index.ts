@@ -50,6 +50,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.117.2';
 import {
   buildCoalescedBody,
   buildEventBody,
+  buildIntakeSubmittedOwnerBody,
   buildMemberActivityBody,
   buildPushBody,
   buildQuietCheckinBody,
@@ -74,6 +75,7 @@ import {
   type BufferedStepPush,
   type ClientLinkRole,
   type ExpoMessage,
+  type IntakeSubmittedOwnerFact,
   type MemberActivityFact,
   type PushEvent,
   type ReminderEvent,
@@ -317,7 +319,7 @@ async function sendTeamPush(
   env: Record<string, string | undefined>,
   tokens: LiveToken[],
   body: string,
-  kind: 'team_invite_received' | 'team_invite_accepted' | 'member_step_activity',
+  kind: 'team_invite_received' | 'team_invite_accepted' | 'member_step_activity' | 'intake_submitted_owner',
   escrowId: string,
 ): Promise<number> {
   const now = new Date();
@@ -526,6 +528,56 @@ async function handleMemberActivityGroup(
   }
 }
 
+/**
+ * intake_submitted_owner (0051): a member (Associate or TC) moved an
+ * intake INTO submitted state; the escrow OWNER hears about it via
+ * the realtor token path. The producer already gated the actor (auth
+ * context, never the owner, never uid-less); the drain re-derives the
+ * display facts live: the actor's profile name and their CURRENT
+ * accepted grant role (for the nameless fallback label). One row is
+ * one transition, so one push — no burst collapsing (the
+ * team_invite_accepted precedent).
+ */
+async function handleIntakeSubmittedOwner(
+  supa: SupaClient,
+  env: Record<string, string | undefined>,
+  escrow: EscrowInfo,
+  row: EventPushRow,
+): Promise<number> {
+  try {
+    const fact: IntakeSubmittedOwnerFact = {
+      actor_id: (row.payload['actor_id'] as string | null) ?? null,
+      intake: (row.payload['intake'] as string | null) ?? null,
+    };
+    const actorName = fact.actor_id ? await getProfileName(supa, fact.actor_id) : null;
+    let actorRole: string | null = null;
+    if (fact.actor_id) {
+      const { data: grantRows } = await supa
+        .from('escrow_team_grants')
+        .select('role')
+        .eq('escrow_id', escrow.id)
+        .eq('user_id', fact.actor_id)
+        .eq('status', 'accepted')
+        .limit(1);
+      actorRole =
+        ((grantRows ?? []) as Array<{ role?: string }>)[0]?.role ?? null;
+    }
+    const body = buildIntakeSubmittedOwnerBody(fact, actorName, actorRole, escrow.address);
+    if (!body) return 0;
+    const tokens = await getRealtorTokens(supa, escrow);
+    if (tokens.length === 0) return 0;
+    return await sendTeamPush(supa, env, tokens, body, 'intake_submitted_owner', escrow.id);
+  } catch (err) {
+    await logDeliveryFailure(
+      supa,
+      'intake_submitted_owner',
+      escrow.id,
+      `intake submitted owner handling threw: ${String(err)}`,
+    );
+    return 0;
+  }
+}
+
 interface EventPushRow {
   id: string;
   escrow_id: string;
@@ -655,6 +707,10 @@ async function handleEventPushes(
             memberGroups.get(row.escrow_id) ?? [row],
           );
         }
+      } else if (row.event === 'intake_submitted_owner') {
+        // 0051: a member's intake-submit transition -> the OWNER.
+        // Routed EXPLICITLY here — never through a default branch.
+        sent += await handleIntakeSubmittedOwner(supa, env, escrow, row);
       } else if (row.event === 'escrow_closed' || row.event === 'escrow_cancelled') {
         const body = buildEventBody(row.event, {
           realtorName: (row.payload['realtor_first'] as string | null) ?? null,

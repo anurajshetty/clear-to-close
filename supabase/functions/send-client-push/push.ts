@@ -61,6 +61,13 @@ export type PushEvent =
   | 'team_invite_received'
   | 'team_invite_accepted'
   | 'member_step_activity'
+  // Intake-submit owner notification (0051): a member's transition of
+  // an intake INTO submitted state notifies the escrow OWNER through
+  // the realtor token path. Sibling of the 0040 intake kinds (which
+  // notify the TC on every save and stay untouched); bodies come from
+  // buildIntakeSubmittedOwnerBody below. NEVER a valid HTTP trigger
+  // payload — parseTriggerPayload rejects it.
+  | 'intake_submitted_owner'
   // Internal cron events (0024+): posted by pg_cron via push_cron_ping.
   // They carry no escrow_id; parseTriggerPayload accepts them bare.
   | 'flush_step_pushes'
@@ -177,6 +184,7 @@ export function buildPushBody(
     case 'team_invite_received':
     case 'team_invite_accepted':
     case 'member_step_activity':
+    case 'intake_submitted_owner':
       // P1/Team outbox events: bodies are built by buildEventBody or
       // the plan* builders below from the outbox payload; this
       // HTTP-path builder never serves them.
@@ -787,6 +795,40 @@ export interface MemberActivityFact {
   actor_id: string | null;
   action: string | null;
   title: string | null;
+}
+
+/** Outbox fact for intake_submitted_owner (0051): who + which form. */
+export interface IntakeSubmittedOwnerFact {
+  actor_id: string | null;
+  /** 'buyer' (buyer_intakes) or 'seller' (tc_intakes). */
+  intake: string | null;
+}
+
+/**
+ * Owner copy for a member's intake-submit transition (0051). Follows
+ * the realtor template family: the actor and the property street —
+ * never any intake content. The actor renders as their profile name;
+ * without one it falls back to their live grant role's label, then to
+ * a neutral phrase. Returns null without a street (the copy names the
+ * property) or for an unknown intake kind (never guess the side).
+ */
+export function buildIntakeSubmittedOwnerBody(
+  fact: IntakeSubmittedOwnerFact,
+  actorName: string | null | undefined,
+  actorRole: string | null | undefined,
+  street: string | null | undefined,
+): string | null {
+  if (fact.intake !== 'buyer' && fact.intake !== 'seller') return null;
+  const st = trimmedOrNull(street);
+  if (!st) return null;
+  const actor =
+    trimmedOrNull(actorName) ??
+    (actorRole === 'tc'
+      ? 'Your transaction coordinator'
+      : actorRole === 'associate'
+        ? 'Your associate'
+        : 'A team member');
+  return `${actor} submitted the ${fact.intake} intake on ${st}.`;
 }
 
 /**

@@ -72,6 +72,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/team_screens.test.ts" \
   "$ROOT/tests/team_store.test.ts" \
   "$ROOT/tests/team_push_drain.test.ts" \
+  "$ROOT/tests/intake_submitted_owner_drain.test.ts" \
   "$ROOT/tests/latest.test.ts" \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
@@ -206,6 +207,7 @@ node "$OUT/tests/share_side.test.js"
 node "$OUT/tests/team_screens.test.js"
 node "$OUT/tests/team_store.test.js"
 node "$OUT/tests/team_push_drain.test.js"
+node "$OUT/tests/intake_submitted_owner_drain.test.js"
 # Pinned TZ so the calendar-day relative-time buckets are deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"
