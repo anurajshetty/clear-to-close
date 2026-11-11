@@ -196,29 +196,6 @@ export function shouldShowRealtorPrePrompt(args: {
   );
 }
 
-/**
- * Back-control decision for screens that are normally reached by an
- * in-app PUSH but can also be a push-notification LANDING (Nov 10,
- * 2026): PushGate routes taps with router.replace, so a landing has
- * NO back stack beneath it (cold start: the landing is the only
- * route; warm start: replace swapped the current screen out) and a
- * bare router.back() is a dead control — the activity screen's
- * "Details" button on a member-activity push entry. The decision:
- * go back when a back stack exists (in-app behavior unchanged), else
- * REPLACE to the control's own target so the stack is constructed
- * (landing -> target, system back from there behaves exactly like
- * any other cold-entered screen).
- */
-export type BackFallbackAction =
-  | { type: 'back' }
-  | { type: 'replace'; href: string };
-
-export function backFallbackAction(
-  canGoBack: boolean,
-  fallbackHref: string,
-): BackFallbackAction {
-  return canGoBack ? { type: 'back' } : { type: 'replace', href: fallbackHref };
-}
 
 /**
  * Where a push tap lands, by the tapped payload's role. Realtor pushes
@@ -243,7 +220,10 @@ export function pushTapRoute(escrowId: string, role: string, kind?: string | nul
  * - 'team_invite_received' lands on the deal-list home, where the
  *   pending-invite card lives (there is no escrow to open yet).
  * - 'team_invite_accepted' opens the escrow the invite was for.
- * - 'member_step_activity' opens the escrow's activity timeline.
+ * - 'member_step_activity' opens the escrow's home (detail) screen
+ *   directly — the checklist view (Anuraj, Nov 10, 2026: NOT the
+ *   activity timeline; supersedes the Oct 2026 tap-opens-Activity
+ *   rule).
  * Returns null for anything else so callers fall back to role routing.
  */
 export function teamPushTapRoute(kind: string, escrowId: string): string | null {
@@ -253,7 +233,7 @@ export function teamPushTapRoute(kind: string, escrowId: string): string | null 
     case 'team_invite_accepted':
       return `/escrow/${escrowId}`;
     case 'member_step_activity':
-      return `/activity/${escrowId}`;
+      return `/escrow/${escrowId}`;
     default:
       return null;
   }

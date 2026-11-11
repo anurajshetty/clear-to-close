@@ -343,10 +343,10 @@ function testMappers(): void {
 function testTapRoutes(): void {
   assert(teamPushTapRoute('team_invite_received', 'esc-9') === '/', 'tap route: team_invite_received -> home');
   assert(teamPushTapRoute('team_invite_accepted', 'esc-9') === '/escrow/esc-9', 'tap route: team_invite_accepted -> escrow detail');
-  assert(teamPushTapRoute('member_step_activity', 'esc-9') === '/activity/esc-9', 'tap route: member_step_activity -> activity timeline');
+  assert(teamPushTapRoute('member_step_activity', 'esc-9') === '/escrow/esc-9', 'tap route: member_step_activity -> escrow home (Anuraj, Nov 10, 2026: the checklist view, not the activity timeline)');
   assert(teamPushTapRoute('client_joined', 'esc-9') === null, 'tap route: non-team kind -> null (role routing decides)');
   assert(pushTapRoute('esc-9', 'realtor', 'team_invite_received') === '/', 'pushTapRoute: kind wins over role');
-  assert(pushTapRoute('esc-9', 'realtor', 'member_step_activity') === '/activity/esc-9', 'pushTapRoute: activity kind routes to timeline');
+  assert(pushTapRoute('esc-9', 'realtor', 'member_step_activity') === '/escrow/esc-9', 'pushTapRoute: member_step_activity kind routes to the escrow home');
   assert(pushTapRoute('esc-9', 'realtor') === '/escrow/esc-9', 'pushTapRoute: no kind keeps realtor routing');
   assert(pushTapRoute('esc-9', 'buyer') === '/client/buyer/esc-9', 'pushTapRoute: no kind keeps client routing');
   const resp = {

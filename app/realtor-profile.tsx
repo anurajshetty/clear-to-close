@@ -87,6 +87,7 @@ function ProfileBanner({
         onPress={onBack}
         accessibilityRole="button"
         accessibilityLabel="Back to celebration"
+        hitSlop={8}
         style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }]}
         testID="profile-back"
       >

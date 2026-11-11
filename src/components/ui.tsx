@@ -166,6 +166,7 @@ export function BackChevron({ label, onPress }: { label: string; onPress: () => 
       accessibilityRole="button"
       accessibilityLabel={`Back to ${label}`}
       onPress={onPress}
+      hitSlop={10}
       style={({ pressed }) => [styles.backChevron, pressed && { opacity: 0.7 }]}
     >
       <Text style={styles.backChevronGlyph}>‹</Text>
@@ -605,7 +606,7 @@ const styles = StyleSheet.create({
   },
   textLinkWrap: { alignSelf: 'center', paddingVertical: 10, paddingHorizontal: 8 },
   textLink: { fontSize: 15, fontWeight: '700', color: colors.accent },
-  backChevron: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', paddingVertical: 8, paddingRight: 12 },
+  backChevron: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingVertical: 8, paddingRight: 12 },
   backChevronGlyph: { fontSize: 26, fontWeight: '400', color: colors.accent, marginTop: -3 },
   backChevronLabel: { fontSize: 15, fontWeight: '600', color: colors.accent, marginLeft: 2 },
   dialogOverlay: {

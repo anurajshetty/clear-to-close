@@ -7,12 +7,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppState,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth, setExpectSignOut } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';

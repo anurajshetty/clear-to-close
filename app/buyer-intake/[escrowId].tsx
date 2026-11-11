@@ -186,7 +186,7 @@ export default function BuyerIntakeScreen() {
     <View style={styles.screen}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: 24 + kb }]}
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 10, paddingBottom: 24 + kb }]}
         keyboardShouldPersistTaps="handled"
       >
         <BackChevron label="Details" onPress={() => router.back()} />

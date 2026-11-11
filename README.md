@@ -129,14 +129,20 @@ central user; the buyers and sellers they represent are the other parties.
   screens, and pushes are unchanged, and client-facing copy still says
   "your realtor"). Pushes: the invitee is notified on invite, the owner
   on acceptance, and the owner gets a coalesced summary when an Associate
-  checks, unchecks, or adds a step (tap opens Activity) — all through the
-  existing outbox with per-token quiet hours. Entered from a push, the
-  Activity screen's **Details** control opens the escrow's detail
-  screen (a push landing has no back stack, so the control constructs
-  the route instead of going back); entered in-app it goes back as
-  before. Removing a member ends
+  checks, unchecks, or adds a step (tap opens the escrow's detail
+  screen directly — the checklist view, not the Activity timeline;
+  Nov 10, 2026) — all through the
+  existing outbox with per-token quiet hours. Removing a member ends
   their access immediately; seats are enforced in the database (one
   active-or-pending grant per role per escrow).
+- **Top safe area (Nov 10, 2026)** — every screen's top content clears
+  the status bar using the device's actual top inset (the safe-area
+  API, never a hardcoded value): fixed headers pad by the inset,
+  scroll screens pad their content top (both intake screens included),
+  and the auth/edit-profile screens use the safe-area-context
+  SafeAreaView. The shared BackChevron guarantees a 44pt minimum hit
+  target, as do the custom back controls (escrow detail, client
+  profile; the realtor profile's 38pt visual circle gains hit slop).
 - **Transaction detail** — per-escrow home with:
   - **Time tracker** — escrow open date, end date (display-only), and where
     today falls between them (day X of Y). Turns red once the end date passes.
