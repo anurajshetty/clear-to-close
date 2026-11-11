@@ -299,6 +299,23 @@ export default function ProfileUpdate() {
             {loggingOut ? 'Logging out…' : 'Log out'}
           </Text>
         </Pressable>
+
+        {/* Quiet "Delete account" row at the very bottom (Nov 2026,
+            approved mockup): red, unadorned, opens the deletion
+            confirmation screen. Nothing is deleted from here. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delete account"
+          onPress={() => router.push('/delete-account')}
+          testID="delete-account-row"
+          style={({ pressed }) => [
+            styles.dellink,
+            pressed && { backgroundColor: colors.accentSoft },
+          ]}
+        >
+          <Text style={styles.dellinkText}>Delete account</Text>
+          <Text style={styles.dellinkChevron}>›</Text>
+        </Pressable>
       </ScrollView>
 
       <ChangePasswordSheet
@@ -342,6 +359,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   pwlinkText: { fontSize: 15, fontWeight: '700', color: colors.accent },
+  // Quiet "Delete account" row (Nov 2026 mockup): full-width, red,
+  // chevron right — deliberately plainer than the rows above it.
+  dellink: {
+    marginTop: 2,
+    minHeight: 44,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+  },
+  dellinkText: { fontSize: 15, fontWeight: '600', color: colors.red },
+  dellinkChevron: { fontSize: 17, color: colors.red },
   toast: {
     position: 'absolute',
     left: 24,

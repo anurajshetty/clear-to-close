@@ -12,6 +12,7 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
 import { backFallbackAction } from '../../src/lib/push';
+import { startTeamRealtimeEscrow } from '../../src/lib/teamRealtime';
 import type { Escrow } from '../../src/lib/types';
 import type { TeamActivityEntry } from '../../src/lib/teamModel';
 import {
@@ -72,6 +73,42 @@ export default function EscrowActivity() {
     useCallback(() => {
       refresh();
     }, [refresh]),
+  );
+
+  // Live team updates (Nov 2026): while the timeline is on screen, new
+  // activity rows for this escrow invalidate it over the per-escrow
+  // realtime channel (shared with the detail screen beneath). Data
+  // events first re-pull the escrow unit through the gated pulls so
+  // the header reflects renames/status too. Focus-owned.
+  const onTeamData = useCallback(async () => {
+    try {
+      await store.pullEscrowsFromCloud();
+    } catch (err) {
+      console.warn('pullEscrowsFromCloud failed', err);
+    }
+    try {
+      await store.refreshTeam();
+    } catch (err) {
+      console.warn('refreshTeam failed', err);
+    }
+    refresh();
+  }, [refresh]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!escrowId) return undefined;
+      const handle = startTeamRealtimeEscrow(escrowId, {
+        onActivity: () => {
+          refresh();
+        },
+        onDataChanged: () => {
+          void onTeamData();
+        },
+      });
+      return () => {
+        handle?.stop();
+      };
+    }, [escrowId, refresh, onTeamData]),
   );
 
   if (!loaded) {

@@ -82,10 +82,13 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/safe_area_top_controls.test.ts" \
   "$ROOT/tests/member_push.test.ts" \
   "$ROOT/tests/push.test.ts" \
+  "$ROOT/tests/stamp_alignment.test.ts" \
+  "$ROOT/tests/phantom_revoke.test.ts" \
   "$ROOT/tests/push_registration.test.ts" \
   "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/auth_copy.test.ts" \
+  "$ROOT/tests/delete_account.test.ts" \
   "$ROOT/tests/email_redirect.test.ts" \
   "$ROOT/tests/app_config.test.ts" \
   "$ROOT/tests/signup.test.ts" \
@@ -166,6 +169,9 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/multi_escrow.test.ts" \
   "$ROOT/src/lib/clientRealtime.ts" \
   "$ROOT/tests/client_realtime.test.ts" \
+  "$ROOT/src/lib/teamRealtime.ts" \
+  "$ROOT/tests/team_realtime.test.ts" \
+  "$ROOT/tests/team_realtime_wiring.test.ts" \
   "$ROOT/src/lib/toast.ts" \
   "$ROOT/tests/toast_dismiss.test.ts" \
   "$ROOT/tests/share_screen.test.ts" \
@@ -217,11 +223,14 @@ node "$OUT/tests/member_push_tap_route.test.js"
 node "$OUT/tests/safe_area_top_controls.test.js"
 node "$OUT/tests/member_push.test.js"
 node "$OUT/tests/push.test.js"
+node "$OUT/tests/stamp_alignment.test.js"
+node "$OUT/tests/phantom_revoke.test.js"
 node "$OUT/tests/push_registration.test.js"
 node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"
 node "$OUT/tests/auth_copy.test.js"
+node "$OUT/tests/delete_account.test.js"
 node "$OUT/tests/email_redirect.test.js"
 node "$OUT/tests/app_config.test.js"
 node "$OUT/tests/signup.test.js"
@@ -300,6 +309,8 @@ node "$OUT/tests/update_closed_lifecycle.test.js"
 node "$OUT/tests/escrow_list.test.js"
 node "$OUT/tests/multi_escrow.test.js"
 node "$OUT/tests/client_realtime.test.js"
+node "$OUT/tests/team_realtime.test.js"
+node "$OUT/tests/team_realtime_wiring.test.js"
 
 # Profile picker options (Sept 2026): the library pickers must launch with
 # allowsEditing: false and stay single-select, so the raw image flows
@@ -348,6 +359,7 @@ python3 "$ROOT/tests/multi_escrow_migration.py"
 # target, rebind-on-register, sign-out unregister + M6b prune (SQL, not
 # runnable in node).
 python3 "$ROOT/tests/realtor_push_tokens_migration.py"
+python3 "$ROOT/tests/delete_account_migration.py"
 # Step-push side-targeting migration self-check (Oct 15, 2026): the 0039
 # migration adds step_role to pending_step_pushes and re-creates
 # ctc_push_notify with a diff of exactly the two buffer inserts vs 0024
@@ -391,6 +403,10 @@ python3 "$ROOT/tests/buyer_intake_migration.py"
 # client_links so the client observes its own revocation). SQL, not
 # runnable in node.
 python3 "$ROOT/tests/client_realtime_migration.py"
+# Team realtime migration self-check (Nov 2026): 0050 adds ONLY
+# escrow_activity to the supabase_realtime publication, idempotently —
+# no grants, no policies, no functions. SQL, not runnable in node.
+python3 "$ROOT/tests/team_realtime_migration.py"
 # M2 device-binding migration self-check (Oct 1, 2026): the 0037 migration
 # drops the bearer-only 1-arg unregister_push_token_for_link, recreates it
 # with optional p_device_id (default null), rejects the delete on device

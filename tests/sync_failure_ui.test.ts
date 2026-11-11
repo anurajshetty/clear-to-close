@@ -44,12 +44,28 @@ type UpsertBehavior = 'ok' | 'network-fail' | 'zero-rows' | 'cap-violation';
 // push, assert the error surfaced, then flip to success and retry.
 function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior; failLinkSelect?: boolean }) {
   const stats = { writes: 0 };
+  // Faithful server state for invites (Nov 2026): cancel/close now pull
+  // the server's invite list inside the confirmed write, so a fake that
+  // answers every invites read with [] no longer models the server —
+  // the invites this fake's upserts stored are what its selects return.
+  // The map hangs off `behavior` because the store re-invokes the
+  // cloudClient factory per operation: per-instance state would vanish
+  // between calls, while `behavior` is shared across the scenario.
+  const bag = behavior as unknown as { __inviteRows?: Map<string, Record<string, unknown>> };
+  if (!bag.__inviteRows) bag.__inviteRows = new Map();
+  const inviteRows = bag.__inviteRows;
   const builder = (table: string): unknown => {
     let rows: unknown[] | null = null;
+    let mode: 'upsert' | 'update' = 'upsert';
+    let patch: Record<string, unknown> | null = null;
+    const filters: [string, unknown][] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const b: Record<string, (...args: any[]) => any> = {
       select: () => b,
-      eq: () => b,
+      eq: (col: string, val: unknown) => {
+        filters.push([col, val]);
+        return b;
+      },
       is: () => b,
       limit: () => b,
       order: () => b,
@@ -63,6 +79,8 @@ function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior
       },
       update: (r: unknown) => {
         rows = [r];
+        mode = 'update';
+        patch = r as Record<string, unknown>;
         return b;
       },
       then: (res: (v: unknown) => void, rej?: (e: unknown) => void) => {
@@ -85,8 +103,31 @@ function makeCloud(behavior: { sessionUid: string | null; upsert: UpsertBehavior
                 res({ data: null, error: { message: 'two clients per side max' } });
                 break;
               default:
-                res({ data: rows, error: null });
+                if (mode === 'upsert' && table === 'invites' && rows) {
+                  // The write landed: the server now holds these rows.
+                  for (const row of rows as Record<string, unknown>[]) {
+                    inviteRows.set(String(row.id), { ...row });
+                  }
+                  res({ data: rows, error: null });
+                } else if (mode === 'update' && table === 'invites' && patch) {
+                  // Apply the patch to the stored row (eq filters are
+                  // known by now) so later pulls see the revocation.
+                  const idEq = filters.find(([c]) => c === 'id');
+                  const cur = idEq ? inviteRows.get(String(idEq[1])) : undefined;
+                  if (cur) inviteRows.set(cur.id as string, { ...cur, ...patch });
+                  res({ data: cur ? [{ id: cur.id }] : [], error: null });
+                } else {
+                  res({ data: rows, error: null });
+                }
             }
+          } else if (table === 'invites') {
+            // Read path: the server's stored invites, eq-filtered.
+            let out = [...inviteRows.values()];
+            for (const [col, val] of filters) {
+              if (col === 'escrow_id') out = out.filter((r) => r.escrow_id === val);
+              if (col === 'id') out = out.filter((r) => r.id === val);
+            }
+            res({ data: out.map((r) => ({ ...r })), error: null });
           } else {
             res({ data: [], error: null }); // read probes / pulls
           }

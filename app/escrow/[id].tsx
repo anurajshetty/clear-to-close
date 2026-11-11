@@ -20,6 +20,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
 import { backFallbackAction } from '../../src/lib/push';
+import { startTeamRealtimeEscrow } from '../../src/lib/teamRealtime';
 import type { ChecklistDraftStep, ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { uid } from '../../src/lib/store';
 import {
@@ -301,6 +302,43 @@ export function TransactionDetail() {
     useCallback(() => {
       refresh();
     }, [refresh]),
+  );
+
+  // Live team updates (Nov 2026): while this escrow is on screen, a
+  // member's change invalidates it over the per-escrow realtime
+  // channel. Data events re-pull the escrow unit through the gated
+  // pulls (own: pullEscrowsFromCloud; invited: refreshTeam) before
+  // refresh() re-reads; activity events re-pull the activity card and
+  // participants (roster changes ride activity rows). Focus-owned.
+  const onTeamData = useCallback(async () => {
+    try {
+      await store.pullEscrowsFromCloud();
+    } catch (err) {
+      console.warn('pullEscrowsFromCloud failed', err);
+    }
+    try {
+      await store.refreshTeam();
+    } catch (err) {
+      console.warn('refreshTeam failed', err);
+    }
+    refresh();
+  }, [refresh]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!escrowId) return undefined;
+      const handle = startTeamRealtimeEscrow(escrowId, {
+        onDataChanged: () => {
+          void onTeamData();
+        },
+        onActivity: () => {
+          refresh();
+        },
+      });
+      return () => {
+        handle?.stop();
+      };
+    }, [escrowId, onTeamData, refresh]),
   );
 
   const toggle = async (r: ClientRole, stepId: string) => {

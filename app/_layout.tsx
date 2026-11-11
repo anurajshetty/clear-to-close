@@ -22,6 +22,10 @@ import { auth, parseRecoveryLink, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { registerRealtorPushToken, unregisterPushTokenForLink } from '../src/lib/push';
+import {
+  setTeamRealtimeUser,
+  syncTeamRealtimeIdentity,
+} from '../src/lib/teamRealtime';
 import { PushGate } from '../src/components/PushGate';
 import { refreshClientAppLink } from '../src/lib/appConfig';
 import { SyncErrorBar } from '../src/components/SyncErrorBar';
@@ -152,6 +156,17 @@ export default function RootLayout() {
               auth.getProfileSkipped(),
             ]);
             href = resolvePostAuthHref({ sessionUserId, profile, skipped });
+            // Account-deletion husk (Stream 4, Nov 2026): this device
+            // marked the signed-in uid as a husk (data deleted, the
+            // auth user survived) and the cloud has no profile for
+            // them. Land on the complete-deletion offer, never on
+            // profile creation or a broken home.
+            if (!profile) {
+              const huskUid = await auth.getDeletionHuskUserId();
+              if (huskUid && huskUid === sessionUserId) {
+                href = '/delete-account?husk=1';
+              }
+            }
             // A realtor resuming on a device whose local KV was never seeded
             // must see their existing escrows: hydrate the deal list from
             // the cloud before it renders (never throws; falls back local).
@@ -184,7 +199,17 @@ export default function RootLayout() {
     // an in-memory cache with the built-in link as its fallback.
     void refreshClientAppLink();
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void refreshClientAppLink();
+      if (state === 'active') {
+        void refreshClientAppLink();
+        // Live team updates (Nov 2026): realtime sockets die in the
+        // background and postgres_changes does not replay, so a
+        // foreground return ALSO re-runs the boot pull set — missed
+        // member changes, brand-new shares, and removed-member
+        // discovery all converge here even if every event was lost.
+        // Both pulls are fail-open by contract.
+        void store.pullEscrowsFromCloud().catch(() => {});
+        void store.refreshTeam().catch(() => {});
+      }
     });
     return () => sub.remove();
   }, []);
@@ -209,9 +234,18 @@ export default function RootLayout() {
         // incident). Same self-guards as the bootstrap call; the RPC
         // upserts per device, so repeats are idempotent.
         void registerRealtorPushToken().catch(() => false);
+        // Live team updates (Nov 2026): bind the realtime identity to
+        // this fresh session, in step with initCloudSync above — an
+        // identity change tears every channel down and rebinds, so no
+        // channel can outlive the session it subscribed under.
+        void syncTeamRealtimeIdentity().catch(() => {});
         return;
       }
       if (event !== 'SIGNED_OUT') return;
+      // Realtime teardown FIRST (Nov 2026): our own logout must stop
+      // channels too, so the unbind runs before the expected-sign-out
+      // check below.
+      setTeamRealtimeUser(null);
       if (takeExpectSignOut()) return;
       void auth.getRole().then((role) => {
         if (role === 'realtor') router.replace('/login?expired=1' as never);
@@ -245,6 +279,7 @@ export default function RootLayout() {
         <Stack.Screen name="email-confirmed" />
         <Stack.Screen name="profile-create" />
         <Stack.Screen name="profile-update" />
+        <Stack.Screen name="delete-account" />
         <Stack.Screen name="link-dead" />
         <Stack.Screen name="escrow/[id]" />
         <Stack.Screen name="share/[id]" />

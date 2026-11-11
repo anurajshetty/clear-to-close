@@ -27,6 +27,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const defaults = [
   join(repoRoot, 'supabase/functions/send-client-push/index.ts'),
   join(repoRoot, 'supabase/functions/send-client-push/push.ts'),
+  join(repoRoot, 'supabase/functions/delete-account/index.ts'),
   join(repoRoot, '..', 'your_files', 'send-client-push-single.ts'),
 ];
 

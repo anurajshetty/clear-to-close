@@ -100,6 +100,17 @@ central user; the buyers and sellers they represent are the other parties.
   coordinator) — the codes die with the escrow, and any redeemed device
   link is killed at the same moment. Closed and cancelled
   cards show the pencil only.
+- **Sync self-repair for older escrows** (Nov 2026) — two wedged states
+  heal inside the confirmed write instead of failing every save with
+  "Couldn't save": (1) when a step's checked-by / created-by stamp on
+  this device has diverged from the server's stored stamp (a leftover
+  of the 2026 sync incidents), the save aligns just those stamps to
+  the server's values and retries once; check-offs made in the same
+  save keep their attribution, and every alignment is recorded in the
+  internal sync diagnostics. (2) Cancelling or closing an escrow
+  builds its invite revocations from the server's own invite list, so
+  a leftover local invite the server never saw can no longer fail the
+  cancel after the escrow is already cancelled underneath.
 - **Team Access** (Oct 2026, migration 0044) — a realtor can invite ONE
   Associate and ONE transaction coordinator per escrow, by email, from the
   escrow's **Invite team** sheet (the two-row Invite card at the end of the
@@ -145,9 +156,38 @@ central user; the buyers and sellers they represent are the other parties.
   through a guarded fallback: back when a navigation stack exists,
   otherwise replace to the control's own target (the deal list; the
   escrow itself for Activity's Details) — a push entry never
-  dead-ends. Removing a member ends
+  dead-ends. **Live team updates (Nov 2026):** while the app is open,
+  a member's escrow or step change reaches the owner's (and every
+  member's) screens within about a second — no close-and-reopen.
+  Realtime events are invalidation signals only: screens re-pull
+  through the same gated reads as boot/focus (migration `0050` adds
+  `escrow_activity` to the realtime publication; authorization is the
+  existing SELECT policies, evaluated per subscriber). Channels are
+  bound to the signed-in identity and are torn down on sign-out;
+  returning to the foreground re-runs the boot pull set to cover
+  anything missed while backgrounded. Removing a member ends
   their access immediately; seats are enforced in the database (one
   active-or-pending grant per role per escrow).
+- **Delete account** (Nov 2026, migration 0052) — a quiet red
+  "Delete account" row at the bottom of the **Profile** screen opens
+  a confirmation screen that spells out the consequences and asks
+  for the password again. Deletion is run by the `delete-account`
+  Edge Function, which takes identity only from the caller's session
+  token (never from the request), re-verifies the password against
+  that account's own email, revokes every session, removes the
+  account's photos from storage, then deletes the data in one
+  database transaction: the profile, every owned escrow with its
+  steps, intakes, client links, team seats, activity, and push
+  registrations, the realtor's seats on other realtors' escrows
+  (freed for re-invite), reviews, and any queued notifications,
+  including a team invite still waiting to be emailed to them. The
+  sign-in itself is deleted last; if that final step fails after the
+  data is gone, the app says so and offers to complete the deletion
+  on the next sign-in instead of landing on a broken home. A
+  counts-only audit row (no personal content) records each deletion.
+  Deploy: run migration 0052 in the dashboard, then deploy the
+  `delete-account` function (its platform-provided secrets are all
+  it needs).
 - **Top safe area (Nov 10, 2026)** — every screen's top content clears
   the status bar using the device's actual top inset (the safe-area
   API, never a hardcoded value): fixed headers pad by the inset,

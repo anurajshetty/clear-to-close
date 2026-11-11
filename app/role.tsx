@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { Kicker, PrimaryButton } from '../src/components/ui';
 import { colors, radius } from '../src/theme';
@@ -43,6 +43,8 @@ type Choice = 'realtor' | 'client' | null;
 
 export default function RolePicker() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ deleted?: string }>();
+  const deleted = params.deleted === '1';
   const [choice, setChoice] = useState<Choice>(null);
   const [busy, setBusy] = useState(false);
 
@@ -90,6 +92,11 @@ export default function RolePicker() {
         <Text style={styles.sub}>
           Pick the path that fits. You only see this once. The app remembers.
         </Text>
+        {deleted ? (
+          <View style={styles.deletedCard}>
+            <Text style={styles.deletedText}>Your account has been deleted.</Text>
+          </View>
+        ) : null}
 
         <View style={styles.cards}>
           {card(
@@ -124,6 +131,15 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   sub: { fontSize: 15, color: colors.body, lineHeight: 23, marginTop: 8 },
+  deletedCard: {
+    marginTop: 14,
+    backgroundColor: colors.amberSoft,
+    borderWidth: 1,
+    borderColor: '#EAD3A8',
+    borderRadius: 14,
+    padding: 14,
+  },
+  deletedText: { fontSize: 15, fontWeight: '700', color: colors.ink },
   cards: { marginTop: 24, gap: 14 },
   card: {
     flexDirection: 'row',

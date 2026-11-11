@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
+import { startTeamRealtimeHome } from '../src/lib/teamRealtime';
 import { shouldShowProfileNudge } from '../src/lib/bootRoute';
 import type { ClientRole, Escrow, RealtorProfile, StepT } from '../src/lib/types';
 import { DealCard } from '../src/components/DealCard';
@@ -233,6 +234,34 @@ export default function DealList() {
     useCallback(() => {
       load();
     }, [load]),
+  );
+
+  // Live team updates (Nov 2026): while home is focused, a member's
+  // change anywhere invalidates this list over realtime (RLS-scoped,
+  // debounced). The invalidation re-pulls own escrows from the cloud,
+  // then load() re-reads the merged local state (it also re-runs
+  // refreshTeam for invited escrows and pending invites). The
+  // subscription is focus-owned: blur or unmount stops it.
+  const onTeamInvalidation = useCallback(async () => {
+    try {
+      await store.pullEscrowsFromCloud();
+    } catch (err) {
+      console.warn('pullEscrowsFromCloud failed', err);
+    }
+    await load();
+  }, [load]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const handle = startTeamRealtimeHome({
+        onDataChanged: () => {
+          void onTeamInvalidation();
+        },
+      });
+      return () => {
+        handle?.stop();
+      };
+    }, [onTeamInvalidation]),
   );
 
   // Team Access: escrows carries my own escrows; anything stamped with a

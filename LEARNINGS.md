@@ -3,6 +3,53 @@
 Issues found while building, with root causes and the practice each one taught.
 Updated with every fix. (Anuraj, Sept 27, 2026: every app keeps a learnings doc.)
 
+## Old-escrow writes: diverged stamps + phantom invites (Nov 11, 2026)
+
+**What happened:** Two incident-era states wedged old escrows forever.
+(1) A local step stamp (completed_by/created_by) that diverged from the
+server's stored value — stamped under an identity whose push never
+landed — made EVERY full-list steps upsert fail migration 0046's
+step_stamps_allowed with 42501: the local model re-sent the diverged
+stamp verbatim on every save, so the escrow could never be written
+again (the Benito escrow). (2) A local revokedInvites entry whose id
+the server never saw (a phantom) made cancel fail at its revoke step
+AFTER the escrow cancel and the server-side revocations had already
+landed — the user saw "Couldn't save" on every retry while the escrow
+was cancelled underneath them.
+
+**The fixes:** Stamp alignment is armed ONLY on the steps upsert's
+42501: fresh-pull the stored stamps inside the failed write, surrender
+exactly the stamps the predicate would reject (to the stored value, or
+NULL for a local-only step), persist the surrender locally, retry once,
+and record every alignment (escrow, step ids, from → to, saver, retry
+outcome) in a diagnostics KV ring modeled on the conflict log. Cancel
+AND close now build their revoke lists from the server's invite list
+pulled BEFORE the status upsert (a failed pull aborts with nothing
+landed), and pushRevokeNow has a per-call-site visibility opt-in for
+the cancel/close loop and the revoke-first site only: visible +
+zero-row still throws; invisible + zero-row proceeds.
+
+**Lessons:**
+- **A predicate-gated field needs a predicate-scoped repair.** The
+  surrender set is computed by mirroring step_stamps_allowed exactly —
+  never "clear the stamps" or "trust the newest": the saver's own fresh
+  check-off in the same write is legal and must keep its attribution,
+  and a direct person-to-person stamp move is rejected for everyone,
+  owner included.
+- **Fresh reads inside the failed write, or don't bother.** The
+  alignment pull happens after the denial, inside the same confirmed
+  write; a cached snapshot could surrender a teammate's live stamp.
+  Same shape as the phantom fix: the server list is pulled inside the
+  write, before the status upsert — ordering is the fix.
+- **Zero rows is two different facts.** PostgREST's silent zero-row
+  UPDATE means "denied" for a row the server holds and "already true"
+  for a row it has never seen; a one-line visibility probe is what
+  tells them apart. Default stays throw — tolerance is opt-in per call
+  site, never global.
+- **RLS denials are statement-atomic.** One bad stamp row rejects the
+  whole 13-row upsert (proven on the harness, wire shape); a repair
+  that retries row-by-row would have changed the write's semantics.
+
 ## Notification P0: realtor tokens + TC tap route (Oct 15, 2026)
 
 **What happened:** Realtors could register no push tokens (registration
@@ -1751,3 +1798,11 @@ exact flows it exercised.
 - The intake-submit owner notification was specified as "fire when a member submits an intake" — but the intake tables carried no submitted marker anywhere: no column, no data field, no submit action. A trigger cannot predicate on a concept the row does not store, so migration 0051 creates the state it notifies on (`submitted_at` timestamptz on both intake tables, null = not submitted, matching the revoked_at / halfway_push_sent_at marker shape) and the transition predicate reads OLD vs NEW stored values. Lesson: before building any "X happened" producer, prove the database can distinguish "happened" from "did not" with stored state alone; if it cannot, the marker IS the first deliverable, and the producer is armed-but-silent until some writer stamps it.
 - The actor gate mirrors the member-activity rule with one addition: auth.uid() null (service-role) and actor = escrow owner are both silent, and the actor is taken from the trigger's auth context only — a payload or column actor would be a spoofing surface (any writer could name another member). The drain re-derives display facts live (profile name, current grant role) exactly like the R4 live-state rule; the outbox payload stays facts-only ({actor_id, intake}).
 - Sibling, not an edit: 0040's every-save TC-direction producer stays byte-identical; the new kind rides the same outbox, kill switch, quiet hours and drain, routed explicitly in handleEventPushes (an unmatched kind is consumed silently by design, so an explicit branch plus a source pin is the only thing standing between the feature and a silent no-op).
+- A merge that bypasses the write gate is a latent race even if it is "only a pull" (Nov 2026): refreshTeam's invited-escrow merge called local.replaceEscrow bare while every other pull merge serialized through enqueueExclusive under the writeInflight/committedSeq guards — invisible while refreshTeam only ran at boot/focus, and a live stale-overwrite hazard the moment realtime started firing it on remote events during local writes. Rules: every local-state mutation from a fetch goes through the same gate + guards (fetch outside, mutate inside, seq snapshot taken before the fetch), and when a new trigger source appears for an old code path (realtime, foreground, push), re-audit that path's concurrency assumptions under the new trigger.
+- Realtime authorization needs no new machinery when the read policies are already right (Nov 2026): Supabase Realtime evaluates the existing SELECT policies per subscriber, so adding escrow_activity to the publication (0050, publication-only — no grants, no policies) gave exactly-scoped team events: members see their escrows, removed members go silent with the grant, never-members get nothing. The traps are the inverse: tables WITHOUT a direct SELECT grant (escrow_team_grants) cannot be subscribed at all — route their changes through a subscribable sibling (activity rows) — and a table removed from the publication for another feature (realtor_profiles, client links) must not be quietly re-added.
+## Account deletion is a manifest, not a cascade (Nov 11, 2026)
+- Migration 0052's `delete_account_data` deletes every owned row EXPLICITLY, in dependency order, inside one transaction; cascades are only the backstop. Explicit deletes are what make the audit meaningful (per-table counts, written counts-only to `account_deletion_log`) — a cascade-only design can prove nothing about what actually left. The manifest had to be derived from the live FK graph, and three facts were not what a first guess would say: `reviews` has NO reviewer uid column (client_name is text, so there is no "reviews as reviewer" set), quiet-checkin state is a column on `escrows` (no table), and `team_invite_email_log` rows are disposed of by following their grant (the log stores no email; the grant does), so another owner's rate-cap history survives untouched.
+- The dangerous outbox row is the one on SOMEONE ELSE'S escrow: a queued `team_invite_received` row addressed to the caller carries only `{grant_id}` in its payload, so an escrow-scoped purge can never see it. The purge runs LAST inside the transaction and matches both owned escrow ids and the removed grant ids.
+- A definer RPC that takes the uid as a PARAMETER (rather than reading `auth.uid()`) must be service-role-only with the grants to prove it — a new function gets EXECUTE to PUBLIC by default, so `revoke ... from public, anon, authenticated` plus `grant ... to service_role` is load-bearing, and 0052 adds an inner JWT-role wall as the second line. Orchestration rule that follows: identity comes from the caller's JWT only, and the password is re-verified against the JWT user's OWN email — verifying against an address from the request body would be a password-guessing oracle for other people's accounts.
+- Deletion has THREE failure domains, not one: sessions, storage, data, and the auth user can each fail independently. Ordering (revoke, storage, data transaction, auth user last) plus a distinct 'husk' outcome (data gone, sign-in alive) turns the worst partial failure into a completable state; the app marks the husk on-device and the boot router sends that sign-in to the completion offer — without the marker, a no-profile sign-in routes to profile creation and the husk looks like a fresh account with amnesia.
+- Probe lesson (proof_0052): seeding fixtures fires the REAL producers — inserting steps/grants/activity enqueues outbox rows and team activity behind your back. Assert deletion counts against the pre-run in-scope row counts, never against hand-counted fixture rows; the residue scan (zero references after) is the assertion that cannot be fooled.

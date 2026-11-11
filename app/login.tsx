@@ -15,6 +15,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth, type SignInErrorCode } from '../src/lib/auth';
 import { initCloudSync, store } from '../src/lib/store-instance';
 import { registerRealtorPushToken } from '../src/lib/push';
+import { syncTeamRealtimeIdentity } from '../src/lib/teamRealtime';
 import { resolvePostAuthHref } from '../src/lib/bootRoute';
 import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
@@ -27,8 +28,9 @@ export default function Login() {
   // above the keyboard). Shared pattern: bottom padding equal to the
   // keyboard height, so the focused field can scroll into view above it.
   const kbHeight = useKeyboardHeight();
-  const params = useLocalSearchParams<{ expired?: string }>();
+  const params = useLocalSearchParams<{ expired?: string; deleted?: string }>();
   const expired = params.expired === '1';
+  const deleted = params.deleted === '1';
 
   const [mode, setMode] = useState<'login' | 'reset' | 'resetDone'>('login');
   const [email, setEmail] = useState('');
@@ -63,6 +65,10 @@ export default function Login() {
       // cold launch. Fire-and-forget; the call self-guards (native,
       // permission granted) and never throws.
       void registerRealtorPushToken().catch(() => false);
+      // Live team updates (Nov 2026): bind the realtime identity to
+      // this fresh session, in step with initCloudSync (the layout
+      // SIGNED_IN listener does the same; both are idempotent).
+      void syncTeamRealtimeIdentity().catch(() => {});
       // Mid-onboarding resume: a step-1-only account (no profile, never
       // skipped) lands on profile creation, not the deal list. The profile
       // is pulled from the cloud when the local store is missing it (login
@@ -169,6 +175,11 @@ export default function Login() {
             {expired ? (
               <View style={styles.expiredCard}>
                 <Text style={styles.expiredText}>Your session expired. Log in again.</Text>
+              </View>
+            ) : null}
+            {deleted ? (
+              <View style={styles.expiredCard}>
+                <Text style={styles.expiredText}>Your account has been deleted.</Text>
               </View>
             ) : null}
             <View style={styles.form}>

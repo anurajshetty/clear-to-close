@@ -48,6 +48,7 @@ import { normalizeTcIntake, type TcIntakeData } from './tcIntake';
 import { normalizeBuyerIntake, type BuyerIntakeData } from './buyerIntake';
 import { propertyDetailsFromRow } from './propertyDetails';
 import { accessRoleOf } from './teamAccess';
+import { getDefaultKV } from './kv';
 
 const K_OUTBOX = 'ctc:outbox';
 const MAX_PUSH_ATTEMPTS = 10;
@@ -1177,8 +1178,212 @@ export async function pullBuyerIntake(
   return normalizeBuyerIntake((row as { data?: unknown }).data);
 }
 
+/** True for a PostgreSQL row-level-security denial (SQLSTATE 42501). */
+export function isRlsDeniedError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  return (error as { code?: string }).code === '42501';
+}
+
+// ---------------------------------------------------------------------
+// Step-stamp alignment (Benito defect, Nov 10, 2026; auditor-blessed
+// predicate-scoped align-to-server).
+//
+// Migration 0046's step_stamps_allowed gates every steps write: a
+// stamp (completed_by / created_by) passes iff it is null, equal to
+// the value stored on that row, or the caller's while the stored
+// value is null/the caller's. A local cache that diverged from the
+// server in the outbox/identity-incident era (a check-off stamped
+// locally under an identity whose push never landed) therefore makes
+// the FULL-LIST steps upsert die with 42501 on every confirmed write,
+// forever: the local model preserves the diverged stamp verbatim and
+// nothing heals it.
+//
+// The repair, armed ONLY when the steps upsert itself is denied
+// 42501: pull the server's stored stamps fresh (inside the failed
+// write — a snapshot could clear a teammate's live stamp), surrender
+// exactly the local stamps the predicate would reject — to the stored
+// value, or to NULL for a step with no server counterpart — persist
+// the surrender into the local model, and retry the upsert exactly
+// once. Stamps the predicate allows (the saver's own fresh check-off)
+// keep their attribution. Every alignment is recorded in the
+// stamp-alignment diagnostics log below; a second failure is recorded
+// distinctly (retryOutcome 'failed') and propagates as today's error.
+// ---------------------------------------------------------------------
+
+export interface StampSurrender {
+  stepId: string;
+  field: 'completed_by' | 'created_by';
+  from: string | null;
+  to: string | null;
+}
+
+/**
+ * Mirror of step_stamps_allowed (migration 0046) for ONE stamp.
+ * `stored` is the server's stored value, or undefined when the step
+ * has no server counterpart (the SQL subquery reads null then).
+ * Returns true when the server would REJECT this stamp value.
+ */
+export function stampWouldBeRejected(
+  local: string | null,
+  stored: string | null | undefined,
+  saverUid: string,
+): boolean {
+  if (local === null) return false;
+  if (stored !== undefined && local === stored) return false;
+  const s = stored ?? null;
+  if (local === saverUid && (s === null || s === saverUid)) return false;
+  return true;
+}
+
+/**
+ * Surrender the escrow's predicate-rejected stamps to the server's
+ * stored values (NULL for local-only steps), mutating the local model
+ * in place so the alignment persists. Returns what was surrendered.
+ * Content and every other field are never touched.
+ */
+export function alignStepStamps(
+  escrow: Escrow,
+  storedById: Map<string, { completed_by: string | null; created_by: string | null }>,
+  saverUid: string,
+): StampSurrender[] {
+  const out: StampSurrender[] = [];
+  const visit = (s: StepT): void => {
+    const stored = storedById.get(s.id);
+    const cb = s.completedBy ?? null;
+    if (stampWouldBeRejected(cb, stored ? stored.completed_by : undefined, saverUid)) {
+      const to = stored ? stored.completed_by : null;
+      out.push({ stepId: s.id, field: 'completed_by', from: cb, to });
+      s.completedBy = to;
+    }
+    const cr = s.createdBy ?? null;
+    if (stampWouldBeRejected(cr, stored ? stored.created_by : undefined, saverUid)) {
+      const to = stored ? stored.created_by : null;
+      out.push({ stepId: s.id, field: 'created_by', from: cr, to });
+      s.createdBy = to;
+    }
+  };
+  escrow.buyerSteps.forEach(visit);
+  escrow.sellerSteps.forEach(visit);
+  return out;
+}
+
+const K_STAMP_ALIGNMENT_LOG = 'ctc:stamp-alignment-log';
+const MAX_STAMP_ALIGNMENT_LOG = 50;
+
+export interface StampAlignmentEntry {
+  at: string;
+  escrowId: string;
+  saverUid: string;
+  stepIds: string[];
+  surrendered: StampSurrender[];
+  retryOutcome: 'landed' | 'failed';
+}
+
+/**
+ * Record one stamp alignment in the internal diagnostics log (the
+ * conflict-log pattern: bounded KV ring buffer, best-effort, never
+ * throws, never blocks the write it describes).
+ */
+export async function logStampAlignment(
+  kv: KV,
+  entry: Omit<StampAlignmentEntry, 'at'>,
+): Promise<void> {
+  try {
+    const raw = await kv.getItem(K_STAMP_ALIGNMENT_LOG);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list: StampAlignmentEntry[] = Array.isArray(parsed) ? parsed : [];
+    list.push({ ...entry, at: new Date().toISOString() });
+    while (list.length > MAX_STAMP_ALIGNMENT_LOG) list.shift();
+    await kv.setItem(K_STAMP_ALIGNMENT_LOG, JSON.stringify(list));
+  } catch {
+    // Diagnostics only — never break sync.
+  }
+}
+
+/** Read the stamp-alignment diagnostics log (newest last). */
+export async function readStampAlignmentLog(kv: KV): Promise<StampAlignmentEntry[]> {
+  try {
+    const raw = await kv.getItem(K_STAMP_ALIGNMENT_LOG);
+    const parsed: unknown = raw ? (JSON.parse(raw) as StampAlignmentEntry[]) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// The diagnostics KV when a caller did not thread one: the app's
+// default KV (the same AsyncStorage-backed store the synced store
+// itself uses in production), memoized so node/test fallbacks share
+// one in-memory instance per process.
+let diagKvMemo: KV | null = null;
+function defaultDiagKv(): KV {
+  if (!diagKvMemo) diagKvMemo = getDefaultKV();
+  return diagKvMemo;
+}
+
+/**
+ * The alignment arm of a 42501-denied steps upsert: fresh-pull the
+ * stored stamps, surrender the rejected ones into the local model,
+ * retry the upsert exactly once. A failed pull, or a write with
+ * nothing surrenderable (a genuine non-stamp denial), rethrows the
+ * ORIGINAL error — the write fails exactly as it does today.
+ */
+async function alignStampsAndRetry(
+  client: Cloud,
+  escrow: Escrow,
+  saverUid: string,
+  kv: KV | undefined,
+  originalError: unknown,
+): Promise<void> {
+  let storedById: Map<string, { completed_by: string | null; created_by: string | null }>;
+  try {
+    const { data, error } = await client
+      .from('steps')
+      .select('id, completed_by, created_by')
+      .eq('escrow_id', escrow.id);
+    if (error) throw error;
+    storedById = new Map(
+      ((data ?? []) as Record<string, unknown>[]).map((r) => [
+        String(r.id),
+        {
+          completed_by: (r.completed_by as string | null) ?? null,
+          created_by: (r.created_by as string | null) ?? null,
+        },
+      ]),
+    );
+  } catch {
+    throw originalError;
+  }
+  const surrendered = alignStepStamps(escrow, storedById, saverUid);
+  if (surrendered.length === 0) throw originalError;
+  const diagKv = kv ?? defaultDiagKv();
+  const entry: Omit<StampAlignmentEntry, 'at'> = {
+    escrowId: escrow.id,
+    saverUid,
+    stepIds: [...new Set(surrendered.map((s) => s.stepId))],
+    surrendered,
+    retryOutcome: 'landed',
+  };
+  const retryRows = [
+    ...toStepRows(escrow.id, 'buyer', escrow.buyerSteps),
+    ...toStepRows(escrow.id, 'seller', escrow.sellerSteps),
+  ];
+  try {
+    await upsertAll(client, 'steps', retryRows, 'id');
+  } catch (retryError) {
+    await logStampAlignment(diagKv, { ...entry, retryOutcome: 'failed' });
+    throw retryError;
+  }
+  await logStampAlignment(diagKv, entry);
+}
+
 /** Push one escrow and ALL of its steps (both roles) — idempotent. */
-export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escrow): Promise<void> {
+export async function pushEscrowNow(
+  client: Cloud,
+  userId: string,
+  escrow: Escrow,
+  opts?: { kv?: KV },
+): Promise<void> {
   const row = toEscrowRow(userId, escrow);
   try {
     await upsertAll(client, 'escrows', [row], 'id');
@@ -1209,11 +1414,22 @@ export async function pushEscrowNow(client: Cloud, userId: string, escrow: Escro
     delete legacy.listed_price;
     await upsertAll(client, 'escrows', [legacy], 'id');
   }
-  await pushStepsNow(client, escrow);
+  await pushStepsNow(client, escrow, userId, opts);
 }
 
-/** Upsert the escrow's full step list (both sides), stamps included. */
-export async function pushStepsNow(client: Cloud, escrow: Escrow): Promise<void> {
+/**
+ * Upsert the escrow's full step list (both sides), stamps included.
+ * A 42501 denial of THIS upsert (and only this one) arms the
+ * stamp-alignment repair — see alignStampsAndRetry. The missing-column
+ * grace keeps its precedence: a pre-0044 database has no stamps to
+ * align, it just retries without them.
+ */
+export async function pushStepsNow(
+  client: Cloud,
+  escrow: Escrow,
+  saverUid?: string,
+  opts?: { kv?: KV },
+): Promise<void> {
   const steps = [
     ...toStepRows(escrow.id, 'buyer', escrow.buyerSteps),
     ...toStepRows(escrow.id, 'seller', escrow.sellerSteps),
@@ -1222,7 +1438,13 @@ export async function pushStepsNow(client: Cloud, escrow: Escrow): Promise<void>
     try {
       await upsertAll(client, 'steps', steps, 'id');
     } catch (e) {
-      if (!isMissingColumnError(e)) throw e;
+      if (!isMissingColumnError(e)) {
+        if (saverUid && isRlsDeniedError(e)) {
+          await alignStampsAndRetry(client, escrow, saverUid, opts?.kv, e);
+          return;
+        }
+        throw e;
+      }
       // Migration 0044 (Team Access actor stamps) not applied yet: retry
       // without completed_by/created_by so the push still lands; the
       // stamps stay local until the migration is applied.
@@ -1256,7 +1478,12 @@ export async function pushStepsNow(client: Cloud, escrow: Escrow): Promise<void>
  * full-list upsert as the owner path — migration 0046 lets a member
  * re-send teammates' unchanged stamps.
  */
-export async function pushEscrowAsMemberNow(client: Cloud, escrow: Escrow): Promise<void> {
+export async function pushEscrowAsMemberNow(
+  client: Cloud,
+  escrow: Escrow,
+  saverUid?: string,
+  opts?: { kv?: KV },
+): Promise<void> {
   const full = toEscrowRow('', escrow);
   const fields: Record<string, unknown> = { ...full };
   delete fields.id;
@@ -1295,7 +1522,7 @@ export async function pushEscrowAsMemberNow(client: Cloud, escrow: Escrow): Prom
     affected = await applyUpdate(legacy);
   }
   if (affected < 1) throw new SyncNotAppliedError('escrows', 1, affected);
-  await pushStepsNow(client, escrow);
+  await pushStepsNow(client, escrow, saverUid, opts);
 }
 
 /**
@@ -1308,11 +1535,12 @@ export async function pushEscrowForRole(
   client: Cloud,
   userId: string,
   escrow: Escrow,
+  opts?: { kv?: KV },
 ): Promise<void> {
   if (accessRoleOf(escrow) === 'owner') {
-    await pushEscrowNow(client, userId, escrow);
+    await pushEscrowNow(client, userId, escrow, opts);
   } else {
-    await pushEscrowAsMemberNow(client, escrow);
+    await pushEscrowAsMemberNow(client, escrow, userId, opts);
   }
 }
 
@@ -1778,12 +2006,26 @@ export async function pushInviteNow(
   throw lastError ?? new Error('pushInviteNow: exhausted code-regeneration attempts');
 }
 
-export async function pushRevokeNow(client: Cloud, inviteId: string, revokedAt: string): Promise<void> {
+export async function pushRevokeNow(
+  client: Cloud,
+  inviteId: string,
+  revokedAt: string,
+  opts?: { tolerateInvisible?: boolean },
+): Promise<void> {
   // RLS silent-no-op guard (Sept 2026): PostgREST can report success with
   // zero affected rows when an owner policy rejects the write, so a plain
   // { error } check would read the revocation as synced. Request the
   // affected row and verify it — a revocation that touched nothing must
   // surface as a failure, never as a silent success.
+  //
+  // opts.tolerateInvisible (per-call-site opt-in, used ONLY by the
+  // cancel/close revoke loop and the revoke-first site): a zero-row
+  // revoke distinguishes "denied" from "phantom" by server VISIBILITY —
+  // an invite the caller's own SELECT cannot see is a local-only
+  // artifact (or was deleted elsewhere), so its revoke is already true
+  // by any measure the server cares about and the caller proceeds; an
+  // invite that IS visible but whose PATCH landed nothing is a real
+  // denial and still throws. An errored visibility probe fails loud.
   const { data, error } = await client
     .from('invites')
     .update({ revoked_at: revokedAt })
@@ -1791,7 +2033,47 @@ export async function pushRevokeNow(client: Cloud, inviteId: string, revokedAt: 
     .select('id');
   if (error) throw error;
   const affected = Array.isArray(data) ? data.length : 0;
-  if (affected < 1) throw new SyncNotAppliedError('invites', 1, affected);
+  if (affected < 1) {
+    if (opts?.tolerateInvisible) {
+      const visible = await isInviteVisible(client, inviteId);
+      if (visible === false) return;
+    }
+    throw new SyncNotAppliedError('invites', 1, affected);
+  }
+}
+
+/**
+ * Whether the caller can see an invite row at all. Returns undefined
+ * when the probe itself errors — the caller must not treat an
+ * unanswered question as invisibility.
+ */
+async function isInviteVisible(client: Cloud, inviteId: string): Promise<boolean | undefined> {
+  const { data, error } = await client.from('invites').select('id').eq('id', inviteId);
+  if (error) return undefined;
+  return Array.isArray(data) && data.length > 0;
+}
+
+/**
+ * The server's own revoke list for a cancel/close: every invite of
+ * this escrow the server holds that is not already revoked, stamped
+ * with the write's revokedAt. `roles` scopes it for close (null =
+ * every role, for cancel). Built from a FRESH pull inside the
+ * confirmed write, BEFORE the status upsert: a local-only phantom
+ * invite (S8) never enters the list, and a failed pull throws so the
+ * write aborts with nothing landed. Returns entries ready for the
+ * revoke loop.
+ */
+export async function pullServerRevokeTargets(
+  client: Cloud,
+  escrowId: string,
+  roles: ClientRole[] | null,
+  revokedAt: string,
+): Promise<{ id: string; revokedAt: string }[]> {
+  const all = await pullFullInvitesNow(client, escrowId);
+  return all
+    .filter((inv) => !inv.revokedAt)
+    .filter((inv) => roles === null || roles.includes(inv.role))
+    .map((inv) => ({ id: inv.id, revokedAt }));
 }
 
 /** Best-effort pull of invite states (redeemed/revoked) for one escrow. */
@@ -2127,7 +2409,7 @@ async function drainOutboxLocked(
     try {
       if (op.op === 'pushEscrow' && op.escrowId) {
         const e = await load.getEscrow(op.escrowId);
-        if (e) await pushEscrowForRole(client, userId, e);
+        if (e) await pushEscrowForRole(client, userId, e, { kv });
       } else if (op.op === 'pushProfile') {
         const p = await load.getProfile();
         if (p) {

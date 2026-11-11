@@ -57,6 +57,7 @@ import {
   pingCloud,
   pullEscrowsNow,
   pullFullInvitesNow,
+  pullServerRevokeTargets,
   pullInvitesNow,
   pullProfileNow,
   pushEscrowForRole,
@@ -617,6 +618,8 @@ export function createSyncedStore(
    * permits the grant holder) into the same local escrow list as own
    * escrows. Merge-only, mirroring pullEscrowsFromCloud: local rows are
    * never deleted by a pull, and a failed read leaves state untouched.
+   * The merge (and the ended-grant prune) runs through the exclusive
+   * gate under the writeInflight / committedSeq guards (Nov 2026).
    * NEVER throws — team state is additive and must not block boot.
    */
   async function refreshTeam(): Promise<void> {
@@ -643,38 +646,68 @@ export function createSyncedStore(
         // Pending list keeps its last converged state.
       }
       try {
+        // Commit-seq snapshot BEFORE the fetch, mirroring
+        // pullEscrowsFromCloud: rows whose write commits after this
+        // point, or is still in flight, are skipped at merge time —
+        // the write's own confirmation is the last word on its row.
+        const seq0 = writeSeq;
         const escRes = await c.rpc('list_invited_escrows');
         if (!escRes.error) {
           const entries = mapInvitedEscrowEntries(escRes.data);
           const freshIds = new Set(entries.map((en) => String(en.escrowRow.id ?? '')));
-          if (entries.length > 0) {
+          {
             const ids = entries.map((en) => String(en.escrowRow.id ?? ''));
-            const stepsByEscrow = await pullStepsByEscrow(c, ids);
-            for (const entry of entries) {
+            const stepsByEscrow =
+              entries.length > 0 ? await pullStepsByEscrow(c, ids) : null;
+            const prepared = entries.map((entry) => {
               const escrow = fromEscrowRow(entry.escrowRow);
               const g = stepsByEscrow?.get(escrow.id);
               escrow.buyerSteps = g?.buyer ?? [];
               escrow.sellerSteps = g?.seller ?? [];
               const ownerUid =
                 typeof entry.escrowRow.user_id === 'string' ? entry.escrowRow.user_id : '';
-              if (ownerUid) escrowOwnerIds.set(escrow.id, ownerUid);
-              await local.replaceEscrow(decorateInvitedEscrow(escrow, entry));
-            }
-          }
-          // Prune (merge lead, Oct 2026): a grant that ended (removed /
-          // left) drops the local invited copy on the next successful
-          // converge — the server already denies access; the local list
-          // must not keep presenting the escrow as shared. Own escrows
-          // (accessRole 'owner' or unset) are never pruned here.
-          const localEscrows = await local.listEscrows();
-          for (const le of localEscrows) {
-            if (
-              (le.accessRole === 'associate' || le.accessRole === 'tc') &&
-              !freshIds.has(le.id)
-            ) {
-              await local.removeLocalEscrow(le.id);
-              escrowOwnerIds.delete(le.id);
-            }
+              return { entry, escrow, ownerUid };
+            });
+            // The merge itself runs through the exclusive gate with the
+            // same writeInflight / committedSeq guards as
+            // pullEscrowsFromCloud (Nov 2026): this used to call
+            // local.replaceEscrow bare, so a pull that fetched before a
+            // member write committed could merge stale rows over the
+            // fresh commit — the exact race the gate exists to close,
+            // and a live hazard once realtime fires refreshTeam on
+            // remote events while the local user is mid-write. The
+            // network fetches above stay OUTSIDE the gate; only the
+            // local mutation holds it.
+            await enqueueExclusive(async () => {
+              for (const { entry, escrow, ownerUid } of prepared) {
+                const key = `escrow:${escrow.id}`;
+                if (writeInflight.has(key)) continue;
+                if ((committedSeq.get(key) ?? 0) > seq0) continue;
+                if (ownerUid) escrowOwnerIds.set(escrow.id, ownerUid);
+                await local.replaceEscrow(decorateInvitedEscrow(escrow, entry));
+              }
+              // Prune (merge lead, Oct 2026): a grant that ended
+              // (removed / left) drops the local invited copy on the
+              // next successful converge — the server already denies
+              // access; the local list must not keep presenting the
+              // escrow as shared. Own escrows (accessRole 'owner' or
+              // unset) are never pruned here. Rows with a write in
+              // flight or just committed keep their copy this pass;
+              // the next converge prunes them.
+              const localEscrows = await local.listEscrows();
+              for (const le of localEscrows) {
+                if (
+                  (le.accessRole === 'associate' || le.accessRole === 'tc') &&
+                  !freshIds.has(le.id)
+                ) {
+                  const key = `escrow:${le.id}`;
+                  if (writeInflight.has(key)) continue;
+                  if ((committedSeq.get(key) ?? 0) > seq0) continue;
+                  await local.removeLocalEscrow(le.id);
+                  escrowOwnerIds.delete(le.id);
+                }
+              }
+            });
           }
         }
       } catch {
@@ -1364,7 +1397,7 @@ export function createSyncedStore(
         'escrow:new',
         () => local.previewCreateEscrow(input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1384,7 +1417,7 @@ export function createSyncedStore(
             (s) => s.id === stepId,
           );
           if (step) step.completedBy = step.done ? uid : null;
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1407,7 +1440,7 @@ export function createSyncedStore(
           for (const s of role === 'buyer' ? escrow.buyerSteps : escrow.sellerSteps) {
             if (s.custom && !beforeIds.has(s.id) && s.createdBy == null) s.createdBy = uid;
           }
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1417,7 +1450,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewReorderSteps(escrowId, role, orderedIds),
         async ({ c, uid }, escrow) => {
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1461,7 +1494,7 @@ export function createSyncedStore(
               s.completedBy = s.done ? uid : null;
             }
           }
-          await pushEscrowForRole(c, uid, candidate);
+          await pushEscrowForRole(c, uid, candidate, { kv });
           await deleteStepRowsNow(c, removedStepIds);
         },
       );
@@ -1473,7 +1506,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewUpdateTargetDate(escrowId, closeDate),
         async ({ c, uid }, escrow) => {
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1483,7 +1516,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewUpdateEscrow(escrowId, input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1493,7 +1526,7 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewActivateEscrow(escrowId, input),
         async ({ c, uid }, escrow) => {
-          await pushEscrowForRole(c, uid, escrow);
+          await pushEscrowForRole(c, uid, escrow, { kv });
         },
       );
     },
@@ -1516,9 +1549,21 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewCancelEscrow(escrowId),
         async ({ c, uid }, { escrow: e, revokedInvites }) => {
-          await pushEscrowForRole(c, uid, e);
-          for (const inv of revokedInvites) {
-            await pushRevokeNow(c, inv.id, inv.revokedAt);
+          // S8 (Nov 2026): the revoke list is built from the SERVER's
+          // invite list, pulled FIRST inside this confirmed write — a
+          // local-only phantom invite (one the server never saw) never
+          // enters the list, and a failed pull aborts the write with
+          // nothing landed. The local preview's revokedInvites still
+          // drive the local model commit; the server list drives only
+          // the server writes below.
+          const revokedAt = revokedInvites[0]?.revokedAt ?? new Date().toISOString();
+          const targets = await pullServerRevokeTargets(c, e.id, null, revokedAt);
+          await pushEscrowForRole(c, uid, e, { kv });
+          for (const inv of targets) {
+            // tolerateInvisible covers the residual race: an invite
+            // deleted between the pull and this PATCH proceeds instead
+            // of failing the cancel (a VISIBLE invite still throws).
+            await pushRevokeNow(c, inv.id, inv.revokedAt, { tolerateInvisible: true });
             // Zombie-link convergence, server-authoritative (Sept 28,
             // 2026): the redeem_invite RPC creates client_links rows
             // server-side, which this device never holds locally — the
@@ -1552,9 +1597,20 @@ export function createSyncedStore(
         `escrow:${escrowId}`,
         () => local.previewCloseEscrow(escrowId, role),
         async ({ c, uid }, { escrow: e, revokedInvites }) => {
-          await pushEscrowForRole(c, uid, e);
-          for (const inv of revokedInvites) {
-            await pushRevokeNow(c, inv.id, inv.revokedAt);
+          // S8 (Nov 2026): identical construction to cancel — the
+          // revoke list is the SERVER's invite list (fresh pull first,
+          // a failed pull aborts with nothing landed), scoped to the
+          // roles this close kills: the closed side always, plus 'tc'
+          // when this close takes the escrow fully closed (mirrors
+          // computeCloseEscrow's derivation from the post-close
+          // status).
+          const revokedAt = revokedInvites[0]?.revokedAt ?? new Date().toISOString();
+          const rolesToKill: ClientRole[] = [role];
+          if (e.status === 'closed') rolesToKill.push('tc');
+          const targets = await pullServerRevokeTargets(c, e.id, rolesToKill, revokedAt);
+          await pushEscrowForRole(c, uid, e, { kv });
+          for (const inv of targets) {
+            await pushRevokeNow(c, inv.id, inv.revokedAt, { tolerateInvisible: true });
             await convergeInviteLinkRevokesNow(c, inv.id, inv.revokedAt);
           }
         },
@@ -1651,7 +1707,11 @@ export function createSyncedStore(
         async ({ c }, _result, snapshot) => {
           const inv = snapshot.invites.find((i) => i.id === inviteId);
           const revokedAt = inv?.revokedAt ?? new Date().toISOString();
-          await pushRevokeNow(c, inviteId, revokedAt);
+          // Revoke-first opt-in (S8, Nov 2026): this revoke gates the
+          // regenerate/revoke flow, so a phantom invite (invisible to
+          // the server) proceeds to the link convergence instead of
+          // wedging it; a visible invite's denial still throws.
+          await pushRevokeNow(c, inviteId, revokedAt, { tolerateInvisible: true });
           await convergeInviteLinkRevokesNow(c, inviteId, revokedAt);
         },
       );

@@ -160,7 +160,12 @@ export interface AuthClientLike {
       scope?: 'local' | 'global' | 'others';
     }): Promise<{ error?: { message?: string } | null }>;
     getSession(): Promise<{
-      data: { session?: { user?: { id?: string; email?: string } } | null };
+      data: {
+        session?: {
+          access_token?: string;
+          user?: { id?: string; email?: string };
+        } | null;
+      };
     }>;
     updateUser(args: {
       password: string;
@@ -180,7 +185,20 @@ export interface AuthServiceDeps {
   getClient: () => AuthClientLike | null;
   kv: KV;
   platform: PlatformKind;
+  /**
+   * Account deletion transport (Stream 4, Nov 2026). Injectable so
+   * unit tests can pin the exact request; production defaults read
+   * the public Supabase config and the platform fetch.
+   */
+  fetchFn?: (
+    url: string,
+    init: { method: string; headers: Record<string, string>; body: string },
+  ) => Promise<{ status: number; json: () => Promise<unknown> }>;
+  supabaseUrl?: string;
+  anonKey?: string;
 }
+
+declare const process: { env: Record<string, string | undefined> };
 
 export type RoleChoice = 'realtor' | 'client';
 
@@ -193,6 +211,18 @@ export type SignInResult =
   | { ok: false; code: SignInErrorCode };
 
 export type ResetResult = { ok: true } | { ok: false; code: 'network' | 'unconfigured' };
+
+/**
+ * Account deletion (Stream 4, Nov 2026). 'deleted' = the auth user is
+ * gone; 'husk' = the data transaction committed but the auth user
+ * could not be deleted, so the sign-in still exists with no data.
+ */
+export type DeleteAccountResult =
+  | { ok: true; outcome: 'deleted' | 'husk' }
+  | {
+      ok: false;
+      code: 'wrong_password' | 'network' | 'unconfigured' | 'no_session' | 'unknown';
+    };
 
 export type ResendResult =
   | { ok: true }
@@ -377,6 +407,13 @@ const K_CLIENT_LINK = 'ctc:clientlink';
 const K_CLIENT_LINKS = 'ctc:clientlinks';
 const K_PROFILE_SKIPPED = 'ctc:profileskipped';
 const K_PENDING_NAME = 'ctc:pendingname';
+/**
+ * Husk marker (Stream 4): set when a deletion's data commit succeeded
+ * but the auth user survived. The root layout compares it against the
+ * signed-in uid so that user lands on the complete-deletion offer,
+ * not profile creation. Deliberately NOT cleared by signOut.
+ */
+const K_DELETION_HUSK = 'ctc:deletion-husk';
 const K_EXISTING_ACCOUNT_NOTICE = 'ctc:existingaccountnotice';
 const K_HAS_ACCOUNT = 'ctc:hasaccount';
 const K_CELEBRATION_SEEN = 'ctc:celebrationseen';
@@ -1039,6 +1076,92 @@ export function createAuthService(deps: AuthServiceDeps) {
         await kv.removeItem(K_CLIENT_LINKS);
       } catch {
         // never throw from sign-out cleanup
+      }
+    },
+
+    /**
+     * Account deletion (Stream 4, Nov 2026): POST the caller's
+     * password (and nothing else) to the delete-account Edge
+     * Function with the current session's access token. The function
+     * derives identity from the token alone, re-verifies the
+     * password server-side, revokes sessions, removes storage, runs
+     * the data transaction, and deletes the auth user last.
+     *
+     * Outcomes: 'deleted' — fully gone. 'husk' — data gone, auth
+     * user survived; the uid is marked locally so a later sign-in
+     * lands on the complete-deletion offer. Failures map like the
+     * other auth calls: wrong password, network, unconfigured
+     * (cloud off / no URL or key / no fetch), no session, unknown.
+     */
+    async deleteAccount(password: string): Promise<DeleteAccountResult> {
+      const client = deps.getClient();
+      if (!client) return { ok: false, code: 'unconfigured' };
+      let accessToken: string | null = null;
+      let userId: string | null = null;
+      try {
+        const { data } = await client.auth.getSession();
+        accessToken = data?.session?.access_token ?? null;
+        userId = data?.session?.user?.id ?? null;
+      } catch {
+        return { ok: false, code: 'network' };
+      }
+      if (!accessToken || !userId) return { ok: false, code: 'no_session' };
+      const supabaseUrl =
+        deps.supabaseUrl ?? process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+      const anonKey = deps.anonKey ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+      if (!supabaseUrl || !anonKey) return { ok: false, code: 'unconfigured' };
+      const fetchFn =
+        deps.fetchFn ??
+        (typeof fetch !== 'undefined'
+          ? (fetch as AuthServiceDeps['fetchFn'])
+          : undefined);
+      if (!fetchFn) return { ok: false, code: 'unconfigured' };
+      let res: { status: number; json: () => Promise<unknown> };
+      try {
+        res = await fetchFn(`${supabaseUrl}/functions/v1/delete-account`, {
+          method: 'POST',
+          headers: {
+            apikey: anonKey,
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password }),
+        });
+      } catch {
+        return { ok: false, code: 'network' };
+      }
+      let body: { ok?: boolean; outcome?: string; error?: string } | null = null;
+      try {
+        body = (await res.json()) as { ok?: boolean; outcome?: string; error?: string };
+      } catch {
+        body = null;
+      }
+      if (body?.ok === true && (body.outcome === 'deleted' || body.outcome === 'husk')) {
+        try {
+          if (body.outcome === 'husk') {
+            await kv.setItem(K_DELETION_HUSK, userId);
+          } else {
+            await kv.removeItem(K_DELETION_HUSK);
+          }
+        } catch {
+          // The marker is best-effort; the outcome itself is real.
+        }
+        return { ok: true, outcome: body.outcome };
+      }
+      if (body?.error === 'wrong_password') return { ok: false, code: 'wrong_password' };
+      return { ok: false, code: 'unknown' };
+    },
+
+    /**
+     * The uid whose deletion ended as a husk on this device (data
+     * gone, sign-in alive), or null. The root layout compares it to
+     * the signed-in uid at boot.
+     */
+    async getDeletionHuskUserId(): Promise<string | null> {
+      try {
+        return await kv.getItem(K_DELETION_HUSK);
+      } catch {
+        return null;
       }
     },
   };

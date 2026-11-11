@@ -64,6 +64,18 @@ export interface MockServer {
    */
   failStepDelete: boolean;
   /**
+   * Test-only failure injection: when true, any invites select throws,
+   * simulating a failed server pull. Lets tests prove cancel aborts
+   * with nothing landed (S8, Nov 2026).
+   */
+  failInvitesSelect: boolean;
+  /**
+   * The uid the mock session acts as (the auth stub reports 'user-1').
+   * The steps upsert enforces migration 0046's step_stamps_allowed
+   * against this uid, like the real RLS policies evaluate auth.uid().
+   */
+  sessionUid: string;
+  /**
    * Test-seeded rows returned by select() for tables the mock does not
    * otherwise model (e.g. 'escrows' for pull-heal tests). The rows are
    * returned verbatim (the test shapes them like real server rows).
@@ -104,6 +116,9 @@ export function createMockServer(): MockServer {
   const upsertLog: { table: string; rows: unknown }[] = [];
 
   function select(table: string, filters: Filter[]): { data: unknown; error: unknown } {
+    if (table === 'invites' && server.failInvitesSelect) {
+      throw new Error('injected invites select failure');
+    }
     if (table === 'client_links') {
       if (server.failLinkSelect) throw new Error('injected client_links select failure');
       let rows = [...links.values()];
@@ -115,9 +130,39 @@ export function createMockServer(): MockServer {
       return { data: rows.map((r) => ({ id: r.id })), error: null };
     }
     // Invites pull, realtor_profiles probe, etc.: nothing seeded server-side
-    // unless the test put rows in seedRows.
+    // unless the test put rows in seedRows. Seeded rows keep precedence
+    // (tests shape them verbatim); the modeled tables answer from their
+    // maps otherwise.
     const seeded = server.seedRows[table];
     if (seeded) return { data: seeded.map((r) => ({ ...(r as Record<string, unknown>) })), error: null };
+    if (table === 'invites') {
+      let rows = [...invites.values()];
+      for (const f of filters) {
+        if (f.op !== 'eq') continue;
+        if (f.col === 'escrow_id') rows = rows.filter((r) => r.escrowId === f.val);
+        if (f.col === 'id') rows = rows.filter((r) => r.id === f.val);
+      }
+      return {
+        data: rows.map((r) => ({
+          id: r.id,
+          code: r.code,
+          escrow_id: r.escrowId,
+          role: r.role,
+          party_name: '',
+          created_at: '2026-09-25T00:00:00Z',
+          revoked_at: r.revokedAt,
+          redeemed_at: null,
+        })),
+        error: null,
+      };
+    }
+    if (table === 'steps') {
+      let rows = [...steps.values()];
+      for (const f of filters) {
+        if (f.op === 'eq' && f.col === 'escrow_id') rows = rows.filter((r) => r.escrow_id === f.val);
+      }
+      return { data: rows.map((r) => ({ ...r })), error: null };
+    }
     return { data: [], error: null };
   }
 
@@ -148,6 +193,32 @@ export function createMockServer(): MockServer {
     const arr = (Array.isArray(rows) ? rows : [rows]) as Record<string, unknown>[];
     upsertLog.push({ table, rows });
     if (table === 'steps') {
+      // Migration 0046 (step_stamps_allowed), enforced like the real
+      // steps_insert/steps_update policies: a stamp passes iff it is
+      // null, equal to the stored value, or the session uid while the
+      // stored value is null/the session's. One violation denies the
+      // WHOLE statement (42501), applying nothing — the production
+      // failure the stamp-alignment repair exists to heal.
+      const stampAllowed = (local: unknown, stored: unknown): boolean => {
+        if (local == null) return true;
+        if (stored != null && local === stored) return true;
+        return local === server.sessionUid && (stored == null || stored === server.sessionUid);
+      };
+      for (const r of arr) {
+        const cur = steps.get(String(r.id));
+        if (
+          !stampAllowed(r.completed_by ?? null, cur?.completed_by ?? null) ||
+          !stampAllowed(r.created_by ?? null, cur?.created_by ?? null)
+        ) {
+          return {
+            data: null,
+            error: {
+              code: '42501',
+              message: 'new row violates row-level security policy for table "steps"',
+            },
+          };
+        }
+      }
       for (const r of arr) steps.set(String(r.id), { ...r });
     }
     if (table === 'invites') {
@@ -305,6 +376,8 @@ export function createMockServer(): MockServer {
     pushedLinkRevocations,
     failLinkSelect: false,
     failStepDelete: false,
+    failInvitesSelect: false,
+    sessionUid: 'user-1',
     seedRows: {},
     upsertLog,
     pushTokens: new Map<string, { deviceId: string; linkId: string; token: string }>(),
