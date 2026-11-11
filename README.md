@@ -132,7 +132,12 @@ central user; the buyers and sellers they represent are the other parties.
   checks, unchecks, or adds a step (tap opens the escrow's detail
   screen directly — the checklist view, not the Activity timeline;
   Nov 10, 2026) — all through the
-  existing outbox with per-token quiet hours. Removing a member ends
+  existing outbox with per-token quiet hours. Screens a push can land
+  on directly (escrow detail, activity) route their back controls
+  through a guarded fallback: back when a navigation stack exists,
+  otherwise replace to the control's own target (the deal list; the
+  escrow itself for Activity's Details) — a push entry never
+  dead-ends. Removing a member ends
   their access immediately; seats are enforced in the database (one
   active-or-pending grant per role per escrow).
 - **Top safe area (Nov 10, 2026)** — every screen's top content clears

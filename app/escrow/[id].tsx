@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Svg, { Path } from 'react-native-svg';
 import { store } from '../../src/lib/store-instance';
+import { backFallbackAction } from '../../src/lib/push';
 import type { ChecklistDraftStep, ClientRole, Escrow, StepT } from '../../src/lib/types';
 import { uid } from '../../src/lib/store';
 import {
@@ -202,6 +203,20 @@ function BuyerIntakeEntryRow({
 
 export function TransactionDetail() {
   const router = useRouter();
+  // Back navigation (Nov 10, 2026): this screen is the primary push
+  // landing (PushGate replaces into it), so on a push entry there is
+  // no back stack and a bare router.back() dead-ends. goBackOr backs
+  // when a stack exists (in-app behavior unchanged) and otherwise
+  // replaces to the control's target — the deal list for this
+  // screen's back controls.
+  const goBackOr = useCallback(
+    (fallbackHref: string) => {
+      const action = backFallbackAction(router.canGoBack(), fallbackHref);
+      if (action.type === 'back') router.back();
+      else router.replace(action.href as never);
+    },
+    [router],
+  );
   // iOS (Sept 2026): the back button rendered under the status bar and was
   // effectively untappable. Clear the safe-area inset plus a deliberate gap
   // (the existing 14) so the whole header sits below the notch.
@@ -448,7 +463,7 @@ export function TransactionDetail() {
       <View style={styles.center}>
         <Text style={styles.centerText}>Escrow not found</Text>
         <View style={styles.centerBtn}>
-          <SecondaryButton title="Back to escrows" onPress={() => router.back()} />
+          <SecondaryButton title="Back to escrows" onPress={() => goBackOr('/')} />
         </View>
       </View>
     );
@@ -914,7 +929,7 @@ export function TransactionDetail() {
     <GestureHandlerRootView style={[styles.screen, { paddingBottom: kbHeight }]}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => goBackOr('/')}
           hitSlop={8}
           style={styles.backBtn}
           accessibilityRole="button"
@@ -1587,7 +1602,14 @@ export default function EscrowDetailRoute() {
     <ScreenErrorBoundary
       title="Escrow"
       actionLabel="Back to escrows"
-      onAction={() => router.back()}
+      onAction={() => {
+        // Same guarded navigation as the screen itself (Nov 10,
+        // 2026): a crash landing reached via a push replace has no
+        // back stack, so fall back to the deal list.
+        const action = backFallbackAction(router.canGoBack(), '/');
+        if (action.type === 'back') router.back();
+        else router.replace(action.href as never);
+      }}
     >
       <TransactionDetail />
     </ScreenErrorBoundary>
