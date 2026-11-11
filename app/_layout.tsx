@@ -21,7 +21,7 @@ import { StatusBar } from 'expo-status-bar';
 import { auth, parseRecoveryLink, takeExpectSignOut } from '../src/lib/auth';
 import { resolveBootHref, resolvePostAuthHref } from '../src/lib/bootRoute';
 import { initCloudSync, store } from '../src/lib/store-instance';
-import { unregisterPushTokenForLink } from '../src/lib/push';
+import { registerRealtorPushToken, unregisterPushTokenForLink } from '../src/lib/push';
 import { PushGate } from '../src/components/PushGate';
 import { refreshClientAppLink } from '../src/lib/appConfig';
 import { SyncErrorBar } from '../src/components/SyncErrorBar';
@@ -202,6 +202,13 @@ export default function RootLayout() {
         // incident, Oct 21, 2026). Idempotent with the screens' own
         // init calls.
         void initCloudSync().catch(() => {});
+        // Realtor push registration (Nov 10, 2026): PushGate's bootstrap
+        // ran at mount — on a fresh install that is BEFORE sign-in — so
+        // registration must re-run when a session lands, or the device
+        // stays tokenless until the next cold launch (the member-push
+        // incident). Same self-guards as the bootstrap call; the RPC
+        // upserts per device, so repeats are idempotent.
+        void registerRealtorPushToken().catch(() => false);
         return;
       }
       if (event !== 'SIGNED_OUT') return;

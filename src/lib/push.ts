@@ -45,6 +45,21 @@ let supabaseOverride: any | undefined;
 export function __setSupabaseForTests(c: any | null): void {
   supabaseOverride = c;
 }
+// Test seams for the registration-outcome test (Nov 10, 2026): the
+// session lookup and the EAS project id are environment reads in
+// production. `undefined` = no override.
+let sessionUserIdOverride: (() => Promise<string | null>) | undefined;
+/** Test seam: override the signed-in user lookup. */
+export function __setSessionUserIdForTests(
+  fn: (() => Promise<string | null>) | undefined,
+): void {
+  sessionUserIdOverride = fn;
+}
+let expoProjectIdOverride: string | null | undefined;
+/** Test seam: override the Expo project id (null = simulate missing). */
+export function __setExpoProjectIdForTests(id: string | null | undefined): void {
+  expoProjectIdOverride = id;
+}
 /** Test-seam-aware client getter (production: the real Supabase client). */
 function getClient(): any | null {
   if (supabaseOverride !== undefined) return supabaseOverride;
@@ -179,6 +194,30 @@ export function shouldShowRealtorPrePrompt(args: {
     !args.asked &&
     args.permission === 'undetermined'
   );
+}
+
+/**
+ * Back-control decision for screens that are normally reached by an
+ * in-app PUSH but can also be a push-notification LANDING (Nov 10,
+ * 2026): PushGate routes taps with router.replace, so a landing has
+ * NO back stack beneath it (cold start: the landing is the only
+ * route; warm start: replace swapped the current screen out) and a
+ * bare router.back() is a dead control — the activity screen's
+ * "Details" button on a member-activity push entry. The decision:
+ * go back when a back stack exists (in-app behavior unchanged), else
+ * REPLACE to the control's own target so the stack is constructed
+ * (landing -> target, system back from there behaves exactly like
+ * any other cold-entered screen).
+ */
+export type BackFallbackAction =
+  | { type: 'back' }
+  | { type: 'replace'; href: string };
+
+export function backFallbackAction(
+  canGoBack: boolean,
+  fallbackHref: string,
+): BackFallbackAction {
+  return canGoBack ? { type: 'back' } : { type: 'replace', href: fallbackHref };
 }
 
 /**
@@ -446,27 +485,105 @@ export async function getRealtorUnregisterPending(
 }
 
 /**
+ * Realtor push registration outcomes (Nov 10, 2026): every registration
+ * attempt records its outcome here — registered, skipped (with the
+ * guard that stopped it), or failed (with the error) — in a bounded KV
+ * ring buffer, mirroring the conflict log's diagnostics pattern
+ * (cloudSync logConflict). INTERNAL only: no UI reads this; it exists
+ * so a silent no-token state is diagnosable instead of invisible (the
+ * member-activity push incident: registration had only ever fired at
+ * PushGate bootstrap, and every failure was swallowed by a catch).
+ * Best-effort: recording never throws and never blocks registration.
+ */
+export interface RealtorPushRegistrationRecord {
+  at: string;
+  status: 'registered' | 'skipped' | 'failed';
+  /** For status 'skipped': which guard stopped the attempt. */
+  reason?: string;
+  /** For status 'failed': the error text. */
+  error?: string;
+}
+
+const K_PUSH_REGISTRATION_LOG = 'ctc:push-registration-log';
+const MAX_PUSH_REGISTRATION_LOG = 50;
+
+// One memoized backend for the log: getDefaultKV() hands back a fresh
+// in-memory store per call outside native, which would scatter the
+// ring across instances; on device every handle wraps the same
+// AsyncStorage, so memoizing is behavior-identical there.
+let registrationLogKv: KV | null = null;
+function getRegistrationLogKv(): KV {
+  if (!registrationLogKv) registrationLogKv = getDefaultKV();
+  return registrationLogKv;
+}
+
+async function recordRealtorPushRegistration(
+  rec: Omit<RealtorPushRegistrationRecord, 'at'>,
+): Promise<void> {
+  try {
+    const kv = getRegistrationLogKv();
+    const raw = await kv.getItem(K_PUSH_REGISTRATION_LOG);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    const list: RealtorPushRegistrationRecord[] = Array.isArray(parsed) ? parsed : [];
+    list.push({ ...rec, at: new Date().toISOString() });
+    while (list.length > MAX_PUSH_REGISTRATION_LOG) list.shift();
+    await kv.setItem(K_PUSH_REGISTRATION_LOG, JSON.stringify(list));
+  } catch {
+    // Diagnostics only — never break registration.
+  }
+}
+
+/** Read the realtor push registration log (newest last). */
+export async function readRealtorPushRegistrationLog(): Promise<
+  RealtorPushRegistrationRecord[]
+> {
+  try {
+    const raw = await getRegistrationLogKv().getItem(K_PUSH_REGISTRATION_LOG);
+    const parsed: unknown = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Register this device's Expo token for the signed-in realtor (no-op when
  * signed out, on web, or while permission is not granted). Returns true
- * when the server holds a live user-bound row for this device.
+ * when the server holds a live user-bound row for this device. Every
+ * attempt's outcome is recorded (see RealtorPushRegistrationRecord).
  */
 export async function registerRealtorPushToken(): Promise<boolean> {
+  const finish = async (
+    ok: boolean,
+    rec: Omit<RealtorPushRegistrationRecord, 'at'>,
+  ): Promise<boolean> => {
+    await recordRealtorPushRegistration(rec);
+    return ok;
+  };
   const N = loadNotifications();
-  if (!N) return false;
+  if (!N) return finish(false, { status: 'skipped', reason: 'no-notifications-module' });
   try {
-    if ((await getPushPermission()) !== 'granted') return false;
-    if ((await auth.getSessionUserId()) === null) return false;
-    const projectId = getExpoProjectId();
+    if ((await getPushPermission()) !== 'granted') {
+      return finish(false, { status: 'skipped', reason: 'permission-not-granted' });
+    }
+    const sessionUserId = sessionUserIdOverride
+      ? await sessionUserIdOverride()
+      : await auth.getSessionUserId();
+    if (sessionUserId === null) {
+      return finish(false, { status: 'skipped', reason: 'signed-out' });
+    }
+    const projectId =
+      expoProjectIdOverride !== undefined ? expoProjectIdOverride : getExpoProjectId();
     if (!projectId) {
       console.warn('[push] missing EAS projectId: realtor token registration skipped');
-      return false;
+      return finish(false, { status: 'skipped', reason: 'no-project-id' });
     }
     const tokenResp = await N.getExpoPushTokenAsync({ projectId });
     const token = tokenResp?.data;
-    if (!token) return false;
+    if (!token) return finish(false, { status: 'skipped', reason: 'no-token' });
     const deviceId = await auth.getDeviceId();
-    const client = getSupabase();
-    if (!client) return false;
+    const client = getClient();
+    if (!client) return finish(false, { status: 'skipped', reason: 'no-client' });
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     // Distinct authenticated function (0038 v2, auditor: never an
     // overload of the client register_push_token).
@@ -475,9 +592,21 @@ export async function registerRealtorPushToken(): Promise<boolean> {
       p_token: token,
       p_timezone: timeZone,
     });
-    return !error && (data as { ok?: boolean } | null)?.ok === true;
-  } catch {
-    return false;
+    if (error) {
+      return finish(false, {
+        status: 'failed',
+        error: (error as { message?: string })?.message ?? String(error),
+      });
+    }
+    if ((data as { ok?: boolean } | null)?.ok !== true) {
+      return finish(false, {
+        status: 'failed',
+        error: 'register_push_token_for_user returned not-ok',
+      });
+    }
+    return finish(true, { status: 'registered' });
+  } catch (err) {
+    return finish(false, { status: 'failed', error: String(err) });
   }
 }
 

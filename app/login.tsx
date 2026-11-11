@@ -14,6 +14,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth, type SignInErrorCode } from '../src/lib/auth';
 import { initCloudSync, store } from '../src/lib/store-instance';
+import { registerRealtorPushToken } from '../src/lib/push';
 import { resolvePostAuthHref } from '../src/lib/bootRoute';
 import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
@@ -56,6 +57,12 @@ export default function Login() {
       } catch {
         // Sync retries on boot.
       }
+      // Realtor push registration (Nov 10, 2026): register this device
+      // for the just-signed-in realtor now — PushGate's bootstrap ran
+      // while signed out, and without this the token waits for the next
+      // cold launch. Fire-and-forget; the call self-guards (native,
+      // permission granted) and never throws.
+      void registerRealtorPushToken().catch(() => false);
       // Mid-onboarding resume: a step-1-only account (no profile, never
       // skipped) lands on profile creation, not the deal list. The profile
       // is pulled from the cloud when the local store is missing it (login

@@ -75,8 +75,10 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/latest.test.ts" \
   "$ROOT/tests/lifecycle.test.ts" \
   "$ROOT/tests/cloudsync.test.ts" \
+  "$ROOT/tests/activity_back_fallback.test.ts" \
   "$ROOT/tests/member_push.test.ts" \
   "$ROOT/tests/push.test.ts" \
+  "$ROOT/tests/push_registration.test.ts" \
   "$ROOT/tests/push_coalesce_quiet.test.ts" \
   "$ROOT/tests/auth.test.ts" \
   "$ROOT/tests/auth_copy.test.ts" \
@@ -204,8 +206,10 @@ node "$OUT/tests/team_push_drain.test.js"
 # Pinned TZ so the calendar-day relative-time buckets are deterministic.
 TZ="America/Los_Angeles" node "$OUT/tests/latest.test.js"
 node "$OUT/tests/cloudsync.test.js"
+node "$OUT/tests/activity_back_fallback.test.js"
 node "$OUT/tests/member_push.test.js"
 node "$OUT/tests/push.test.js"
+node "$OUT/tests/push_registration.test.js"
 node "$OUT/tests/push_coalesce_quiet.test.js"
 node "$OUT/tests/lifecycle.test.js"
 node "$OUT/tests/auth.test.js"

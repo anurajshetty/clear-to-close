@@ -11,6 +11,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
+import { backFallbackAction } from '../../src/lib/push';
 import type { Escrow } from '../../src/lib/types';
 import type { TeamActivityEntry } from '../../src/lib/teamModel';
 import {
@@ -50,6 +51,23 @@ export default function EscrowActivity() {
     }
   }, [escrowId]);
 
+  // Back controls (Nov 10, 2026): in-app this screen is PUSHED from
+  // the escrow detail, so back pops to it. Entered from a push tap,
+  // PushGate REPLACED the current route — there is no stack beneath
+  // and a bare router.back() dead-ends. backFallbackAction decides:
+  // back when a stack exists, else replace to the control's target
+  // (Details -> this escrow's detail screen; Back to escrows -> the
+  // deal list).
+  const goBackOr = useCallback(
+    (fallbackHref: string) => {
+      const action = backFallbackAction(router.canGoBack(), fallbackHref);
+      // Dynamic route built from the escrow id.
+      if (action.type === 'back') router.back();
+      else router.replace(action.href as never);
+    },
+    [router],
+  );
+
   useFocusEffect(
     useCallback(() => {
       refresh();
@@ -69,7 +87,7 @@ export default function EscrowActivity() {
       <View style={styles.center}>
         <Text style={styles.centerText}>Escrow not found</Text>
         <View style={styles.centerBtn}>
-          <SecondaryButton title="Back to escrows" onPress={() => router.back()} />
+          <SecondaryButton title="Back to escrows" onPress={() => goBackOr('/')} />
         </View>
       </View>
     );
@@ -82,7 +100,7 @@ export default function EscrowActivity() {
     <View style={styles.screen}>
       <View style={[styles.header, { paddingTop: insets.top + 14 }]}>
         <View style={styles.backBtn}>
-          <BackChevron label="Details" onPress={() => router.back()} />
+          <BackChevron label="Details" onPress={() => goBackOr(`/escrow/${escrowId}`)} />
         </View>
         <Text style={styles.title}>Activity</Text>
         <Text style={styles.subtitle} numberOfLines={1}>

@@ -130,7 +130,11 @@ central user; the buyers and sellers they represent are the other parties.
   "your realtor"). Pushes: the invitee is notified on invite, the owner
   on acceptance, and the owner gets a coalesced summary when an Associate
   checks, unchecks, or adds a step (tap opens Activity) — all through the
-  existing outbox with per-token quiet hours. Removing a member ends
+  existing outbox with per-token quiet hours. Entered from a push, the
+  Activity screen's **Details** control opens the escrow's detail
+  screen (a push landing has no back stack, so the control constructs
+  the route instead of going back); entered in-app it goes back as
+  before. Removing a member ends
   their access immediately; seats are enforced in the database (one
   active-or-pending grant per role per escrow).
 - **Transaction detail** — per-escrow home with:
@@ -623,7 +627,11 @@ central user; the buyers and sellers they represent are the other parties.
   derived from the session server-side; sign-out unregisters the device,
   and a password change prunes the realtor's other devices' tokens).
   Registration only in P0 — the first realtor pushes arrive with P1,
-  below.
+  below. Registration re-runs on every cold launch AND whenever a
+  session lands (sign-in), so a fresh install that signs in after the
+  app's first launch is registered immediately, not at the next launch;
+  every attempt's outcome (registered / skipped / failed, with the
+  reason) is recorded in an internal diagnostics log.
   **Side-aware targeting (P0, Oct 15, 2026)**: pushes no longer blast
   every client device on an escrow. A step check-off goes to the devices
   of that step's side plus the TC's devices (migration
