@@ -56,17 +56,42 @@ assert(
   'the field box is a Pressable whose onPress toggles open/closed',
 );
 
-// 3. The calendar renders ONLY when open — never unconditionally.
+// 3. The calendar renders ONLY when open — never unconditionally. Since
+// the date-picker styling fix (Nov 10, 2026) the picker renders inside
+// the bordered pickerCard View, still directly under the open guard.
 assert(
-  /\{open\s*&&\s*\(\s*<DateTimePicker/.test(src),
-  'DateTimePicker renders only when open ({open && ...}), never unconditionally',
+  /\{open\s*&&\s*\(\s*<View\s+style=\{styles\.pickerCard\}>[\s\S]*?<DateTimePicker/.test(src),
+  'DateTimePicker renders only when open, inside the pickerCard ({open && ...}), never unconditionally',
 );
 assert(
   !/(?:^|\n)\s*<DateTimePicker(?![\s\S]*?\{open)/.test(
-    src.replace(/\{open\s*&&\s*\(\s*<DateTimePicker[\s\S]*?\/>\s*\)\}/, ''),
+    src.replace(/\{open\s*&&\s*\(\s*<View style=\{styles\.pickerCard\}>[\s\S]*?<\/View>\s*\)\}/, ''),
   ),
   'no second unconditional DateTimePicker remains outside the open guard',
 );
+
+// 3b. Styling fix (Nov 10, 2026, approved mockup): the picker takes the
+// app palette instead of stock iOS blue, and sits in the bordered card.
+assert(
+  /accentColor=\{colors\.accent\}/.test(src),
+  'the picker renders with accentColor = colors.accent (accent arrows + selected-day circle)',
+);
+assert(
+  /themeVariant="light"/.test(src),
+  'the picker renders with themeVariant light (ink day numbers on the light sheet)',
+);
+assert(
+  /display=\{Platform\.OS === 'ios' \? 'inline' : 'default'\}/.test(src),
+  "display stays inline on iOS and 'default' on Android (interaction unchanged)",
+);
+const cardMatch = /pickerCard:\s*\{([^}]*)\}/.exec(src);
+assert(cardMatch !== null, 'a pickerCard style exists for the open calendar');
+const card = cardMatch ? cardMatch[1] : '';
+assert(/backgroundColor:\s*colors\.card/.test(card), 'pickerCard is white (colors.card)');
+assert(/borderWidth:\s*1\.5/.test(card), 'pickerCard border is 1.5px');
+assert(/borderColor:\s*colors\.line/.test(card), 'pickerCard border uses colors.line');
+assert(/borderRadius:\s*14/.test(card), 'pickerCard radius is 14');
+assert(/marginTop:\s*10/.test(card), 'pickerCard sits 10px under its field');
 
 // 4. Picking a date collapses the calendar (iOS path).
 assert(

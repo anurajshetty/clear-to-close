@@ -120,16 +120,26 @@ export default function DateField({ label, value, onChange, onClear, autoFilled,
           </Pressable>
         )}
       </View>
+      {/* Styling fix (Nov 10, 2026, approved mockup): the calendar sits
+          in a bordered card directly under its field and renders with
+          the app palette instead of stock iOS blue (accent arrows and
+          selected-day circle, ink day numbers via themeVariant light).
+          Interaction is unchanged: tap field toggles, a picked day
+          commits and collapses. */}
       {open && (
-        <DateTimePicker
-          value={selected ?? new Date()}
-          mode="date"
-          // iOS renders the calendar inline in the layout (never a popup).
-          // Android has no inline mode; "default" is the platform-standard
-          // dialog (not the broken overlapping web popup).
-          display={Platform.OS === 'ios' ? 'inline' : 'default'}
-          onChange={onPick}
-        />
+        <View style={styles.pickerCard}>
+          <DateTimePicker
+            value={selected ?? new Date()}
+            mode="date"
+            // iOS renders the calendar inline in the layout (never a popup).
+            // Android has no inline mode; "default" is the platform-standard
+            // dialog (not the broken overlapping web popup).
+            display={Platform.OS === 'ios' ? 'inline' : 'default'}
+            onChange={onPick}
+            accentColor={colors.accent}
+            themeVariant="light"
+          />
+        </View>
       )}
     </View>
   );
@@ -171,4 +181,17 @@ const styles = StyleSheet.create({
   },
   boxText: { fontSize: 15, color: colors.ink },
   boxPlaceholder: { color: colors.muted },
+  // The open calendar's card (Nov 10, 2026, approved mockup .calcard):
+  // white surface, line border, radius 14, small padding, 10px under
+  // the field it belongs to.
+  pickerCard: {
+    backgroundColor: colors.card,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    borderRadius: 14,
+    paddingTop: 12,
+    paddingHorizontal: 10,
+    paddingBottom: 8,
+    marginTop: 10,
+  },
 });
