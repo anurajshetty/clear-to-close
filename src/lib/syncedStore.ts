@@ -74,8 +74,10 @@ import {
   isClosedEscrowRejection,
   pullTcIntake,
   pushTcIntakeNow,
+  submitTcIntakeNow,
   pullBuyerIntake,
   pushBuyerIntakeNow,
+  submitBuyerIntakeNow,
   pullStepsByEscrow,
   fromEscrowRow,
   withWriteTimeout,
@@ -1310,10 +1312,44 @@ export function createSyncedStore(
       );
     },
 
+    /**
+     * TC intake submit (Nov 13, 2026, Anuraj: "Add Submit, keep
+     * editing open after submit"): the current form goes through the
+     * SAME confirmed save as Save, then the 0051 marker is stamped
+     * exactly once. Both steps ride one confirmedWrite under the
+     * save's write key, so a submit can never interleave with a save;
+     * if the stamp fails after the save landed, the error is loud and
+     * the intake is simply saved-but-unsubmitted (retry Submit).
+     * The form stays fully editable afterward; later saves never
+     * touch the marker.
+     */
+    submitTcIntake: async (escrowId: string, data: TcIntakeData): Promise<TcIntakeRow> => {
+      let serverStamp: string | null = null;
+      const committed = await confirmedWrite<TcIntakeRow>(
+        `tc-intake:${escrowId}`,
+        () => local.previewSubmitTcIntake(escrowId, data),
+        async ({ c, uid }, row) => {
+          await pushTcIntakeNow(c, uid, escrowId, data, escrowOwnerIds.get(escrowId) ?? uid);
+          // Stamp with the previewed marker so the server row and the
+          // committed local row carry the same value; the stamp in
+          // effect comes back (an earlier stamp from another device
+          // wins and is converged below).
+          serverStamp = await submitTcIntakeNow(c, escrowId, row.submittedAt ?? undefined);
+        },
+      );
+      if (serverStamp && committed.submittedAt !== serverStamp) {
+        const converged: TcIntakeRow = { ...committed, submittedAt: serverStamp };
+        await local.setTcIntakeCache(converged);
+        return converged;
+      }
+      return committed;
+    },
+
     /** Last confirmed intake from the local cache; null when never saved. */
     getTcIntake: (escrowId: string) => local.getTcIntake(escrowId),
     // Local preview/cache helpers delegate straight through.
     previewSaveTcIntake: (escrowId: string, intake: TcIntakeData) => local.previewSaveTcIntake(escrowId, intake),
+    previewSubmitTcIntake: (escrowId: string, intake: TcIntakeData) => local.previewSubmitTcIntake(escrowId, intake),
     setTcIntakeCache: (row: TcIntakeRow) => local.setTcIntakeCache(row),
 
     /**
@@ -1330,7 +1366,8 @@ export function createSyncedStore(
         if (pulled) {
           await local.setTcIntakeCache({
             escrowId,
-            data: pulled,
+            data: pulled.data,
+            submittedAt: pulled.submittedAt,
             updatedAt: new Date().toISOString(),
           });
         }
@@ -1360,10 +1397,33 @@ export function createSyncedStore(
       );
     },
 
+    /**
+     * Buyer intake submit (Nov 13, 2026) — the TC twin: save through
+     * the normal confirmed write, then stamp the 0051 marker once.
+     */
+    submitBuyerIntake: async (escrowId: string, data: BuyerIntakeData): Promise<BuyerIntakeRow> => {
+      let serverStamp: string | null = null;
+      const committed = await confirmedWrite<BuyerIntakeRow>(
+        `buyer-intake:${escrowId}`,
+        () => local.previewSubmitBuyerIntake(escrowId, data),
+        async ({ c, uid }, row) => {
+          await pushBuyerIntakeNow(c, uid, escrowId, data, escrowOwnerIds.get(escrowId) ?? uid);
+          serverStamp = await submitBuyerIntakeNow(c, escrowId, row.submittedAt ?? undefined);
+        },
+      );
+      if (serverStamp && committed.submittedAt !== serverStamp) {
+        const converged: BuyerIntakeRow = { ...committed, submittedAt: serverStamp };
+        await local.setBuyerIntakeCache(converged);
+        return converged;
+      }
+      return committed;
+    },
+
     /** Last confirmed intake from the local cache; null when never saved. */
     getBuyerIntake: (escrowId: string) => local.getBuyerIntake(escrowId),
     // Local preview/cache helpers delegate straight through.
     previewSaveBuyerIntake: (escrowId: string, intake: BuyerIntakeData) => local.previewSaveBuyerIntake(escrowId, intake),
+    previewSubmitBuyerIntake: (escrowId: string, intake: BuyerIntakeData) => local.previewSubmitBuyerIntake(escrowId, intake),
     setBuyerIntakeCache: (row: BuyerIntakeRow) => local.setBuyerIntakeCache(row),
 
     /**
@@ -1380,7 +1440,8 @@ export function createSyncedStore(
         if (pulled) {
           await local.setBuyerIntakeCache({
             escrowId,
-            data: pulled,
+            data: pulled.data,
+            submittedAt: pulled.submittedAt,
             updatedAt: new Date().toISOString(),
           });
         }

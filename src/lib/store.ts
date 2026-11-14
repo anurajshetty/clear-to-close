@@ -96,6 +96,14 @@ export interface TcIntakeRow {
   escrowId: string;
   data: TcIntakeData;
   updatedAt: string;
+  /**
+   * The 0051 submitted marker as last confirmed by the server (ISO
+   * timestamp), or null/absent while the intake has never been
+   * submitted. Optional because cache rows persisted before the
+   * Submit action existed carry no field; readers treat absent as
+   * unsubmitted. Saves never change it in either direction.
+   */
+  submittedAt?: string | null;
 }
 
 /**
@@ -108,6 +116,8 @@ export interface BuyerIntakeRow {
   escrowId: string;
   data: BuyerIntakeData;
   updatedAt: string;
+  /** The 0051 submitted marker — see TcIntakeRow.submittedAt. */
+  submittedAt?: string | null;
 }
 
 /**
@@ -215,6 +225,21 @@ export interface Store {
    */
   saveTcIntake(escrowId: string, data: TcIntakeData): Promise<TcIntakeRow>;
   /**
+   * Compute a TC intake submit against a cloned snapshot: the save
+   * preview plus the submitted marker set (provisional client
+   * timestamp; the server's stamp governs and converges on the next
+   * refresh). An already-submitted row keeps its original stamp, so
+   * a repeat submit previews as a no-op.
+   */
+  previewSubmitTcIntake(escrowId: string, data: TcIntakeData): Promise<Preview<TcIntakeRow>>;
+  /**
+   * TC intake submit (Nov 13, 2026): save the current form through
+   * the normal confirmed write, then stamp the 0051 marker exactly
+   * once. Editing stays open afterward. Implemented by the synced
+   * store.
+   */
+  submitTcIntake(escrowId: string, data: TcIntakeData): Promise<TcIntakeRow>;
+  /**
    * Converge the server's confirmed intake into the local cache (pure
    * pull). Never throws. Implemented by the synced store.
    */
@@ -245,6 +270,15 @@ export interface Store {
    * synced store (src/lib/syncedStore.ts).
    */
   saveBuyerIntake(escrowId: string, data: BuyerIntakeData): Promise<BuyerIntakeRow>;
+  /**
+   * Compute a buyer intake submit against a cloned snapshot — see
+   * previewSubmitTcIntake.
+   */
+  previewSubmitBuyerIntake(escrowId: string, data: BuyerIntakeData): Promise<Preview<BuyerIntakeRow>>;
+  /**
+   * Buyer intake submit (Nov 13, 2026) — see submitTcIntake.
+   */
+  submitBuyerIntake(escrowId: string, data: BuyerIntakeData): Promise<BuyerIntakeRow>;
   /**
    * Converge the server's confirmed intake into the local cache (pure
    * pull). Never throws. Implemented by the synced store.
@@ -748,6 +782,7 @@ export function createStore(kv: KV): Store {
               escrowId: v.escrowId,
               data: normalizeTcIntake(v.data),
               updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '',
+              submittedAt: typeof v.submittedAt === 'string' ? v.submittedAt : null,
             };
           }
         }
@@ -767,6 +802,7 @@ export function createStore(kv: KV): Store {
               escrowId: v.escrowId,
               data: normalizeBuyerIntake(v.data),
               updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : '',
+              submittedAt: typeof v.submittedAt === 'string' ? v.submittedAt : null,
             };
           }
         }
@@ -1556,6 +1592,27 @@ export function createStore(kv: KV): Store {
           escrowId,
           data: normalizeTcIntake(intake),
           updatedAt: new Date().toISOString(),
+          // A save never touches the submitted marker in either
+          // direction (the server rule, mirrored locally): the new
+          // row inherits whatever the confirmed snapshot carries.
+          submittedAt: h.tcIntakes[escrowId]?.submittedAt ?? null,
+        };
+        h.tcIntakes[escrowId] = row;
+        return row;
+      });
+    },
+
+    async previewSubmitTcIntake(escrowId: string, intake: TcIntakeData): Promise<Preview<TcIntakeRow>> {
+      return previewFor((h) => {
+        const existing = h.tcIntakes[escrowId]?.submittedAt ?? null;
+        const row: TcIntakeRow = {
+          escrowId,
+          data: normalizeTcIntake(intake),
+          updatedAt: new Date().toISOString(),
+          // Exactly once: an already-submitted row keeps its original
+          // stamp; the provisional client timestamp converges to the
+          // server's stamp on the next refresh.
+          submittedAt: existing ?? new Date().toISOString(),
         };
         h.tcIntakes[escrowId] = row;
         return row;
@@ -1568,6 +1625,7 @@ export function createStore(kv: KV): Store {
         escrowId: row.escrowId,
         data: normalizeTcIntake(row.data),
         updatedAt: row.updatedAt,
+        submittedAt: row.submittedAt ?? null,
       };
       await persist();
     },
@@ -1584,6 +1642,35 @@ export function createStore(kv: KV): Store {
           escrowId,
           data: normalizeTcIntake(intake),
           updatedAt: new Date().toISOString(),
+          submittedAt: h.tcIntakes[escrowId]?.submittedAt ?? null,
+        };
+        h.tcIntakes[escrowId] = row;
+        return row;
+      });
+      await ensureLoaded();
+      data.profile = p.snapshot.profile;
+      data.escrows = p.snapshot.escrows;
+      data.invites = p.snapshot.invites;
+      data.links = p.snapshot.links;
+      data.tcIntakes = p.snapshot.tcIntakes;
+      data.buyerIntakes = p.snapshot.buyerIntakes;
+      await persist();
+      return p.result;
+    },
+
+    /**
+     * Local-only submit (preview + commit) — the synced store's
+     * submitTcIntake is what screens call; this completes the Store
+     * contract for local-only consumers and tests.
+     */
+    async submitTcIntake(escrowId: string, intake: TcIntakeData): Promise<TcIntakeRow> {
+      const p = await previewFor((h) => {
+        const existing = h.tcIntakes[escrowId]?.submittedAt ?? null;
+        const row: TcIntakeRow = {
+          escrowId,
+          data: normalizeTcIntake(intake),
+          updatedAt: new Date().toISOString(),
+          submittedAt: existing ?? new Date().toISOString(),
         };
         h.tcIntakes[escrowId] = row;
         return row;
@@ -1618,6 +1705,22 @@ export function createStore(kv: KV): Store {
           escrowId,
           data: normalizeBuyerIntake(intake),
           updatedAt: new Date().toISOString(),
+          // Save never touches the submitted marker — see the TC twin.
+          submittedAt: h.buyerIntakes[escrowId]?.submittedAt ?? null,
+        };
+        h.buyerIntakes[escrowId] = row;
+        return row;
+      });
+    },
+
+    async previewSubmitBuyerIntake(escrowId: string, intake: BuyerIntakeData): Promise<Preview<BuyerIntakeRow>> {
+      return previewFor((h) => {
+        const existing = h.buyerIntakes[escrowId]?.submittedAt ?? null;
+        const row: BuyerIntakeRow = {
+          escrowId,
+          data: normalizeBuyerIntake(intake),
+          updatedAt: new Date().toISOString(),
+          submittedAt: existing ?? new Date().toISOString(),
         };
         h.buyerIntakes[escrowId] = row;
         return row;
@@ -1630,6 +1733,7 @@ export function createStore(kv: KV): Store {
         escrowId: row.escrowId,
         data: normalizeBuyerIntake(row.data),
         updatedAt: row.updatedAt,
+        submittedAt: row.submittedAt ?? null,
       };
       await persist();
     },
@@ -1646,6 +1750,33 @@ export function createStore(kv: KV): Store {
           escrowId,
           data: normalizeBuyerIntake(intake),
           updatedAt: new Date().toISOString(),
+          submittedAt: h.buyerIntakes[escrowId]?.submittedAt ?? null,
+        };
+        h.buyerIntakes[escrowId] = row;
+        return row;
+      });
+      await ensureLoaded();
+      data.profile = p.snapshot.profile;
+      data.escrows = p.snapshot.escrows;
+      data.invites = p.snapshot.invites;
+      data.links = p.snapshot.links;
+      data.tcIntakes = p.snapshot.tcIntakes;
+      data.buyerIntakes = p.snapshot.buyerIntakes;
+      await persist();
+      return p.result;
+    },
+
+    /**
+     * Local-only buyer submit (preview + commit) — see submitTcIntake.
+     */
+    async submitBuyerIntake(escrowId: string, intake: BuyerIntakeData): Promise<BuyerIntakeRow> {
+      const p = await previewFor((h) => {
+        const existing = h.buyerIntakes[escrowId]?.submittedAt ?? null;
+        const row: BuyerIntakeRow = {
+          escrowId,
+          data: normalizeBuyerIntake(intake),
+          updatedAt: new Date().toISOString(),
+          submittedAt: existing ?? new Date().toISOString(),
         };
         h.buyerIntakes[escrowId] = row;
         return row;

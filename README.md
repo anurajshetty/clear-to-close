@@ -143,14 +143,20 @@ central user; the buyers and sellers they represent are the other parties.
   checks, unchecks, or adds a step (tap opens the escrow's detail
   screen directly — the checklist view, not the Activity timeline;
   Nov 10, 2026) — all through the
-  existing outbox with per-token quiet hours. When a team member
+  existing outbox with per-token quiet hours. Both intake forms
+  carry a **Submit intake** action beside Save (Nov 13, 2026): one
+  tap saves the current form through the normal confirmed write and
+  stamps the intake's submitted marker exactly once; the action is
+  then replaced by a static Submitted state (no re-submit and no
+  un-submit in v1), the form stays fully editable, and later saves
+  never set or clear the marker. When a team member
   (Associate or TC) moves an intake into its submitted state, the
   owner gets a push naming the member and the property (never any
   intake content; the tap opens the escrow's detail screen): the
   submitted state is a stored marker (`submitted_at` on both intake
   tables), the push fires only on the transition into submitted —
-  edits that stay submitted do not refire, an un-submit followed by a
-  re-submit fires again — and the owner's own submit stays silent
+  edits that stay submitted do not refire — and the owner's own
+  submit stays silent
   (migration 0051). Screens a push can land
   on directly (escrow detail, activity) route their back controls
   through a guarded fallback: back when a navigation stack exists,

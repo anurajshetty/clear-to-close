@@ -1100,13 +1100,20 @@ export async function pushTcIntakeNow(
  * install before migration 0031 runs): a missing intake is a legitimate
  * state, never an error on the read path.
  */
+/** One pulled intake row: the form data plus the 0051 submitted
+ * marker (null while the intake has never been submitted). */
+export interface PulledIntake<T> {
+  data: T;
+  submittedAt: string | null;
+}
+
 export async function pullTcIntake(
   client: Cloud,
   escrowId: string,
-): Promise<TcIntakeData | null> {
+): Promise<PulledIntake<TcIntakeData> | null> {
   const { data: row, error } = await client
     .from('tc_intakes')
-    .select('data')
+    .select('data, submitted_at')
     .eq('escrow_id', escrowId)
     .maybeSingle();
   // A read error (migration 0031 not applied yet, offline, RLS) is a
@@ -1116,7 +1123,11 @@ export async function pullTcIntake(
   // the diagnostic; the transaction screen is never blocked.
   if (error) throw error;
   if (!row) return null;
-  return normalizeTcIntake((row as { data?: unknown }).data);
+  const r = row as { data?: unknown; submitted_at?: unknown };
+  return {
+    data: normalizeTcIntake(r.data),
+    submittedAt: typeof r.submitted_at === 'string' ? r.submitted_at : null,
+  };
 }
 
 /**
@@ -1162,10 +1173,10 @@ export async function pushBuyerIntakeNow(
 export async function pullBuyerIntake(
   client: Cloud,
   escrowId: string,
-): Promise<BuyerIntakeData | null> {
+): Promise<PulledIntake<BuyerIntakeData> | null> {
   const { data: row, error } = await client
     .from('buyer_intakes')
-    .select('data')
+    .select('data, submitted_at')
     .eq('escrow_id', escrowId)
     .maybeSingle();
   // A read error (migration 0034 not applied yet, offline, RLS) is a
@@ -1175,7 +1186,66 @@ export async function pullBuyerIntake(
   // the diagnostic; the transaction screen is never blocked.
   if (error) throw error;
   if (!row) return null;
-  return normalizeBuyerIntake((row as { data?: unknown }).data);
+  const r = row as { data?: unknown; submitted_at?: unknown };
+  return {
+    data: normalizeBuyerIntake(r.data),
+    submittedAt: typeof r.submitted_at === 'string' ? r.submitted_at : null,
+  };
+}
+
+/**
+ * Stamp an intake's submitted_at marker (migration 0051; Anuraj's
+ * Submit action, Nov 13, 2026). A targeted UPDATE guarded on the
+ * marker still being null, so the stamp lands EXACTLY ONCE: the 0051
+ * producer fires on the null -> non-null transition and nothing else.
+ * Confirmed-or-loud like every write: a zero-row update is resolved by
+ * reading the marker back — already stamped means this call is an
+ * idempotent no-op returning the original stamp; no visible row (or a
+ * still-null marker) means the write did not apply and throws.
+ * Returns the stamp in effect.
+ */
+async function stampIntakeSubmitted(
+  client: Cloud,
+  table: string,
+  escrowId: string,
+  stamp?: string,
+): Promise<string> {
+  const ts = stamp ?? new Date().toISOString();
+  const { data, error } = await client
+    .from(table)
+    .update({ submitted_at: ts })
+    .eq('escrow_id', escrowId)
+    .is('submitted_at', null)
+    .select('submitted_at');
+  if (error) throw error;
+  const rows = Array.isArray(data) ? data : [];
+  if (rows.length > 0) {
+    const stamped = (rows[0] as { submitted_at?: unknown }).submitted_at;
+    if (typeof stamped === 'string' && stamped) return stamped;
+    return ts;
+  }
+  const { data: existing, error: readError } = await client
+    .from(table)
+    .select('submitted_at')
+    .eq('escrow_id', escrowId)
+    .maybeSingle();
+  if (readError) throw readError;
+  const current = (existing as { submitted_at?: unknown } | null)?.submitted_at;
+  if (typeof current === 'string' && current) return current;
+  throw new SyncNotAppliedError(table, 1, 0);
+}
+
+/** Submit the TC intake for one escrow: stamp its 0051 marker. The
+ * caller may pass the stamp to write (the synced store passes its
+ * previewed marker, so the committed local row and the server row
+ * carry the same value); the stamp IN EFFECT is returned either way. */
+export async function submitTcIntakeNow(client: Cloud, escrowId: string, stamp?: string): Promise<string> {
+  return stampIntakeSubmitted(client, 'tc_intakes', escrowId, stamp);
+}
+
+/** Submit the buyer intake for one escrow: stamp its 0051 marker. */
+export async function submitBuyerIntakeNow(client: Cloud, escrowId: string, stamp?: string): Promise<string> {
+  return stampIntakeSubmitted(client, 'buyer_intakes', escrowId, stamp);
 }
 
 /** True for a PostgreSQL row-level-security denial (SQLSTATE 42501). */

@@ -94,6 +94,9 @@ export interface MockServer {
    * view carries only its own realtor's profile.
    */
   viewProfiles: Record<string, unknown>;
+  /** Stored row of a modeled intake table (tc_intakes / buyer_intakes),
+   * keyed by escrow_id; undefined when no row exists. */
+  intakeRow(table: string, escrowId: string): Record<string, unknown> | undefined;
   select(table: string, filters: Filter[]): { data: unknown; error: unknown };
   update(
     table: string,
@@ -110,6 +113,15 @@ export function createMockServer(): MockServer {
   const invitesByCode = new Map<string, string>();
   const links = new Map<string, ServerLink>();
   const steps = new Map<string, Record<string, unknown>>();
+  // Intake tables (migrations 0031/0034 + the 0051 submitted_at
+  // marker): rows stored verbatim by escrow_id. Upserts MERGE into the
+  // stored row, mirroring PostgREST (an upsert overwrites only the
+  // columns its payload carries, so a save payload without
+  // submitted_at leaves the stored marker untouched).
+  const intakeTables: Record<string, Map<string, Record<string, unknown>>> = {
+    tc_intakes: new Map(),
+    buyer_intakes: new Map(),
+  };
   const pushedLinkRevocations: PushedLinkRevocation[] = [];
   let linkSeq = 0;
   let regenSeq = 0;
@@ -163,6 +175,15 @@ export function createMockServer(): MockServer {
       }
       return { data: rows.map((r) => ({ ...r })), error: null };
     }
+    const intakeMap = intakeTables[table];
+    if (intakeMap) {
+      let rows = [...intakeMap.values()];
+      for (const f of filters) {
+        if (f.op === 'eq') rows = rows.filter((r) => r[f.col] === f.val);
+        if (f.op === 'is') rows = rows.filter((r) => (r[f.col] ?? null) === f.val);
+      }
+      return { data: rows.map((r) => ({ ...r })), error: null };
+    }
     return { data: [], error: null };
   }
 
@@ -185,6 +206,24 @@ export function createMockServer(): MockServer {
       const inv = idEq ? invites.get(String(idEq.val)) : undefined;
       if (inv && patch.revoked_at != null) inv.revokedAt = String(patch.revoked_at);
       return { data: inv ? [{ id: inv.id }] : [], error: null };
+    }
+    const intakeMap = intakeTables[table];
+    if (intakeMap) {
+      // Faithful UPDATE semantics: a row is affected only when every
+      // filter matches (eq equality; is compares null-normalized), so
+      // the submitted_at stamp's is-null guard matches exactly the
+      // unsubmitted rows, like the real statement.
+      const affected: Record<string, unknown>[] = [];
+      for (const row of intakeMap.values()) {
+        const matches = filters.every((f) =>
+          f.op === 'is' ? (row[f.col] ?? null) === f.val : row[f.col] === f.val,
+        );
+        if (matches) {
+          Object.assign(row, patch);
+          affected.push({ ...row });
+        }
+      }
+      return { data: affected, error: null };
     }
     return { data: [], error: null };
   }
@@ -232,6 +271,13 @@ export function createMockServer(): MockServer {
           revokedAt: r.revoked_at ? String(r.revoked_at) : null,
         });
         invitesByCode.set(String(r.code), id);
+      }
+    }
+    const intakeMap = intakeTables[table];
+    if (intakeMap) {
+      for (const r of arr) {
+        const key = String(r.escrow_id);
+        intakeMap.set(key, { ...(intakeMap.get(key) ?? {}), ...r });
       }
     }
     return { data: arr.map((r) => ({ id: String(r.id ?? '') })), error: null };
@@ -382,6 +428,10 @@ export function createMockServer(): MockServer {
     upsertLog,
     pushTokens: new Map<string, { deviceId: string; linkId: string; token: string }>(),
     viewProfiles: {},
+    intakeRow: (table: string, escrowId: string) => {
+      const row = intakeTables[table]?.get(escrowId);
+      return row ? { ...row } : undefined;
+    },
     select,
     update,
     remove,
@@ -414,6 +464,20 @@ class SelectQuery {
   limit(_n: number): this {
     return this;
   }
+  maybeSingle(): { then: (resolve: Resolve, reject?: Reject) => void } {
+    return {
+      then: (resolve: Resolve, reject?: Reject) => {
+        try {
+          const { data, error } = this.server.select(this.table, this.filters);
+          const rows = Array.isArray(data) ? data : [];
+          resolve({ data: rows[0] ?? null, error });
+        } catch (e) {
+          if (reject) reject(e);
+          else throw e;
+        }
+      },
+    };
+  }
   then(resolve: Resolve, reject?: Reject): void {
     try {
       resolve(this.server.select(this.table, this.filters));
@@ -433,6 +497,10 @@ class UpdateQuery {
   ) {}
   eq(col: string, val: unknown): this {
     this.filters.push({ col, op: 'eq', val });
+    return this;
+  }
+  is(col: string, val: unknown): this {
+    this.filters.push({ col, op: 'is', val });
     return this;
   }
   select(_cols?: string): this {

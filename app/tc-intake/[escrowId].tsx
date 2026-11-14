@@ -59,6 +59,11 @@ export default function TcIntakeScreen() {
   const [escrow, setEscrow] = useState<Escrow | null>(null);
   const [form, setForm] = useState<TcIntakeData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  /** The 0051 submitted marker as last confirmed (null = not
+   * submitted): drives the footer's Submit action vs the static
+   * Submitted state. */
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   /** Conditional-required field errors (water softener follow-up), set on
    * Save only — mirrors the buyer intake's pattern. */
@@ -82,6 +87,7 @@ export default function TcIntakeScreen() {
       if (cancelled) return;
       setEscrow(e);
       setForm(saved ? saved.data : emptyTcIntake());
+      setSubmittedAt(saved?.submittedAt ?? null);
     })();
     return () => {
       cancelled = true;
@@ -130,7 +136,8 @@ export default function TcIntakeScreen() {
     setSaveError(null);
     setSaving(true);
     try {
-      await store.saveTcIntake(escrowId, form);
+      const savedRow = await store.saveTcIntake(escrowId, form);
+      setSubmittedAt(savedRow.submittedAt ?? null);
       showToast('TC intake saved.');
     } catch (err) {
       // Failed/offline save: the previously confirmed snapshot is
@@ -142,6 +149,37 @@ export default function TcIntakeScreen() {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Submit intake (Nov 13, 2026, Anuraj: "Add Submit, keep editing
+   * open after submit"): one tap, no confirmation — the store saves
+   * the current form through the normal confirmed write and stamps
+   * the submitted marker exactly once; the escrow owner is notified
+   * by the 0051 producer when a team member submits. The form stays
+   * fully editable afterward and later saves never touch the marker. */
+  const onSubmit = async () => {
+    if (submitting || saving || !form || locked || submittedAt) return;
+    const violations = validateTcIntakeConditional(form);
+    if (Object.keys(violations).length > 0) {
+      setErrors(violations);
+      return;
+    }
+    setErrors({});
+    setSaveError(null);
+    setSubmitting(true);
+    try {
+      const row = await store.submitTcIntake(escrowId, form);
+      setSubmittedAt(row.submittedAt ?? null);
+      showToast('TC intake submitted.');
+    } catch (err) {
+      setSaveError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Couldn't submit the TC intake. Check your connection and try again.",
+      );
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -334,9 +372,26 @@ export default function TcIntakeScreen() {
               <PrimaryButton
                 title={saving ? 'Saving…' : 'Save'}
                 onPress={onSave}
-                disabled={saving || form === null}
+                disabled={saving || submitting || form === null}
               />
             </View>
+          )}
+          {submittedAt ? (
+            <View style={styles.footerBtn} testID="tc-intake-submitted">
+              <View style={styles.submittedPill}>
+                <Text style={styles.submittedText}>Submitted</Text>
+              </View>
+            </View>
+          ) : (
+            !locked && (
+              <View style={styles.footerBtn} testID="tc-intake-submit">
+                <SecondaryButton
+                  title={submitting ? 'Submitting…' : 'Submit intake'}
+                  onPress={onSubmit}
+                  disabled={submitting || saving || form === null}
+                />
+              </View>
+            )
           )}
           <View style={styles.footerBtn} testID="tc-intake-share">
             <SecondaryButton title="Share with TC" onPress={onShare} />
@@ -433,6 +488,17 @@ const styles = StyleSheet.create({
   footerBtn: {
     flex: 1,
   },
+  // Static Submitted state (Nov 13, 2026): same footprint as the
+  // footer buttons it replaces, read-only by construction.
+  submittedPill: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    minHeight: 52,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.button,
+  },
+  submittedText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   toast: {
     position: 'absolute',
     left: 20,

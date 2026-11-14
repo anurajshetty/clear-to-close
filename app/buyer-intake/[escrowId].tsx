@@ -59,6 +59,11 @@ export default function BuyerIntakeScreen() {
   } | null>(null);
   const [form, setForm] = useState<BuyerIntakeData | null>(null);
   const [saving, setSaving] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  /** The 0051 submitted marker as last confirmed (null = not
+   * submitted): drives the footer's Submit action vs the static
+   * Submitted state. */
+  const [submittedAt, setSubmittedAt] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   /** Inline field errors from the conditional required validation (Anuraj,
    * Oct 1, 2026): field key -> error copy. Set in onSave only, cleared on
@@ -87,6 +92,7 @@ export default function BuyerIntakeScreen() {
       setEscrow(e ? { address: e.address, status: e.status } : null);
       if (saved) {
         setForm(saved.data);
+        setSubmittedAt(saved.submittedAt ?? null);
         seedRef.current = {};
       } else {
         const profile = await store.getProfile();
@@ -167,6 +173,7 @@ export default function BuyerIntakeScreen() {
     try {
       const saved = await store.saveBuyerIntake(escrowId, form);
       setForm(saved.data);
+      setSubmittedAt(saved.submittedAt ?? null);
       // A saved intake is the realtor's own confirmed data — no seed pills.
       seedRef.current = {};
       showToast('Buyer intake saved.');
@@ -174,6 +181,35 @@ export default function BuyerIntakeScreen() {
       setSaveError(err instanceof Error ? err.message : 'Could not save the buyer intake.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Submit intake (Nov 13, 2026, Anuraj: "Add Submit, keep editing
+   * open after submit"): one tap, no confirmation — the store saves
+   * the current form through the normal confirmed write and stamps
+   * the submitted marker exactly once; the escrow owner is notified
+   * by the 0051 producer when a team member submits. The form stays
+   * fully editable afterward and later saves never touch the marker. */
+  const onSubmit = async () => {
+    if (!form || submitting || saving || locked || submittedAt) return;
+    const violations = validateBuyerIntakeConditional(form);
+    if (Object.keys(violations).length > 0) {
+      setErrors(violations);
+      return;
+    }
+    setErrors({});
+    setSubmitting(true);
+    setSaveError(null);
+    try {
+      const row = await store.submitBuyerIntake(escrowId, form);
+      setForm(row.data);
+      setSubmittedAt(row.submittedAt ?? null);
+      seedRef.current = {};
+      showToast('Buyer intake submitted.');
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not submit the buyer intake.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -627,9 +663,26 @@ export default function BuyerIntakeScreen() {
               <PrimaryButton
                 title={saving ? 'Saving…' : 'Save'}
                 onPress={onSave}
-                disabled={saving || form === null}
+                disabled={saving || submitting || form === null}
               />
             </View>
+          )}
+          {submittedAt ? (
+            <View style={styles.footerBtn} testID="buyer-intake-submitted">
+              <View style={styles.submittedPill}>
+                <Text style={styles.submittedText}>Submitted</Text>
+              </View>
+            </View>
+          ) : (
+            !locked && (
+              <View style={styles.footerBtn} testID="buyer-intake-submit">
+                <SecondaryButton
+                  title={submitting ? 'Submitting…' : 'Submit intake'}
+                  onPress={onSubmit}
+                  disabled={submitting || saving || form === null}
+                />
+              </View>
+            )
           )}
           <View style={styles.footerBtn} testID="buyer-intake-share">
             <SecondaryButton title="Share with TC" onPress={onShare} />
@@ -719,6 +772,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   footerBtn: { flex: 1 },
+  // Static Submitted state (Nov 13, 2026): same footprint as the
+  // footer buttons it replaces, read-only by construction.
+  submittedPill: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    minHeight: 52,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.button,
+  },
+  submittedText: { color: colors.accent, fontSize: 16, fontWeight: '700' },
   saveError: {
     fontSize: type.small,
     color: colors.red,
