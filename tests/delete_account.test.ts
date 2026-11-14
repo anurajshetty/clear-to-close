@@ -204,6 +204,19 @@ async function main(): Promise<void> {
     );
     assert(/outcome:\s*'husk'/.test(fn), 'B6: a distinct husk outcome is returned');
     assert(/export \{ handle \}/.test(fn), 'B7: handler exported for node tests (house pattern)');
+    // B8 (Nov 13, 2026 live-battery find): GoTrueAdminApi.signOut takes
+    // the user's JWT as its first argument, NOT the user id. Passing
+    // user.id made GoTrue reject the call, so every production delete
+    // died at step 1 with revoke_failed. The revoke must hand the
+    // caller's own bearer token to admin signOut.
+    assert(
+      /admin\.auth\.admin\.signOut\(token,\s*'global'\)/.test(fn),
+      "B8: revocation passes the caller's JWT to admin signOut",
+    );
+    assert(
+      !/admin\.signOut\(user\.id/.test(fn) && !/admin\.auth\.admin\.signOut\(user\.id/.test(fn),
+      'B8: admin signOut is never called with the user id',
+    );
   }
 
   // ---------------------------------------------------------------- C. UI --

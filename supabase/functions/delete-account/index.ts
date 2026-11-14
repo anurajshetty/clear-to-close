@@ -119,8 +119,11 @@ async function handle(
   });
 
   // Step 1: global session revocation. Abort before destruction on
-  // failure; a retry re-runs it harmlessly.
-  const { error: revokeError } = await admin.auth.admin.signOut(user.id, 'global');
+  // failure; a retry re-runs it harmlessly. GoTrueAdminApi.signOut
+  // takes the user's JWT (the caller's bearer token), NOT the user
+  // id — passing the id makes GoTrue reject the call and every
+  // delete dies here (live-battery find, Nov 13, 2026).
+  const { error: revokeError } = await admin.auth.admin.signOut(token, 'global');
   if (revokeError) {
     console.warn('delete-account: revocation failed', user.id, revokeError.message);
     return json({ ok: false, error: 'revoke_failed' }, 502);
