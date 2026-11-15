@@ -125,4 +125,22 @@ assert(
   'the sticky footer is pinned to the bottom of the list area',
 );
 
+// --- Team screen: taps must land while the keyboard is open ----------------
+// REGRESSION (Nov 14, 2026, Anuraj): "Send invite" needed two taps —
+// the invite form (email Field + Send invite button) renders inside
+// the team screen's ScrollView, which did not set
+// keyboardShouldPersistTaps, so React Native's default ("never")
+// swallowed the first tap to dismiss the keyboard and onPress never
+// fired. Every other form screen sets "handled"; the team screen was
+// the one miss.
+const team = src(path.join('app', 'team', '[id].tsx'));
+assert(
+  /<Field/.test(team) && /Send invite/.test(team),
+  'team screen: the invite form (email Field + Send invite) is present',
+);
+assert(
+  /<ScrollView[^>]*keyboardShouldPersistTaps="handled"/.test(team),
+  'team screen: the form ScrollView persists taps while the keyboard is open',
+);
+
 summary('keyboard_avoidance');

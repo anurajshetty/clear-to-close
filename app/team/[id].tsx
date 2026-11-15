@@ -402,7 +402,11 @@ export default function TeamOnEscrow() {
           {partyLine(escrow)}
         </Text>
       </View>
-      <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.h3}>Team on this escrow</Text>
         <Text style={styles.explainer}>
           {frozen
