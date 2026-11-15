@@ -23,6 +23,7 @@ import { auth } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import type { ClientRole, InviteRealtor, RedeemResult } from '../src/lib/types';
 import { realtorSubline } from '../src/lib/profile';
+import { notifyContextualPushAsk } from '../src/lib/push';
 import { Field, Kicker, PrimaryButton, initialsOf, useKeyboardHeight } from '../src/components/ui';
 import { RedeemCelebration } from '../src/components/RedeemCelebration';
 import { colors } from '../src/theme';
@@ -148,6 +149,10 @@ export default function Redeem() {
         router.replace(`/client/${res.role}/${res.escrowId}`);
         return;
       }
+      // Fresh join (Nov 14, 2026): fire the one-time contextual push
+      // ask. PushGate presents it after this success state settles, so
+      // the celebration / landing below is never blocked or delayed.
+      notifyContextualPushAsk('client-code-join');
       const count = (await auth.getClientLinks()).length;
       if (count > 1) {
         // A valid second (or third…) code: the list shows a one-time

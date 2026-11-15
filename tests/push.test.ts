@@ -20,22 +20,29 @@ import {
   __setPlatformForTests,
   clientHomeRoute,
   escrowRouteFromResponse,
+  contextualAskEligible,
+  defaultPushAskState,
   getPushPermission,
   getRealtorUnregisterPending,
-  hasBeenAskedPush,
-  hasBeenAskedRealtorPush,
   isClientHomePath,
+  isFinalAsk,
   loadNotifications,
-  markPushAsked,
-  markRealtorPushAsked,
+  markDontAskAgain,
+  PUSH_ASK_CAP,
+  PUSH_ASK_COOLDOWN_MS,
   pushTapRoute,
+  readPushAskState,
+  recordContextualAskShown,
+  recordSignupAskShown,
+  recordTimedAskShown,
   registerPushToken,
   resolveRealtorPendingStore,
   setRealtorUnregisterPending,
   setupPushHandling,
-  shouldShowPrePrompt,
-  shouldShowRealtorPrePrompt,
+  signupAskEligible,
+  timedAskEligible,
   unregisterPushToken,
+  type PushAskState,
 } from '../src/lib/push';
 import { memoryKV } from '../src/lib/kv';
 
@@ -231,16 +238,49 @@ async function main(): Promise<void> {
   assert(loadNotifications() === null, 'node: loadNotifications null without native module');
   assert((await registerPushToken()) === false, 'node: registerPushToken false without modules');
 
-  // ---- ask-once state ----
-  const kv = memoryKV();
-  assert((await hasBeenAskedPush(kv)) === false, 'ask-once starts unasked');
-  await markPushAsked(kv);
-  assert((await hasBeenAskedPush(kv)) === true, 'ask-once persists after mark');
+  // ---- re-ask state (Notification Re-Ask, Nov 14, 2026) ----
+  {
+    const kv = memoryKV();
+    const fresh = await readPushAskState('client', kv);
+    assert(
+      fresh.count === 0 && fresh.lastAskedAt === null && !fresh.dontAskAgain &&
+        !fresh.ctx['client-code-join'] && !fresh.ctx['realtor-invite'],
+      're-ask: fresh device starts at count 0 with no flags',
+    );
+    // Legacy migration: the ask-once client flag seeds count=1 with an
+    // epoch last-asked (immediately eligible for one fresh ask).
+    await kv.setItem('ctc:pushasked', '1');
+    const legacy = await readPushAskState('client', kv);
+    assert(legacy.count === 1 && legacy.lastAskedAt === 0 && !legacy.dontAskAgain,
+      're-ask: legacy client flag seeds count=1, last=epoch, no stop');
+    assert(
+      timedAskEligible(legacy, 'undetermined', Date.now()),
+      're-ask: legacy-seeded state is immediately eligible once',
+    );
+    // The realtor side is untouched by the client legacy flag.
+    const realtorFresh = await readPushAskState('realtor', kv);
+    assert(realtorFresh.count === 0, 're-ask: client legacy flag does not seed the realtor state');
+    // Recording a timed ask on the legacy-seeded state persists the new
+    // shape (count 2, last=now) and starts the cooldown.
+    const t0 = 1_800_000_000_000;
+    const after = await recordTimedAskShown('client', t0, kv);
+    assert(after.count === 2 && after.lastAskedAt === t0, 're-ask: timed show records count+last');
+    const reread = await readPushAskState('client', kv);
+    assert(reread.count === 2 && reread.lastAskedAt === t0, 're-ask: recorded state persists');
+    assert(!timedAskEligible(reread, 'undetermined', t0 + 1000), 're-ask: cooldown blocks an immediate re-ask');
+    // Realtor legacy flag mirrors on its own key.
+    const kv2 = memoryKV();
+    await kv2.setItem('ctc:pushasked:realtor', '1');
+    const rLegacy = await readPushAskState('realtor', kv2);
+    assert(rLegacy.count === 1 && rLegacy.lastAskedAt === 0, 're-ask: legacy realtor flag seeds the realtor state');
+    assert((await readPushAskState('client', kv2)).count === 0, 're-ask: realtor legacy flag does not seed the client state');
+  }
 
   // ---- realtor sign-out unregister queue (P0, Oct 2026) ----
   // A failed authenticated unregister at logout queues the (deviceId,
   // token) pair so the next boot can retry by possession; the queue is
   // device-scoped state and must round-trip exactly.
+  const kv = memoryKV();
   assert((await getRealtorUnregisterPending(kv)) === null, 'realtor unreg queue starts empty');
   await setRealtorUnregisterPending({ deviceId: 'dev-1', token: 'ExponentPushToken[x]' }, kv);
   const pending = await getRealtorUnregisterPending(kv);
@@ -288,32 +328,115 @@ async function main(): Promise<void> {
     );
   }
 
-  // ---- pre-prompt eligibility (pure) ----
-  assert(
-    shouldShowPrePrompt({ role: 'client', hasLink: true, asked: false, permission: 'undetermined' }) ===
-      true,
-    'pre-prompt shows for undetermined client',
-  );
-  assert(
-    shouldShowPrePrompt({ role: 'client', hasLink: true, asked: true, permission: 'undetermined' }) ===
-      false,
-    'pre-prompt never re-asks',
-  );
-  assert(
-    shouldShowPrePrompt({ role: 'client', hasLink: true, asked: false, permission: 'denied' }) ===
-      false,
-    'pre-prompt never nags after denial',
-  );
-  assert(
-    shouldShowPrePrompt({ role: 'client', hasLink: true, asked: false, permission: 'granted' }) ===
-      false,
-    'pre-prompt not shown when already granted',
-  );
-  assert(
-    shouldShowPrePrompt({ role: 'realtor', hasLink: false, asked: false, permission: 'undetermined' }) ===
-      false,
-    'pre-prompt never shows for realtor',
-  );
+  // ---- timed re-ask eligibility (pure) ----
+  {
+    const NOW = 1_800_000_000_000;
+    const st = (over: Partial<PushAskState>): PushAskState => ({ ...defaultPushAskState(), ...over });
+    assert(timedAskEligible(st({}), 'undetermined', NOW), 'timed: fresh + undetermined shows');
+    assert(timedAskEligible(st({}), 'denied', NOW), 'timed: fresh + denied shows (Settings path)');
+    assert(!timedAskEligible(st({}), 'granted', NOW), 'timed: granted never shows');
+    assert(
+      !timedAskEligible(st({ count: 1, lastAskedAt: NOW - PUSH_ASK_COOLDOWN_MS + 1 }), 'undetermined', NOW),
+      'timed: cooldown not elapsed -> no show',
+    );
+    assert(
+      timedAskEligible(st({ count: 1, lastAskedAt: NOW - PUSH_ASK_COOLDOWN_MS }), 'undetermined', NOW),
+      'timed: cooldown elapsed -> shows',
+    );
+    assert(
+      !timedAskEligible(st({ count: PUSH_ASK_CAP, lastAskedAt: 0 }), 'undetermined', NOW),
+      'timed: cap reached -> no show',
+    );
+    assert(
+      timedAskEligible(st({ count: PUSH_ASK_CAP - 1, lastAskedAt: 0 }), 'denied', NOW),
+      'timed: the final (4th) ask is allowed',
+    );
+    assert(
+      !timedAskEligible(st({ count: 0, dontAskAgain: true }), 'undetermined', NOW),
+      "timed: don't-ask-again -> no show",
+    );
+    assert(isFinalAsk(st({ count: PUSH_ASK_CAP - 1 })), 'final-ask: count 3 means the next show is the 4th');
+    assert(!isFinalAsk(st({ count: PUSH_ASK_CAP - 2 })), 'final-ask: count 2 is not final');
+    assert(!isFinalAsk(st({ count: PUSH_ASK_CAP })), 'final-ask: count 4 is past final');
+  }
+
+  // ---- contextual ask eligibility + recording (pure + KV) ----
+  {
+    const NOW = 1_800_000_000_000;
+    const st = (over: Partial<PushAskState>): PushAskState => ({ ...defaultPushAskState(), ...over });
+    assert(
+      contextualAskEligible(st({ count: 1, lastAskedAt: NOW }), 'undetermined', 'realtor-invite'),
+      'contextual: fires inside the cooldown (independent of it)',
+    );
+    assert(
+      contextualAskEligible(st({}), 'denied', 'client-code-join'),
+      'contextual: denied still fires (auditor condition 2: the sheet renders its Open Settings state)',
+    );
+    assert(
+      !contextualAskEligible(st({ dontAskAgain: true }), 'undetermined', 'realtor-invite'),
+      'contextual: stop flag set -> the first team invite completes with NO sheet (auditor condition 1)',
+    );
+    assert(
+      !contextualAskEligible(st({ ctx: { 'realtor-invite': true, 'client-code-join': false, 'realtor-signup': false } }), 'undetermined', 'realtor-invite'),
+      'contextual: a fired trigger never fires again',
+    );
+    assert(
+      contextualAskEligible(st({ ctx: { 'realtor-invite': true, 'client-code-join': false, 'realtor-signup': false } }), 'undetermined', 'client-code-join'),
+      'contextual: the other trigger is independent',
+    );
+    assert(!contextualAskEligible(st({ count: PUSH_ASK_CAP }), 'undetermined', 'realtor-invite'),
+      'contextual: cap reached -> no show');
+    assert(!contextualAskEligible(st({ dontAskAgain: true }), 'undetermined', 'realtor-invite'),
+      "contextual: don't-ask-again -> no show");
+    assert(!contextualAskEligible(st({}), 'granted', 'realtor-invite'),
+      'contextual: granted -> no show');
+
+    const kv = memoryKV();
+    const t0 = 1_800_000_000_000;
+    await recordTimedAskShown('realtor', t0, kv);
+    const afterCtx = await recordContextualAskShown('realtor', 'realtor-invite', kv);
+    assert(afterCtx.count === 2 && afterCtx.ctx['realtor-invite'] === true,
+      'contextual record: count+1 and the trigger flag set');
+    assert(afterCtx.lastAskedAt === t0,
+      'contextual record: last-asked is NOT moved (cooldown stays anchored to timed asks)');
+    await markDontAskAgain('realtor', kv);
+    const stopped = await readPushAskState('realtor', kv);
+    assert(stopped.dontAskAgain === true, "don't-ask-again persists");
+    assert(!timedAskEligible(stopped, 'undetermined', t0 + PUSH_ASK_COOLDOWN_MS * 10),
+      "don't-ask-again: timed never shows again");
+    assert(!contextualAskEligible(stopped, 'undetermined', 'client-code-join'),
+      "don't-ask-again: contextual never shows again");
+    assert((await readPushAskState('client', kv)).count === 0,
+      're-ask state is per-role: realtor activity never touches the client state');
+  }
+
+  // ---- sign-up / first-login trigger (amendment, Nov 14, 2026) ----
+  {
+    const NOW = 1_800_000_000_000;
+    const st = (over: Partial<PushAskState>): PushAskState => ({ ...defaultPushAskState(), ...over });
+    assert(signupAskEligible(st({}), 'undetermined'), 'signup: fresh + undetermined fires');
+    assert(!signupAskEligible(st({}), 'denied'), 'signup: denied never fires (timed cadence owns it)');
+    assert(!signupAskEligible(st({}), 'granted'), 'signup: granted never fires');
+    assert(
+      !signupAskEligible(st({ ctx: { 'realtor-invite': false, 'client-code-join': false, 'realtor-signup': true } }), 'undetermined'),
+      'signup: once per device, ever',
+    );
+    assert(!signupAskEligible(st({ count: PUSH_ASK_CAP }), 'undetermined'), 'signup: cap reached -> no fire');
+    assert(!signupAskEligible(st({ dontAskAgain: true }), 'undetermined'), "signup: don't-ask-again -> no fire");
+
+    const kv = memoryKV();
+    const after = await recordSignupAskShown(NOW, kv);
+    assert(after.count === 1 && after.ctx['realtor-signup'] === true,
+      'signup record: count+1 and the trigger is spent');
+    assert(after.lastAskedAt === NOW,
+      'signup record: the cooldown STARTS (it replaces the first timed ask)');
+    assert(!timedAskEligible(after, 'undetermined', NOW + 1000),
+      'signup record: the timed ask is snoozed by the cooldown it started');
+    assert(
+      timedAskEligible(after, 'undetermined', NOW + PUSH_ASK_COOLDOWN_MS),
+      'signup record: the timed cadence resumes after the cooldown',
+    );
+  }
 
   // ---- deep-link routing from a notification response ----
   const r1 = escrowRouteFromResponse({
@@ -646,43 +769,9 @@ async function main(): Promise<void> {
   assert(pushTapRoute('e1', 'tc') === '/client/tc/e1', 'P1 tap: TC still lands on TC home');
   assert(pushTapRoute('e1', 'seller') === '/client/seller/e1', 'P1 tap: seller still lands on seller home');
 
-  assert(
-    shouldShowRealtorPrePrompt({ role: 'realtor', hasSession: true, asked: false, permission: 'undetermined' }),
-    'P1 realtor prompt: signed-in realtor, unasked, undetermined -> shows',
-  );
-  assert(
-    !shouldShowRealtorPrePrompt({ role: 'realtor', hasSession: false, asked: false, permission: 'undetermined' }),
-    'P1 realtor prompt: no session -> hidden',
-  );
-  assert(
-    !shouldShowRealtorPrePrompt({ role: 'client', hasSession: true, asked: false, permission: 'undetermined' }),
-    'P1 realtor prompt: client role -> hidden',
-  );
-  assert(
-    !shouldShowRealtorPrePrompt({ role: 'realtor', hasSession: true, asked: true, permission: 'undetermined' }),
-    'P1 realtor prompt: already asked -> hidden',
-  );
-  assert(
-    !shouldShowRealtorPrePrompt({ role: 'realtor', hasSession: true, asked: false, permission: 'granted' }),
-    'P1 realtor prompt: already granted -> hidden',
-  );
-  assert(
-    !shouldShowRealtorPrePrompt({ role: 'realtor', hasSession: true, asked: false, permission: 'denied' }),
-    'P1 realtor prompt: denied -> hidden (never nags)',
-  );
-
-  {
-    const kv = memoryKV();
-    assert((await hasBeenAskedRealtorPush(kv)) === false, 'P1 realtor flag: unset by default');
-    await markRealtorPushAsked(kv);
-    assert((await hasBeenAskedRealtorPush(kv)) === true, 'P1 realtor flag: set after mark');
-    assert(
-      (await hasBeenAskedPush(kv)) === false,
-      'P1 realtor flag: separate from the client ask-once flag',
-    );
-    await markPushAsked(kv);
-    assert((await hasBeenAskedPush(kv)) === true, 'P1 flags: client flag still independent');
-  }
+  // (The P1 ask-once realtor eligibility + flag assertions were
+  // replaced by the Notification Re-Ask matrix above: per-role state,
+  // 14-day cooldown, 4-ask cap, don't-ask-again, legacy seeding.)
 
   summary('push.test.ts');
 }

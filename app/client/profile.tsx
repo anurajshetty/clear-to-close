@@ -10,10 +10,10 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { store } from '../../src/lib/store-instance';
 import { auth } from '../../src/lib/auth';
-import { getPushPermission } from '../../src/lib/push';
 import type { ClientRole, RealtorProfile } from '../../src/lib/types';
 import { realtorSubline } from '../../src/lib/profile';
 import { Card, Kicker, initialsOf } from '../../src/components/ui';
+import { NotificationRow } from '../../src/components/NotificationRow';
 import { colors } from '../../src/theme';
 
 function Stat({ value, label }: { value: string; label: string }) {
@@ -42,10 +42,6 @@ export default function ClientRealtorProfile() {
   const [homeRoute, setHomeRoute] = useState<{ role: ClientRole; escrowId: string } | null>(
     null,
   );
-  // Quiet push hint: shown only when this device denied notification
-  // permission (never nags; the ask-once pre-prompt lives in PushGate).
-  const [pushOff, setPushOff] = useState(false);
-
   // Data load, shared by focus and foreground (Sept 2026
   // foreground-refresh fix): the linked profile is refetched from the cloud
   // view first — the old cache-only read never fetched, so the realtor's
@@ -74,14 +70,6 @@ export default function ClientRealtorProfile() {
         }
       })
       .catch(() => {});
-    // Quiet push hint state (native only; web is out of push scope).
-    if (Platform.OS !== 'web') {
-      getPushPermission()
-        .then((p) => {
-          if (active) setPushOff(p === 'denied');
-        })
-        .catch(() => {});
-    }
     return () => {
       active = false;
     };
@@ -199,20 +187,13 @@ export default function ClientRealtorProfile() {
               ? `One profile, shown across all of ${firstName}'s escrows.\nRead-only for clients.`
               : `One profile, shown across every escrow.\nRead-only for clients.`}
           </Text>
-          {pushOff && (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open Settings to turn notifications on"
-              onPress={() => {
-                if (Platform.OS !== 'web') Linking.openSettings().catch(() => {});
-              }}
-              style={({ pressed }) => [pressed && { opacity: 0.7 }]}
-            >
-              <Text style={styles.note}>
-                Notifications are off. Turn them on in Settings to get step updates.
-              </Text>
-            </Pressable>
-          )}
+          {/* Persistent Notifications row (Nov 14, 2026): the shared
+              component with live status. It supersedes the denied-only
+              hint that used to sit here — the row covers every state
+              (undetermined prompt, denied Settings link, On). */}
+          <View style={styles.notifRowWrap}>
+            <NotificationRow role="client" />
+          </View>
         </>
       )}
     </ScrollView>
@@ -352,5 +333,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 18.75,
     marginTop: 24,
+  },
+  notifRowWrap: {
+    marginTop: 8,
   },
 });

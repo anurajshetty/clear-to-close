@@ -44,6 +44,7 @@ import {
   useKeyboardHeight,
 } from '../../src/components/ui';
 import { formatShortDate } from '../../src/components/TimeTrackerCard';
+import { notifyContextualPushAsk } from '../../src/lib/push';
 import { colors } from '../../src/theme';
 import { partyLine } from '../index';
 
@@ -154,6 +155,10 @@ export default function TeamOnEscrow() {
         patchForm(role, { open: false, email: '', busy: false, error: null });
         await refresh();
         showToast('Invite sent.');
+        // One-time contextual push ask (Nov 14, 2026): PushGate
+        // presents it after this success state settles; the invite
+        // flow itself is never blocked or delayed by it.
+        notifyContextualPushAsk('realtor-invite');
       } else if (res && res.error === 'seat_taken') {
         patchForm(role, {
           busy: false,

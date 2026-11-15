@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { auth, type SignInErrorCode } from '../src/lib/auth';
 import { initCloudSync, store } from '../src/lib/store-instance';
-import { registerRealtorPushToken } from '../src/lib/push';
+import { notifyContextualPushAsk, registerRealtorPushToken } from '../src/lib/push';
 import { syncTeamRealtimeIdentity } from '../src/lib/teamRealtime';
 import { resolvePostAuthHref } from '../src/lib/bootRoute';
 import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
@@ -74,6 +74,11 @@ export default function Login() {
       // is pulled from the cloud when the local store is missing it (login
       // on a new device), so an existing account never lands on profile
       // creation by mistake.
+      // Sign-up / first-login push ask (Nov 14, 2026): fire the
+      // one-time trigger for this explicit login. PushGate presents
+      // it only after the user lands on the deal list (never inside
+      // this flow, never on session restore).
+      notifyContextualPushAsk('realtor-signup');
       const sessionUserId = await auth.getSessionUserId();
       let href = '/';
       try {

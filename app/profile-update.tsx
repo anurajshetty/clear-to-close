@@ -18,6 +18,7 @@ import { auth, setExpectSignOut } from '../src/lib/auth';
 import { store } from '../src/lib/store-instance';
 import { BackChevron, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { ChangePasswordSheet } from '../src/components/ChangePasswordSheet';
+import { NotificationRow } from '../src/components/NotificationRow';
 import { EMPTY_PROFILE_DRAFT, ProfileDraft, ProfileForm } from '../src/components/ProfileForm';
 import { isValidReviewLink } from '../src/lib/reviewLinks';
 import { unregisterRealtorPushToken } from '../src/lib/push';
@@ -281,6 +282,11 @@ export default function ProfileUpdate() {
         >
           <Text style={styles.pwlinkText}>Change password</Text>
         </Pressable>
+
+        {/* Persistent Notifications row (Nov 14, 2026): the shared
+            component, live status, between Change password and Log
+            out. No existing row moves. */}
+        <NotificationRow role="realtor" />
 
         {/* Quiet "Log out" row below "Change password" (Sept 2026) — same
             treatment, no confirmation. Web → login screen; native → the

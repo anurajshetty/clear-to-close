@@ -25,6 +25,13 @@ import type { KV } from './store';
 
 const K_PUSH_ASKED = 'ctc:pushasked';
 const K_PUSH_ASKED_REALTOR = 'ctc:pushasked:realtor';
+// Notification Re-Ask (approved Nov 14, 2026): per-role ask state as
+// one JSON value per role. The legacy ask-once keys above are read
+// only as the migration seed (see readPushAskState).
+const K_PUSH_ASK_STATE: Record<PushAskRole, string> = {
+  realtor: 'ctc:pushask:realtor',
+  client: 'ctc:pushask:client',
+};
 
 // Platform without a static react-native import: the unit tests run in node,
 // where react-native is unavailable. The app bundle resolves require() fine.
@@ -124,76 +131,239 @@ export async function requestPushPermission(): Promise<boolean> {
   }
 }
 
-export async function hasBeenAskedPush(kv?: KV): Promise<boolean> {
-  try {
-    return ((await (kv ?? getDefaultKV()).getItem(K_PUSH_ASKED)) === '1');
-  } catch {
-    return false;
-  }
+// ---------------------------------------------------------------------
+// Notification Re-Ask (approved design, Nov 14, 2026; supersedes the
+// ask-once rule). The pre-prompt may re-ask on a 14-day cooldown, at
+// most 4 total asks per role; the 4th ask offers "Don't ask again".
+// One-time contextual asks (first team invite sent, client code-join)
+// fire outside the cooldown but count toward the same cap. Permission
+// granted stops everything. State is per role and device-local.
+// ---------------------------------------------------------------------
+
+export type PushAskRole = 'realtor' | 'client';
+export type ContextualPushTrigger = 'realtor-invite' | 'client-code-join' | 'realtor-signup';
+
+export interface PushAskState {
+  /** Total sheets shown for this role (timed + contextual). */
+  count: number;
+  /** Epoch ms of the last TIMED show; null = never. Contextual shows
+   *  deliberately do not move this (they are independent of the
+   *  cooldown in both directions). */
+  lastAskedAt: number | null;
+  /** The final ask's "Don't ask again": no sheet ever shows again. */
+  dontAskAgain: boolean;
+  /** Once-per-device contextual trigger flags. */
+  ctx: Record<ContextualPushTrigger, boolean>;
 }
 
-export async function markPushAsked(kv?: KV): Promise<void> {
-  try {
-    await (kv ?? getDefaultKV()).setItem(K_PUSH_ASKED, '1');
-  } catch {
-    // best-effort
-  }
+/** The sign-up / first-login trigger (amendment, Nov 14, 2026) is the
+ *  one contextual ask that also starts the cooldown: it replaces the
+ *  first timed ask on the deal list rather than stacking beside it. */
+
+export const PUSH_ASK_CAP = 4;
+export const PUSH_ASK_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+
+export function defaultPushAskState(): PushAskState {
+  return {
+    count: 0,
+    lastAskedAt: null,
+    dontAskAgain: false,
+    ctx: { 'realtor-invite': false, 'client-code-join': false, 'realtor-signup': false },
+  };
 }
 
-/** Realtor ask-once flag (P1): a separate key — a device that was asked
- *  as a client has not been asked as a realtor, and vice versa. */
-export async function hasBeenAskedRealtorPush(kv?: KV): Promise<boolean> {
+function parsePushAskState(raw: string | null): PushAskState | null {
+  if (!raw) return null;
   try {
-    return ((await (kv ?? getDefaultKV()).getItem(K_PUSH_ASKED_REALTOR)) === '1');
+    const v = JSON.parse(raw) as Partial<PushAskState>;
+    if (typeof v !== 'object' || v === null) return null;
+    return {
+      count: typeof v.count === 'number' && Number.isFinite(v.count) ? v.count : 0,
+      lastAskedAt:
+        typeof v.lastAskedAt === 'number' && Number.isFinite(v.lastAskedAt)
+          ? v.lastAskedAt
+          : null,
+      dontAskAgain: v.dontAskAgain === true,
+      ctx: {
+        'realtor-invite': v.ctx?.['realtor-invite'] === true,
+        'client-code-join': v.ctx?.['client-code-join'] === true,
+        'realtor-signup': v.ctx?.['realtor-signup'] === true,
+      },
+    };
   } catch {
-    return false;
-  }
-}
-
-export async function markRealtorPushAsked(kv?: KV): Promise<void> {
-  try {
-    await (kv ?? getDefaultKV()).setItem(K_PUSH_ASKED_REALTOR, '1');
-  } catch {
-    // best-effort
+    return null;
   }
 }
 
 /**
- * Pure pre-prompt eligibility (ask-once, Anuraj's rule): the prompt shows
- * only for a client whose OS permission is still undetermined and who has
- * never been asked. Denied/granted/realtor never see it.
+ * Read one role's ask state. Legacy migration (spec section 5): with
+ * no new-shape state stored, an ask-once-era flag ('1') seeds the
+ * state as "asked long ago" — count 1, last-asked at the epoch, so
+ * the device is immediately eligible for one fresh ask — and never
+ * as don't-ask-again. The seed is derived on read until the first
+ * recorded ask persists the new shape.
  */
-export function shouldShowPrePrompt(args: {
-  role: string | null;
-  hasLink: boolean;
-  asked: boolean;
-  permission: PushPermissionState;
-}): boolean {
-  return (
-    args.role === 'client' &&
-    args.hasLink &&
-    !args.asked &&
-    args.permission === 'undetermined'
-  );
+export async function readPushAskState(role: PushAskRole, kv?: KV): Promise<PushAskState> {
+  const store = kv ?? getDefaultKV();
+  try {
+    const parsed = parsePushAskState(await store.getItem(K_PUSH_ASK_STATE[role]));
+    if (parsed) return parsed;
+    const legacyKey = role === 'realtor' ? K_PUSH_ASKED_REALTOR : K_PUSH_ASKED;
+    if ((await store.getItem(legacyKey)) === '1') {
+      return { ...defaultPushAskState(), count: 1, lastAskedAt: 0 };
+    }
+  } catch {
+    // fall through to the fresh default
+  }
+  return defaultPushAskState();
+}
+
+async function writePushAskState(role: PushAskRole, state: PushAskState, kv?: KV): Promise<void> {
+  try {
+    await (kv ?? getDefaultKV()).setItem(K_PUSH_ASK_STATE[role], JSON.stringify(state));
+  } catch {
+    // best-effort: a lost write only means the ask may repeat sooner
+  }
+}
+
+/** Record a TIMED sheet show: count +1 and the cooldown restarts. */
+export async function recordTimedAskShown(
+  role: PushAskRole,
+  now: number = Date.now(),
+  kv?: KV,
+): Promise<PushAskState> {
+  const state = await readPushAskState(role, kv);
+  const next = { ...state, count: state.count + 1, lastAskedAt: now };
+  await writePushAskState(role, next, kv);
+  return next;
+}
+
+/** Record a CONTEXTUAL sheet show: count +1 and the trigger is spent;
+ *  the cooldown anchor (lastAskedAt) deliberately does not move. */
+export async function recordContextualAskShown(
+  role: PushAskRole,
+  trigger: ContextualPushTrigger,
+  kv?: KV,
+): Promise<PushAskState> {
+  const state = await readPushAskState(role, kv);
+  const next = {
+    ...state,
+    count: state.count + 1,
+    ctx: { ...state.ctx, [trigger]: true },
+  };
+  await writePushAskState(role, next, kv);
+  return next;
 }
 
 /**
- * Realtor pre-prompt eligibility (P1, approved copy): the mirror image
- * of the client rule — a signed-in realtor, never asked (the realtor
- * flag), OS permission still undetermined.
+ * Record a SIGN-UP / FIRST-LOGIN sheet show: count +1, the trigger is
+ * spent, AND the cooldown starts (lastAskedAt moves) — this ask
+ * replaces the first timed ask on the deal list.
  */
-export function shouldShowRealtorPrePrompt(args: {
-  role: string | null;
-  hasSession: boolean;
-  asked: boolean;
-  permission: PushPermissionState;
-}): boolean {
-  return (
-    args.role === 'realtor' &&
-    args.hasSession &&
-    !args.asked &&
-    args.permission === 'undetermined'
-  );
+export async function recordSignupAskShown(
+  now: number = Date.now(),
+  kv?: KV,
+): Promise<PushAskState> {
+  const state = await readPushAskState('realtor', kv);
+  const next = {
+    ...state,
+    count: state.count + 1,
+    lastAskedAt: now,
+    ctx: { ...state.ctx, 'realtor-signup': true },
+  };
+  await writePushAskState('realtor', next, kv);
+  return next;
+}
+
+/**
+ * Sign-up / first-login eligibility (pure): stricter than the other
+ * contextual asks — the OS permission must be UNDETERMINED (the
+ * system prompt is still available). A denied device gets no login
+ * sheet (the timed cadence and the Profile row handle it), a granted
+ * device needs none. Once per device, under the cap, no stop flag.
+ */
+export function signupAskEligible(
+  state: PushAskState,
+  permission: PushPermissionState,
+): boolean {
+  if (permission !== 'undetermined') return false;
+  if (state.dontAskAgain) return false;
+  if (state.count >= PUSH_ASK_CAP) return false;
+  if (state.ctx['realtor-signup']) return false;
+  return true;
+}
+
+/** The final ask's "Don't ask again": permanent per-role stop. */
+export async function markDontAskAgain(role: PushAskRole, kv?: KV): Promise<void> {
+  const state = await readPushAskState(role, kv);
+  await writePushAskState(role, { ...state, dontAskAgain: true }, kv);
+}
+
+/**
+ * Timed-sheet eligibility (pure): permission not granted, no stop
+ * flag, under the cap, and the 14-day cooldown since the last timed
+ * ask has elapsed (or no timed ask yet / legacy-seeded epoch).
+ */
+export function timedAskEligible(
+  state: PushAskState,
+  permission: PushPermissionState,
+  now: number,
+): boolean {
+  if (permission === 'granted') return false;
+  if (state.dontAskAgain) return false;
+  if (state.count >= PUSH_ASK_CAP) return false;
+  if (state.lastAskedAt !== null && now - state.lastAskedAt < PUSH_ASK_COOLDOWN_MS) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Contextual-sheet eligibility (pure): the trigger has never fired on
+ * this device, permission is not granted, no stop flag, and the
+ * shared 4-ask cap has room. The cooldown does NOT gate contextual
+ * asks (spec section 2).
+ */
+export function contextualAskEligible(
+  state: PushAskState,
+  permission: PushPermissionState,
+  trigger: ContextualPushTrigger,
+): boolean {
+  if (permission === 'granted') return false;
+  if (state.dontAskAgain) return false;
+  if (state.count >= PUSH_ASK_CAP) return false;
+  if (state.ctx[trigger]) return false;
+  return true;
+}
+
+/** True when the NEXT show for this state is the 4th (final) ask —
+ *  the only show that carries the "Don't ask again" tertiary. */
+export function isFinalAsk(state: PushAskState): boolean {
+  return state.count === PUSH_ASK_CAP - 1;
+}
+
+// Contextual trigger bus: the invite-send and redeem success paths
+// call notifyContextualPushAsk; PushGate (mounted at the layout)
+// subscribes and owns presentation, so the success states are never
+// blocked or delayed by the sheet.
+type ContextualAskListener = (trigger: ContextualPushTrigger) => void;
+const contextualAskListeners = new Set<ContextualAskListener>();
+
+export function onContextualPushAsk(listener: ContextualAskListener): () => void {
+  contextualAskListeners.add(listener);
+  return () => {
+    contextualAskListeners.delete(listener);
+  };
+}
+
+export function notifyContextualPushAsk(trigger: ContextualPushTrigger): void {
+  for (const listener of [...contextualAskListeners]) {
+    try {
+      listener(trigger);
+    } catch {
+      // a listener failure never reaches the success path
+    }
+  }
 }
 
 /**

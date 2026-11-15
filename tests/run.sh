@@ -105,6 +105,7 @@ npx tsc --ignoreConfig \
   "$ROOT/tests/escrowpull.test.ts" \
   "$ROOT/tests/tc_view.test.ts" \
   "$ROOT/tests/tc_intake.test.ts" \
+  "$ROOT/tests/notification_reask.test.ts" \
   "$ROOT/tests/intake_submit.test.ts" \
   "$ROOT/tests/buyer_intake.test.ts" \
   "$ROOT/tests/property_details.test.ts" \
@@ -239,6 +240,7 @@ node "$OUT/tests/securestore_migration.test.js"
 node "$OUT/tests/syncedstore.test.js"
 node "$OUT/tests/tc_view.test.js"
 node "$OUT/tests/tc_intake.test.js"
+node "$OUT/tests/notification_reask.test.js"
 node "$OUT/tests/intake_submit.test.js"
 node "$OUT/tests/buyer_intake.test.js"
 node "$OUT/tests/property_details.test.js"

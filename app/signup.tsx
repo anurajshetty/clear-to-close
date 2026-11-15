@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { auth, type SignUpErrorCode } from '../src/lib/auth';
 import { initCloudSync } from '../src/lib/store-instance';
+import { notifyContextualPushAsk } from '../src/lib/push';
 import { BackChevron, Field, Kicker, PrimaryButton, useKeyboardHeight } from '../src/components/ui';
 import { colors } from '../src/theme';
 
@@ -89,6 +90,11 @@ export default function SignUp() {
       } catch {
         // Sync is best-effort at this point; the deal list retries on boot.
       }
+      // Sign-up / first-login push ask (Nov 14, 2026): fire the
+      // one-time trigger for this sign-up completion. PushGate holds
+      // it until the user lands on the deal list (after profile
+      // creation) — the sign-up flow itself gains no step.
+      notifyContextualPushAsk('realtor-signup');
       router.replace('/profile-create');
     } finally {
       setBusy(false);

@@ -661,11 +661,22 @@ central user; the buyers and sellers they represent are the other parties.
 - **Live updates** — every realtor checkoff updates the client home and
   progress bar. Custom steps render like any other step (no "Custom" tag on
   client views).
-- **Push notifications (iOS native only)** — after redeeming, the client is
-  asked once whether to allow notifications ("Stay in the loop": "Get
+- **Push notifications (iOS native only)** — the client is asked
+  whether to allow notifications ("Stay in the loop": "Get
   notified the moment {first name} checks off a step — you'll never have to
   keep checking"). The same prompt appears on all three client homes —
-  buyer, seller, and the transaction coordinator's. **Forward progress only**: a push fires when the realtor
+  buyer, seller, and the transaction coordinator's. **Notification
+  Re-Ask (Nov 14, 2026)** replaced the ask-once rule for both roles:
+  the prompt may re-show at most once every 14 days, at most 4 total
+  asks per role, with a "Don't ask again" option on the 4th ask;
+  one-time contextual prompts follow the realtor's first team invite,
+  the client's invite-code join, and a realtor's sign-up completion or
+  first login on a device (that one only while the OS permission is
+  still unanswered, and it starts the cooldown like a timed ask); once the OS permission has been
+  denied the prompt's button becomes "Open Settings" (the OS never
+  shows its dialog twice); and both profile screens carry a
+  persistent Notifications row with the live On/Off status. Devices
+  from the ask-once era get one fresh ask under the new rules. **Forward progress only**: a push fires when the realtor
   checks off a step or changes a key date; **unchecking a step and
   structural checklist edits (reorder/title/add) never send a push**.
   Check-off copy (Anuraj, Sept 28, 2026): "Your realtor just completed the
@@ -723,8 +734,9 @@ central user; the buyers and sellers they represent are the other parties.
   A cleared closing date would send "Your closing date was removed.",
   matching the other key dates — that code is wired and pinned, but
   inert today because the closing date is required and never
-  clearable in the app. The realtor gets the same one-time
-  "Stay in the loop" permission prompt on the deal list, and tapping a
+  clearable in the app. The realtor gets the same
+  "Stay in the loop" permission prompt on the deal list (under the
+  same Re-Ask rules above), and tapping a
   realtor push opens that escrow. Intake saves notify the TC (the
   reader who works from both forms; the forms themselves are filled
   in by the realtor): a buyer-intake save sends the TC "Buyer intake
