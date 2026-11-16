@@ -3,8 +3,8 @@
 // Mints short-lived realtime JWTs for client devices (buyer/seller/TC).
 // Clients have no login; they authenticate by device link. This function
 // validates (link_id, device_id) server-side and signs a 15-minute JWT
-// with the project's JWT secret (SUPABASE_JWT_SECRET, provided by the
-// platform). The client passes the token to realtime.setAuth(); the
+// with the project's legacy JWT secret (env JWT_SECRET — see the Secrets
+// note below). The client passes the token to realtime.setAuth(); the
 // 0030 RLS policies admit exactly that token's escrow while its device
 // link is live.
 //
@@ -16,9 +16,13 @@
 // ~/workspace/your_files/client-realtime-token-single.ts for the
 // dashboard-paste deploy. Never hand-edit the generated file.
 //
-// Dashboard -> Edge Functions -> client-realtime-token -> Secrets: none
-// required beyond the platform-provided SUPABASE_URL,
-// SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET. The anon key in the
+// Dashboard -> Edge Functions -> Secrets: JWT_SECRET must be set to the
+// project's legacy JWT secret (Project Settings -> API -> JWT Keys ->
+// Legacy JWT Secret). The SUPABASE_ prefix is reserved for
+// platform-injected secrets and cannot be set manually; this project
+// does not get SUPABASE_JWT_SECRET injected, so the function reads
+// JWT_SECRET first and falls back to SUPABASE_JWT_SECRET. SUPABASE_URL
+// and SUPABASE_SERVICE_ROLE_KEY are platform-provided. The anon key in the
 // request's Authorization header is NOT trusted for identity — the
 // (link_id, device_id) pair is validated against client_links.
 
@@ -79,7 +83,12 @@ async function handle(
   }
   const url = env['SUPABASE_URL'] ?? '';
   const serviceKey = env['SUPABASE_SERVICE_ROLE_KEY'] ?? '';
-  const jwtSecret = env['SUPABASE_JWT_SECRET'] ?? '';
+  // JWT_SECRET first: the dashboard reserves the SUPABASE_ prefix for
+  // platform-injected secrets and this project does not get
+  // SUPABASE_JWT_SECRET injected, so the legacy JWT secret is stored
+  // under the custom name JWT_SECRET (Nov 16, 2026). The fallback keeps
+  // any environment where the platform does inject it working.
+  const jwtSecret = env['JWT_SECRET'] ?? env['SUPABASE_JWT_SECRET'] ?? '';
   if (!url || !serviceKey || !jwtSecret) {
     return json({ ok: false, error: 'misconfigured' }, 500);
   }
@@ -166,6 +175,7 @@ serve((req: Request) =>
   handle(req, {
     SUPABASE_URL: Deno.env.get('SUPABASE_URL'),
     SUPABASE_SERVICE_ROLE_KEY: Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+    JWT_SECRET: Deno.env.get('JWT_SECRET'),
     SUPABASE_JWT_SECRET: Deno.env.get('SUPABASE_JWT_SECRET'),
   }),
 );

@@ -1037,9 +1037,17 @@ Two server-side steps in the Supabase dashboard (one-time):
 2. Deploy the `client-realtime-token` Edge Function from the generated
    single file `~/workspace/your_files/client-realtime-token-single.ts`
    (regenerate with `python3 tools/make_client_realtime_token_single.py`
-   after any source change — never hand-edit the generated file). No
-   extra secrets: the platform provides `SUPABASE_URL`,
-   `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET`.
+   after any source change — never hand-edit the generated file). One
+   custom secret is required: set `JWT_SECRET` under Edge Functions ->
+   Secrets to the project's legacy JWT secret (Project Settings -> API
+   -> JWT Keys -> Legacy JWT Secret). The `SUPABASE_` prefix is reserved
+   for platform-injected secrets and cannot be set manually, and this
+   project does not get `SUPABASE_JWT_SECRET` injected — the function
+   reads `JWT_SECRET` first and falls back to `SUPABASE_JWT_SECRET`.
+   `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are platform-provided.
+   (An earlier version of this note wrongly claimed the platform
+   provides the JWT secret; the function returned "misconfigured" from
+   its first deploy until the secret was set in Nov 2026.)
 
 Kill switch (no code deploy needed): clients degrade to
 foreground-focus refetch automatically —

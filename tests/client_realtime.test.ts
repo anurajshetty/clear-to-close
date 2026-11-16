@@ -24,7 +24,57 @@ import type {
   RealtimeClientLike,
 } from '../src/lib/clientRealtime';
 
-declare const process: { exitCode?: number };
+declare const require: (id: string) => any;
+declare const process: { exitCode?: number; cwd(): string };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const fs: any = require('fs');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const path: any = require('path');
+
+// ------------------------------------------------- token function pins --
+// The client-realtime-token Edge Function's JWT-secret contract (Nov 16,
+// 2026). The dashboard REJECTS secret names starting with SUPABASE_ (the
+// prefix is reserved for platform-injected secrets, and this project does
+// not get SUPABASE_JWT_SECRET injected), so the secret lives under the
+// custom name JWT_SECRET. The function must resolve JWT_SECRET first and
+// fall back to SUPABASE_JWT_SECRET for environments where the platform
+// does inject it; with NEITHER set the resolved value is empty and the
+// misconfigured gate must still fire. The function self-executes serve()
+// on import (Deno std), so — like the delete-account pins — these are
+// source pins on the exact resolution + wiring + gate lines.
+function findRepoRoot(): string {
+  let dir = process.cwd();
+  for (let i = 0; i < 8; i++) {
+    if (fs.existsSync(path.join(dir, 'supabase/functions/client-realtime-token/index.ts'))) return dir;
+    const up = path.dirname(dir);
+    if (up === dir) break;
+    dir = up;
+  }
+  return process.cwd();
+}
+
+function t_tokenFunctionSecretContract(): void {
+  const src = fs.readFileSync(
+    path.join(findRepoRoot(), 'supabase/functions/client-realtime-token/index.ts'),
+    'utf8',
+  );
+  assert(
+    src.includes("const jwtSecret = env['JWT_SECRET'] ?? env['SUPABASE_JWT_SECRET'] ?? '';"),
+    'token fn: secret resolves JWT_SECRET first, SUPABASE_JWT_SECRET as fallback',
+  );
+  assert(
+    src.includes("JWT_SECRET: Deno.env.get('JWT_SECRET'),"),
+    'token fn: the serve wiring passes JWT_SECRET from the runtime env',
+  );
+  assert(
+    src.includes("SUPABASE_JWT_SECRET: Deno.env.get('SUPABASE_JWT_SECRET'),"),
+    'token fn: the serve wiring still passes SUPABASE_JWT_SECRET (fallback stays wired)',
+  );
+  assert(
+    src.includes("if (!url || !serviceKey || !jwtSecret)"),
+    'token fn: the misconfigured gate still keys on the resolved secret (neither set -> gate fires)',
+  );
+}
 
 const NOW_MS = 1_700_000_000_000;
 
@@ -409,6 +459,7 @@ async function main(): Promise<void> {
   await t_stopIsClean();
   await t_dedupPerEscrow();
   await t_mintNetworkFailureRetries();
+  t_tokenFunctionSecretContract();
   summary('client_realtime');
   __resetForTests();
 }
