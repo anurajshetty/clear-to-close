@@ -10,9 +10,10 @@
 //   2. The token goes to realtime.setAuth() on a DEDICATED supabase client
 //      (the shared client keeps the realtor session untouched).
 //   3. The 0030 RLS policies admit exactly that token's escrow — steps,
-//      escrow row, the realtor profile, and the client's own link row —
-//      and only while the device link is live. Revocation cuts the event
-//      stream at the database immediately.
+//      the escrow row, and the client's own link row — and only while
+//      the device link is live. Revocation cuts the event stream at the
+//      database immediately. (realtor_profiles is NOT subscribed: 0035
+//      removed it from the publication; see the binding note below.)
 //   4. On any data event the client RE-PULLS get_client_view (server is
 //      the single source of truth). Realtime payloads are never applied
 //      directly: realtime is a read-only invalidation signal, debounced
@@ -327,11 +328,14 @@ export function startClientRealtime(
           { event: '*', schema: 'public', table: 'escrows', filter: 'id=eq.' + opts.escrowId },
           scheduleDataRefresh,
         )
-        .on(
-          'postgres_changes',
-          { event: '*', schema: 'public', table: 'realtor_profiles' },
-          scheduleDataRefresh,
-        )
+        // NO realtor_profiles binding — deliberate, do not re-add.
+        // Migration 0035 dropped that table from the supabase_realtime
+        // publication (its subscription could expose the realtor's full
+        // row, email included), and a binding on a non-published table
+        // silences the ENTIRE channel: with it, no steps/escrows/link
+        // events ever arrived (bisected live, Nov 16, 2026). Profile
+        // changes converge via the focus/foreground re-pull, and via
+        // the re-pull any steps/escrow event already triggers.
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'client_links', filter: 'id=eq.' + opts.linkId },

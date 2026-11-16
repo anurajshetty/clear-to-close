@@ -4,7 +4,7 @@
 // The client has no login; it authenticates by device link. The manager:
 //   1. mints a short-lived JWT from the client-realtime-token Edge Function,
 //   2. passes it to realtime.setAuth() on a dedicated client,
-//   3. subscribes to steps/escrows/realtor_profiles/client_links with
+//   3. subscribes to steps/escrows/client_links with
 //      escrow-scoped filters (the 0030 RLS policies enforce the rest),
 //   4. re-pulls on data events (debounced), routes to link-dead on revoke,
 //   5. degrades silently on any failure (never throws to the UI).
@@ -278,9 +278,21 @@ async function t_happyPathWiring(): Promise<void> {
     byTable['escrows'] !== undefined && byTable['escrows']!.filter === 'id=eq.E1',
     'escrows binding filtered to the escrow',
   );
+  // REGRESSION (Nov 16, 2026): realtor_profiles must NEVER be bound on
+  // this channel. Migration 0035 dropped it from the supabase_realtime
+  // publication (the subscription could expose the realtor's full row,
+  // email included), and a postgres_changes binding on a non-published
+  // table silences the ENTIRE channel — proven live by bisection: with
+  // the profiles binding present, steps/escrows/client_links events
+  // never arrive; without it, every cell passes. Profile changes
+  // converge via the focus/foreground re-pull instead.
   assert(
-    byTable['realtor_profiles'] !== undefined,
-    'realtor_profiles subscribed (RLS scopes to the escrow owner)',
+    byTable['realtor_profiles'] === undefined,
+    'realtor_profiles is NOT bound (0035 removed it from the publication; a binding would silence the channel)',
+  );
+  assert(
+    ch.bindings.length === 3,
+    'exactly 3 bindings on the client channel (steps, escrows, client_links)',
   );
   assert(
     byTable['client_links'] !== undefined &&
